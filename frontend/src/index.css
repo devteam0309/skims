@@ -1,0 +1,211 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 214 60% 24%;
+    --primary-foreground: 47 100% 55%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 47 96% 53%;
+    --accent-foreground: 214 60% 24%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 214 60% 24%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 214 60% 60%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 47 96% 53%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  .sidebar-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 hover:bg-navy-800 hover:text-white;
+  }
+  .sidebar-link.active {
+    @apply bg-navy-800 text-white;
+  }
+  .kpi-card {
+    @apply bg-white rounded-xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-shadow duration-200;
+  }
+  .status-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+  .page-header {
+    @apply mb-6 flex items-center justify-between;
+  }
+  .section-title {
+    @apply text-2xl font-bold text-navy-900;
+  }
+  .form-group {
+    @apply space-y-1.5;
+  }
+  .form-label {
+    @apply text-sm font-medium text-gray-700 dark:text-gray-300;
+  }
+  .data-table th {
+    @apply px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider bg-gray-50 dark:bg-gray-900;
+  }
+  .data-table td {
+    @apply px-4 py-3 text-sm text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700;
+  }
+  .data-table tr:hover td {
+    @apply bg-gray-50 dark:bg-gray-700/50;
+  }
+}
+
+/* ─── SweetAlert2 dark mode ─────────────────────────────────── */
+.dark .swal-popup { background-color: #1f2937 !important; }
+.dark .swal-title { color: #f9fafb !important; }
+.dark .swal-html { color: #9ca3af !important; }
+.dark .swal-btn-cancel {
+  background-color: #374151 !important;
+  color: #d1d5db !important;
+  border-color: #4b5563 !important;
+}
+.dark .swal-btn-cancel:hover { background-color: #4b5563 !important; }
+
+/* ─── SweetAlert2 customization ─────────────────────────────── */
+.swal-popup {
+  border-radius: 1rem !important;
+  padding: 2rem !important;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+}
+.swal-title {
+  font-size: 1.125rem !important;
+  font-weight: 700 !important;
+  color: #111827 !important;
+}
+.swal-html {
+  font-size: 0.875rem !important;
+  color: #6b7280 !important;
+}
+.swal-actions {
+  gap: 0.75rem !important;
+  margin-top: 1.5rem !important;
+}
+.swal-btn-confirm {
+  padding: 0.625rem 1.25rem;
+  background-color: #1e3a5f;
+  color: #ffffff;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+.swal-btn-confirm:hover { background-color: #274d7a; }
+.swal-btn-confirm:focus { outline: 2px solid #274d7a; outline-offset: 2px; }
+.swal-btn-confirm--danger { background-color: #dc2626 !important; }
+.swal-btn-confirm--danger:hover { background-color: #b91c1c !important; }
+.swal-btn-confirm--danger:focus { outline-color: #dc2626 !important; }
+.swal-btn-confirm--warning { background-color: #d97706 !important; }
+.swal-btn-confirm--warning:hover { background-color: #b45309 !important; }
+.swal-btn-cancel {
+  padding: 0.625rem 1.25rem;
+  background-color: #ffffff;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+.swal-btn-cancel:hover { background-color: #f9fafb; }
+.swal-btn-cancel:focus { outline: 2px solid #d1d5db; outline-offset: 2px; }
+
+/* ─── Inputs — light mode ────────────────────────────────────── */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="tel"],
+input[type="date"],
+textarea,
+select {
+  color: #111827;
+  background-color: #ffffff;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af;
+}
+
+/* ─── Inputs — dark mode ─────────────────────────────────────── */
+.dark input[type="text"],
+.dark input[type="email"],
+.dark input[type="password"],
+.dark input[type="number"],
+.dark input[type="tel"],
+.dark input[type="date"],
+.dark textarea,
+.dark select {
+  color: #f9fafb;
+  background-color: #1f2937;
+  border-color: #374151;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #6b7280;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #64748b; }
+.dark ::-webkit-scrollbar-track { background: #1f2937; }
+.dark ::-webkit-scrollbar-thumb { background: #4b5563; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+
+/* Loading animation */
+.skeleton {
+  @apply animate-pulse bg-gray-200 rounded;
+}
+
+/* Print styles */
+@media print {
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+}
