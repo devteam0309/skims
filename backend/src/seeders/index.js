@@ -75,6 +75,22 @@ const BARANGAYS = {
 
 const seed = async () => {
   try {
+    const isProd = process.env.NODE_ENV === 'production';
+    // Demo data (the Admin@123 accounts + sample programs/budgets/etc.) is opt-in.
+    // Default ON outside production for local/QA convenience; in production it MUST be
+    // explicitly requested with SEED_DEMO=true so a prod seed never creates demo logins.
+    const seedDemo = isProd
+      ? process.env.SEED_DEMO === 'true'
+      : process.env.SEED_DEMO !== 'false';
+
+    // This seeder WIPES every collection. In production, require explicit confirmation
+    // so it can never silently destroy live data.
+    if (isProd && process.env.SEED_CONFIRM !== 'true') {
+      console.error('Refusing to run the seeder in production without SEED_CONFIRM=true.');
+      console.error('This deletes ALL data in the target database. Set SEED_CONFIRM=true only if you are sure.');
+      process.exit(1);
+    }
+
     await mongoose.connect(process.env.MONGO_URI);
     console.log('Connected to MongoDB');
 
@@ -111,6 +127,31 @@ const seed = async () => {
     }
     const barangays = await Barangay.insertMany(barangayDocs);
     console.log(`Seeded ${barangays.length} barangays`);
+
+    // Non-demo path: seed reference data only (municipalities + barangays above), plus an
+    // optional real super-admin from env. No shared-password demo accounts are created.
+    if (!seedDemo) {
+      const adminEmail = process.env.SEED_ADMIN_EMAIL;
+      const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+      if (adminEmail && adminPassword) {
+        await User.create({
+          firstName: 'System',
+          lastName: 'Administrator',
+          email: adminEmail,
+          password: adminPassword,
+          role: 'super_admin',
+          isApproved: true,
+          isEmailVerified: true,
+        });
+        console.log(`Seeded super-admin account: ${adminEmail}`);
+      } else {
+        console.log('No SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD provided — no admin account created.');
+        console.log('Register an account and promote it, or re-run with those vars set.');
+      }
+      console.log('\n=== SEEDING COMPLETE (reference data only) ===');
+      console.log('Demo dataset skipped. Set SEED_DEMO=true to include sample users/programs/etc.');
+      process.exit(0);
+    }
 
     // Seed users
     const usersData = [

@@ -18,8 +18,11 @@ const schema = z.object({
 // Visible in dev, or in any build where VITE_SHOW_QA_CREDS=true. MUST be OFF (flag unset)
 // for the public production build — see go-live checklist (demo accounts use a shared password).
 const SHOW_QA_CREDS = import.meta.env.DEV || import.meta.env.VITE_SHOW_QA_CREDS === 'true';
-const QA_PASSWORD = 'Admin@123';
-const QA_ACCOUNTS = [
+// Gate the data itself behind the build flag (not just the UI) so the seeded emails and the
+// shared QA password are dead-code-eliminated from the public production bundle. When
+// SHOW_QA_CREDS folds to a static `false` at build time, esbuild drops the unreachable branch.
+const QA_PASSWORD = SHOW_QA_CREDS ? 'Admin@123' : '';
+const QA_ACCOUNTS = SHOW_QA_CREDS ? [
   { role: 'Super Admin', email: 'superadmin@skims.gov.ph' },
   { role: 'Provincial Admin', email: 'provincial@skims.gov.ph' },
   { role: 'Municipal Admin · Boac', email: 'municipal@boac.gov.ph' },
@@ -31,7 +34,7 @@ const QA_ACCOUNTS = [
   { role: 'SK Chairperson · Torrijos', email: 'ramon@torrijos.gov.ph' },
   { role: 'DILG Representative', email: 'dilg@marinduque.gov.ph' },
   { role: 'Public User', email: 'youth@example.com' },
-];
+] : [];
 
 export default function Login() {
   const navigate = useNavigate();

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from './components/ui/toaster';
 import useAuthStore from './store/authStore';
@@ -54,8 +55,12 @@ import PublicPortal from './pages/public/PublicPortal';
 // Announcements
 import Announcements from './pages/announcements/Announcements';
 
-// Hidden reference
-import SystemReference from './pages/SystemReference';
+// Hidden developer/QA reference page. It exposes seeded test credentials, the full data model,
+// every endpoint, and a "known gaps" list — so it must NOT ship in the public production build.
+// Gated behind the same static build flag as the login QA panel; when off, the dynamic import
+// is dead code and Rollup drops the chunk entirely (verified absent from dist).
+const SHOW_DEV_REF = import.meta.env.DEV || import.meta.env.VITE_SHOW_QA_CREDS === 'true';
+const SystemReference = SHOW_DEV_REF ? lazy(() => import('./pages/SystemReference')) : null;
 
 // Audit Logs
 import AuditLogs from './pages/admin/AuditLogs';
@@ -114,8 +119,16 @@ export default function App() {
           <Route path="audit-logs" element={<ProtectedRoute roles={ADMIN_ROLES}><AuditLogs /></ProtectedRoute>} />
         </Route>
 
-        {/* Hidden system reference — no nav link, manual URL only */}
-        <Route path="/ref" element={<ProtectedRoute><SystemReference /></ProtectedRoute>} />
+        {/* Hidden system reference — dev/QA builds only; excluded from public production bundle */}
+        {SHOW_DEV_REF && (
+          <Route path="/ref" element={
+            <ProtectedRoute>
+              <Suspense fallback={null}>
+                <SystemReference />
+              </Suspense>
+            </ProtectedRoute>
+          } />
+        )}
 
         <Route path="*" element={
           <div className="min-h-screen flex items-center justify-center bg-gray-50">

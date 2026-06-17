@@ -50,8 +50,31 @@ Render domain unless you also change the cookies to `SameSite=none`.
 
 ## Netlify — frontend env variables
 
-**None required.** The app uses a relative `/api` base and the proxy in `netlify.toml`.
-`NODE_VERSION=20` is already pinned in `netlify.toml`.
+**None required**, and that is the secure default. The app uses a relative `/api` base and the
+proxy in `netlify.toml`; `NODE_VERSION=20` is pinned there.
+
+> ⚠️ **Do NOT set `VITE_SHOW_QA_CREDS`** on the public Netlify site. This flag (used only for
+> dev/QA builds) compiles the seeded test-account credentials *and* the internal `/ref` system
+> reference page into the bundle. With the flag absent, both are stripped from the production
+> build at compile time (verified: the strings are not present in `dist`).
+
+## Seeding the production database
+
+The seeder **deletes all collections** before inserting, so it is guarded:
+
+- In production it refuses to run unless `SEED_CONFIRM=true`.
+- Demo accounts (the shared `Admin@123` logins) are **opt-in**: they are only created when
+  `SEED_DEMO=true`. By default a production seed inserts reference data (municipalities +
+  barangays) and — if `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` are set — a single real
+  super-admin.
+
+Recommended first prod seed (reference data + your own admin, no demo logins):
+
+```
+NODE_ENV=production SEED_CONFIRM=true \
+SEED_ADMIN_EMAIL=admin@yourdomain.gov.ph SEED_ADMIN_PASSWORD='<strong-unique>' \
+npm run seed
+```
 
 ---
 
