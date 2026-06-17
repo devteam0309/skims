@@ -1,0 +1,51 @@
+# Render Blueprint for the SKIMS backend (Express API).
+# Deploy via Render Dashboard -> New -> Blueprint, pointed at this repo.
+# Secrets are marked `sync: false` so Render prompts you to enter them in the dashboard
+# instead of reading them from this committed file.
+
+services:
+  - type: web
+    name: skims-api
+    runtime: node
+    region: singapore          # closest Render region to the Philippines
+    plan: free                 # NOTE: free tier sleeps after ~15 min idle; in-process cron jobs
+                               # (deadline reminders / compliance checks) will not fire while asleep.
+                               # Upgrade to a paid instance to keep them reliable.
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_EXPIRE
+        value: 15m
+      - key: MAX_FILE_SIZE
+        value: "10485760"
+      - key: FROM_NAME
+        value: SKIMS Platform
+      # --- Generated automatically by Render (strong random secret) ---
+      - key: JWT_SECRET
+        generateValue: true
+      # --- Enter these in the Render dashboard (sync:false keeps them out of git) ---
+      - key: MONGO_URI
+        sync: false
+      - key: CLIENT_URL            # your Netlify site URL, e.g. https://skims.netlify.app
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_EMAIL
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: FROM_EMAIL
+        sync: false

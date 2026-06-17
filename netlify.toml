@@ -1,0 +1,26 @@
+# Netlify configuration for the SKIMS frontend (Vite/React SPA).
+# The frontend talks to the backend via a relative "/api" base (frontend/src/services/api.js),
+# so we PROXY "/api/*" to the Render backend. This keeps the browser same-origin with Netlify,
+# which is what makes the SameSite=strict auth cookies work without any code changes.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"            # relative to base -> frontend/dist
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# 1) API proxy — MUST come before the SPA fallback.
+#    >>> Replace the host below with your actual Render service URL after the backend is deployed. <<<
+[[redirects]]
+  from = "/api/*"
+  to = "https://skims-api.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+# 2) SPA fallback — every other path serves index.html so react-router can handle it.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
