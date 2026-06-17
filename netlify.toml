@@ -15,7 +15,7 @@
 #    >>> Replace the host below with your actual Render service URL after the backend is deployed. <<<
 [[redirects]]
   from = "/api/*"
-  to = "https://skims.onrender.com"
+  to = "https://skims.onrender.com/api/:splat"
   status = 200
   force = true
 
