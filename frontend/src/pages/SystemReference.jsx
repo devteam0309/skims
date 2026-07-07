@@ -498,120 +498,335 @@ const Pill = ({ text, color = 'gray' }) => {
   return <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${c[color]}`}>{text}</span>;
 };
 
-// ─── DATA FLOW DIAGRAM ─────────────────────────────────────────────────────────
+// ─── DATA FLOW DIAGRAM (DFD) ───────────────────────────────────────────────────
+// Structured-analysis notation: external entities, processes, data stores, data flows.
+// Theme-aware SVG colors are driven by the scoped <style> block in <SystemDFD/>
+// (the app uses Tailwind darkMode:'class', so `.dark .dfd-*` overrides apply).
 
-const flowColors = {
-  navy: 'bg-navy-50 dark:bg-navy-900/40 border-navy-200 dark:border-navy-700 text-navy-800 dark:text-navy-200',
-  gold: 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-300 dark:border-yellow-800 text-yellow-800 dark:text-yellow-300',
-  green: 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-800 text-green-700 dark:text-green-400',
-  gray: 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300',
-  slate: 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200',
+// External entity — square-cornered rectangle (source/sink of data)
+const E = ({ x, y, w = 150, h = 50, lines }) => (
+  <g>
+    <rect x={x} y={y} width={w} height={h} className="dfd-entity" strokeWidth="1.5" />
+    {lines.map((l, i) => (
+      <text key={i} x={x + w / 2} y={y + h / 2 + 4 - (lines.length - 1) * 6 + i * 12}
+        fontSize="11" textAnchor="middle" className="dfd-entity-t">{l}</text>
+    ))}
+  </g>
+);
+
+// Process — numbered rounded rectangle (Gane–Sarson) that transforms data
+const P = ({ x, y, w = 224, h = 60, num, lines }) => (
+  <g>
+    <rect x={x} y={y} width={w} height={h} rx="10" className="dfd-proc" strokeWidth="1.5" />
+    <line x1={x} y1={y + 20} x2={x + w} y2={y + 20} className="dfd-proc-line" strokeWidth="1.1" />
+    <text x={x + 10} y={y + 14} fontSize="10" className="dfd-proc-num">{num}</text>
+    {lines.map((l, i) => (
+      <text key={i} x={x + w / 2} y={y + 38 + i * 12 - (lines.length - 1) * 6}
+        fontSize="11" textAnchor="middle" className="dfd-proc-t">{l}</text>
+    ))}
+  </g>
+);
+
+// Data store — open-ended rectangle with an id compartment
+const S = ({ x, y, w = 182, h = 36, id, label }) => (
+  <g>
+    <rect x={x} y={y} width="30" height={h} className="dfd-store" strokeWidth="1.4" />
+    <line x1={x + 30} y1={y} x2={x + w} y2={y} className="dfd-store-line" strokeWidth="1.4" />
+    <line x1={x + 30} y1={y + h} x2={x + w} y2={y + h} className="dfd-store-line" strokeWidth="1.4" />
+    <text x={x + 15} y={y + h / 2 + 4} fontSize="10" textAnchor="middle" className="dfd-store-id">{id}</text>
+    <text x={x + 38} y={y + h / 2 + 4} fontSize="10.5" className="dfd-store-t">{label}</text>
+  </g>
+);
+
+// Data flow — arrow (optionally double-headed / dashed for read-only)
+const Arr = ({ d, both, dashed }) => (
+  <path d={d} className="dfd-flow" strokeWidth="1.4" fill="none"
+    strokeDasharray={dashed ? '4 3' : undefined}
+    markerEnd="url(#dfd-ah)" markerStart={both ? 'url(#dfd-ah)' : undefined} />
+);
+
+// Flow label with a small background chip for legibility over crossing lines
+const Lbl = ({ x, y, anchor = 'middle', lines }) => {
+  const w = Math.max(...lines.map((l) => l.length)) * 4.5 + 8;
+  const bx = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
+  return (
+    <g>
+      <rect x={bx} y={y - 9} width={w} height={lines.length * 11 + 2} rx="2" className="dfd-lbl-bg" opacity="0.92" />
+      {lines.map((l, i) => (
+        <text key={i} x={x} y={y + 2 + i * 11} fontSize="8.5" textAnchor={anchor} className="dfd-lbl-t">{l}</text>
+      ))}
+    </g>
+  );
 };
 
-const FlowNode = ({ title, sub, color = 'slate', className = '' }) => (
-  <div className={`rounded-lg border px-3 py-2 text-center min-w-[112px] shadow-sm ${flowColors[color]} ${className}`}>
-    <p className="text-xs font-semibold leading-tight">{title}</p>
-    {sub && <p className="text-[10px] opacity-70 mt-0.5 leading-tight">{sub}</p>}
-  </div>
-);
+const DFD_STYLE = `
+  .dfd-svg text { font-family: inherit; }
+  .dfd-entity { fill:#eef2f7; stroke:#5b7995; }
+  .dark .dfd-entity { fill:#243b53; stroke:#829ab1; }
+  .dfd-entity-t { fill:#243b53; font-weight:600; }
+  .dark .dfd-entity-t { fill:#dbe5f0; }
+  .dfd-proc { fill:#ffffff; stroke:#334e68; }
+  .dark .dfd-proc { fill:#16283b; stroke:#7f9cb8; }
+  .dfd-proc-line { stroke:#cbd8e6; }
+  .dark .dfd-proc-line { stroke:#3a536b; }
+  .dfd-proc-num { fill:#486581; font-weight:700; }
+  .dark .dfd-proc-num { fill:#9fb3c8; }
+  .dfd-proc-t { fill:#1e3a5f; font-weight:600; }
+  .dark .dfd-proc-t { fill:#e7eef6; }
+  .dfd-store { fill:#eaf7f1; stroke:#0f9d6b; }
+  .dark .dfd-store { fill:#08312a; stroke:#12b886; }
+  .dfd-store-line { stroke:#0f9d6b; }
+  .dark .dfd-store-line { stroke:#12b886; }
+  .dfd-store-id { fill:#08795a; font-weight:700; }
+  .dark .dfd-store-id { fill:#5eead4; }
+  .dfd-store-t { fill:#0b6b4f; font-weight:600; }
+  .dark .dfd-store-t { fill:#99f6e0; }
+  .dfd-flow { stroke:#8aa0b4; }
+  .dark .dfd-flow { stroke:#64748b; }
+  .dfd-arrow { fill:#8aa0b4; }
+  .dark .dfd-arrow { fill:#64748b; }
+  .dfd-lbl-bg { fill:#ffffff; }
+  .dark .dfd-lbl-bg { fill:#1f2937; }
+  .dfd-lbl-t { fill:#5b6b7b; }
+  .dark .dfd-lbl-t { fill:#9aa8b6; }
+`;
 
-const FlowArrow = ({ label, symbol = '↓' }) => (
-  <div className="flex flex-col items-center justify-center py-1.5">
-    {label && <span className="text-[10px] text-gray-400 dark:text-gray-500 mb-0.5 text-center px-2">{label}</span>}
-    <span className="text-gray-300 dark:text-gray-600 text-xl leading-none">{symbol}</span>
-  </div>
-);
-
-const LayerLabel = ({ children }) => (
-  <p className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-semibold mb-2 text-center">{children}</p>
-);
-
-const REQUEST_PIPELINE = [
-  'Helmet + CORS', 'Rate Limit', 'Body Parse', 'mongo-sanitize + HPP',
-  'protect (JWT verify)', 'authorize (RBAC)', 'express-validator', 'Controller',
+// Textual flow index — guarantees completeness independent of arrow density
+const DFD_PROCESSES = [
+  { id: '1.0', name: 'Authenticate & Manage Users', entities: 'SK Official, Administrator', stores: 'D1 Users, D10 Audit Logs', out: 'Email (verification/approval)' },
+  { id: '2.0', name: 'Manage Programs', entities: 'SK Official (EDITORS)', stores: 'D2 Programs', out: '—' },
+  { id: '3.0', name: 'Manage Budgets & Expenses', entities: 'SK Official (FINANCE), DILG (approve)', stores: 'D3 Budgets, D4 Expenses, D10 Audit Logs', out: 'Email (approval)' },
+  { id: '4.0', name: 'Process Liquidations', entities: 'SK Official (FINANCE), DILG (approve)', stores: 'D4 Expenses (read), D5 Liquidations, D10 Audit Logs', out: 'Email (approve/reject)' },
+  { id: '5.0', name: 'Manage Documents', entities: 'SK Official (DOC), Public (download)', stores: 'D6 Documents, D10 Audit Logs', out: 'Cloudinary (files)' },
+  { id: '6.0', name: 'Register Youth Members', entities: 'SK Official (YOUTH)', stores: 'D7 Youth Members, D10 Audit Logs', out: '—' },
+  { id: '7.0', name: 'Generate Reports & Analytics', entities: 'Administrator, DILG', stores: 'reads D2, D3, D4, D5, D7', out: 'PDF / Excel' },
+  { id: '8.0', name: 'Serve Public Portal & Notifications', entities: 'Public Citizen', stores: 'reads D2, D3, D6, D8 · writes D9 Notifications', out: 'Email (deadline/compliance alerts)' },
 ];
 
-const DataFlowDiagram = () => (
-  <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+const DFD_STORES = [
+  'D1 Users', 'D2 Programs', 'D3 Budgets', 'D4 Expenses', 'D5 Liquidations',
+  'D6 Documents', 'D7 Youth Members', 'D8 Announcements', 'D9 Notifications', 'D10 Audit Logs',
+];
 
-    {/* Layer 1 — Actors / Browser */}
-    <LayerLabel>Actors · Browser (React 18 SPA · Zustand auth · React Query)</LayerLabel>
-    <div className="flex flex-wrap justify-center gap-2">
-      <FlowNode title="Public Citizen" sub="/portal · no auth" color="gray" />
-      <FlowNode title="SK Officials" sub="chair · treas · sec · kagawad" color="navy" />
-      <FlowNode title="Municipal / Prov. Admin" sub="scoped / all-mun" color="navy" />
-      <FlowNode title="DILG Rep" sub="read · approve" color="navy" />
-      <FlowNode title="Super Admin" sub="full access" color="navy" />
+const DFD_ENTITIES = [
+  { name: 'SK Officials', note: 'Chairperson, Treasurer, Secretary, Kagawad — data entry & requests' },
+  { name: 'Administrators', note: 'Super / Provincial / Municipal — approvals, roles, monitoring' },
+  { name: 'DILG Representative', note: 'Reviews & approves budgets / expenses / liquidations; reads reports' },
+  { name: 'Public Citizens', note: 'Read-only transparency portal — programs, budget, documents' },
+  { name: 'Email / SMTP Service', note: 'External sink — verification, approval, reset & alert emails' },
+];
+
+const SystemDFD = () => (
+  <div className="space-y-6">
+    <style>{DFD_STYLE}</style>
+
+    {/* Shared arrowhead marker (global id, referenced by both diagrams) */}
+    <svg width="0" height="0" className="absolute" aria-hidden="true">
+      <defs>
+        <marker id="dfd-ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L7,3 L0,6 Z" className="dfd-arrow" />
+        </marker>
+      </defs>
+    </svg>
+
+    {/* Notation legend */}
+    <div className="flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3">
+      <span className="font-semibold text-gray-600 dark:text-gray-300">Notation:</span>
+      <span className="flex items-center gap-1.5"><span className="inline-block w-5 h-3.5 border-[1.5px] border-navy-500 bg-navy-50 dark:bg-navy-900/50 dark:border-navy-400"></span>External Entity</span>
+      <span className="flex items-center gap-1.5"><span className="inline-block w-5 h-3.5 rounded-md border-[1.5px] border-navy-700 bg-white dark:bg-navy-900 dark:border-navy-300"></span>Process</span>
+      <span className="flex items-center gap-1.5"><span className="inline-block w-5 h-3.5 border-y-[1.5px] border-l-[1.5px] border-emerald-500 bg-emerald-50 dark:bg-emerald-900/30"></span>Data Store</span>
+      <span className="flex items-center gap-1.5"><span className="text-gray-400 text-sm leading-none">→</span>Data Flow</span>
+      <span className="flex items-center gap-1.5"><span className="text-gray-400 text-sm leading-none tracking-tighter">--→</span>Read-only Flow</span>
     </div>
 
-    <FlowArrow label="HTTPS · axios baseURL '/api' · httpOnly JWT cookie (+ Bearer fallback)" />
+    {/* ── Level 0: Context Diagram ── */}
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+      <p className="text-xs font-bold text-gray-700 dark:text-gray-200 mb-1">Level 0 — Context Diagram</p>
+      <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-3">The whole system as a single process (0) with its external entities and top-level data flows.</p>
+      <div className="overflow-x-auto">
+        <svg viewBox="0 0 820 560" width="100%" style={{ minWidth: 620, maxWidth: 820 }} className="dfd-svg mx-auto">
+          {/* Entities */}
+          <E x={30} y={250} w={150} h={60} lines={['SK Officials']} />
+          <E x={640} y={250} w={150} h={60} lines={['Public', 'Citizens']} />
+          <E x={335} y={38} w={150} h={56} lines={['Administrators']} />
+          <E x={335} y={468} w={150} h={56} lines={['DILG', 'Representative']} />
+          <E x={40} y={452} w={150} h={56} lines={['Email / SMTP', 'Service']} />
+          {/* Central process */}
+          <P x={310} y={232} w={200} h={96} num="0" lines={['SKIMS', 'Integrated', 'Management System']} />
 
-    {/* Layer 2 — Netlify */}
-    <LayerLabel>Netlify — Frontend Host</LayerLabel>
-    <div className="flex flex-wrap justify-center gap-2">
-      <FlowNode title="Static SPA" sub="Vite dist/ · SPA fallback" color="slate" />
-      <FlowNode title="/api/* proxy" sub="rewrite → Render :splat (same-origin)" color="gold" />
-    </div>
+          {/* SK Officials ↔ system */}
+          <Arr d="M180,268 L306,268" />
+          <Lbl x={244} y={260} lines={['login · program / finance', '/ youth data · documents']} />
+          <Arr d="M306,300 L182,300" />
+          <Lbl x={245} y={312} lines={['dashboards · reports · alerts']} />
 
-    <FlowArrow label="proxied to skims.onrender.com/api/:splat" />
+          {/* Public ↔ system */}
+          <Arr d="M640,268 L514,268" />
+          <Lbl x={576} y={260} lines={['public info request']} />
+          <Arr d="M514,300 L638,300" />
+          <Lbl x={576} y={312} lines={['public programs · budget', '· documents']} />
 
-    {/* Layer 3 — Express request pipeline */}
-    <LayerLabel>Express API (Render) — Request Pipeline</LayerLabel>
-    <div className="overflow-x-auto">
-      <div className="flex items-center justify-center gap-1 min-w-max py-1">
-        {REQUEST_PIPELINE.map((step, i) => (
-          <div key={step} className="flex items-center">
-            <div className={`rounded-md border px-2 py-1.5 text-[10px] font-medium whitespace-nowrap ${flowColors.navy}`}>{step}</div>
-            {i < REQUEST_PIPELINE.length - 1 && <span className="text-gray-300 dark:text-gray-600 px-0.5">→</span>}
-          </div>
-        ))}
+          {/* Administrators ↔ system */}
+          <Arr d="M388,94 L388,230" />
+          <Lbl x={382} y={150} anchor="end" lines={['approvals ·', 'user & role mgmt']} />
+          <Arr d="M432,230 L432,94" />
+          <Lbl x={438} y={150} anchor="start" lines={['pending reqs ·', 'audit logs']} />
+
+          {/* DILG ↔ system */}
+          <Arr d="M388,466 L388,330" />
+          <Lbl x={382} y={402} anchor="end" lines={['budget / liq.', 'approvals']} />
+          <Arr d="M432,330 L432,466" />
+          <Lbl x={438} y={402} anchor="start" lines={['financial &', 'monitoring reports']} />
+
+          {/* system → Email */}
+          <Arr d="M312,318 L190,452" />
+          <Lbl x={252} y={392} lines={['verification /', 'notification emails']} />
+        </svg>
       </div>
     </div>
 
-    <FlowArrow label="whitelisted fields · municipality scoping · atomic updates" />
+    {/* ── Level 1 DFD ── */}
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+      <p className="text-xs font-bold text-gray-700 dark:text-gray-200 mb-1">Level 1 — Decomposition</p>
+      <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-3">Major processes (center), external entities (left), and data stores (right). Dashed arrows are read-only flows.</p>
+      <div className="overflow-x-auto">
+        <svg viewBox="0 0 1000 760" width="100%" style={{ minWidth: 760, maxWidth: 1000 }} className="dfd-svg mx-auto">
+          {/* External entities (left) */}
+          <E x={18} y={40} w={150} h={48} lines={['Administrators']} />
+          <E x={18} y={236} w={150} h={52} lines={['SK Officials']} />
+          <E x={18} y={352} w={150} h={50} lines={['DILG Rep']} />
+          <E x={18} y={560} w={150} h={48} lines={['Public Citizens']} />
+          <E x={18} y={672} w={150} h={44} lines={['Email / SMTP']} />
 
-    {/* Layer 4 — Domain controllers */}
-    <LayerLabel>Domain Controllers &amp; Services</LayerLabel>
-    <div className="flex flex-wrap justify-center gap-2">
-      {['Auth', 'Programs', 'Budgets', 'Expenses', 'Liquidations', 'Documents', 'Youth', 'Reports', 'Analytics', 'Monitoring', 'Notifications', 'Public'].map((m) => (
-        <span key={m} className={`rounded-md border px-2 py-1 text-[10px] font-medium ${flowColors.slate}`}>{m}</span>
-      ))}
-    </div>
+          {/* Processes (center) */}
+          <P x={388} y={40} num="1.0" lines={['Authenticate &', 'Manage Users']} />
+          <P x={388} y={118} num="2.0" lines={['Manage Programs']} />
+          <P x={388} y={196} num="3.0" lines={['Manage Budgets', '& Expenses']} />
+          <P x={388} y={286} num="4.0" lines={['Process Liquidations']} />
+          <P x={388} y={376} num="5.0" lines={['Manage Documents']} />
+          <P x={388} y={466} num="6.0" lines={['Register Youth']} />
+          <P x={388} y={556} num="7.0" lines={['Reports & Analytics']} />
+          <P x={388} y={646} num="8.0" lines={['Public Portal &', 'Notifications']} />
 
-    <FlowArrow label="Mongoose ODM  ·  Cloudinary SDK  ·  Nodemailer" symbol="↕" />
+          {/* Data stores (right) */}
+          <S x={804} y={50} id="D1" label="Users" />
+          <S x={804} y={128} id="D2" label="Programs" />
+          <S x={804} y={196} id="D3" label="Budgets" />
+          <S x={804} y={240} id="D4" label="Expenses" />
+          <S x={804} y={298} id="D5" label="Liquidations" />
+          <S x={804} y={386} id="D6" label="Documents" />
+          <S x={804} y={476} id="D7" label="Youth Members" />
+          <S x={804} y={566} id="D8" label="Announcements" />
+          <S x={804} y={650} id="D9" label="Notifications" />
+          <S x={804} y={712} id="D10" label="Audit Logs" />
 
-    {/* Layer 5 — Data & external services */}
-    <LayerLabel>Data &amp; External Services</LayerLabel>
-    <div className="flex flex-wrap justify-center gap-2">
-      <FlowNode title="MongoDB Atlas" sub="Mongoose · soft-delete · AuditLog 7yr" color="green" />
-      <FlowNode title="Cloudinary" sub="skims/documents · skims/avatars" color="green" />
-      <FlowNode title="SMTP (Nodemailer)" sub="verify · approve · reset · alerts" color="green" />
-    </div>
+          {/* Process ↔ store (right side) */}
+          <Arr d="M612,66 L802,68" both />
+          <Lbl x={708} y={58} lines={['credentials · profiles']} />
+          <Arr d="M612,146 L802,146" both />
+          <Lbl x={708} y={138} lines={['program records']} />
+          <Arr d="M612,214 L802,214" both />
+          <Lbl x={706} y={206} lines={['allocations']} />
+          <Arr d="M612,236 L802,258" both />
+          <Lbl x={712} y={252} lines={['expense records']} />
+          <Arr d="M612,316 L802,316" both />
+          <Lbl x={708} y={308} lines={['liquidation reports']} />
+          <Arr d="M612,406 L802,404" both />
+          <Lbl x={708} y={398} lines={['document metadata']} />
+          <Arr d="M612,496 L802,494" both />
+          <Lbl x={708} y={488} lines={['youth records']} />
+          <Arr d="M612,662 L802,584" dashed />
+          <Lbl x={716} y={624} lines={['announcements']} />
+          <Arr d="M612,680 L802,668" both />
+          <Lbl x={708} y={692} lines={['notifications']} />
 
-    {/* Background jobs path */}
-    <div className="mt-5 pt-4 border-t border-dashed border-gray-200 dark:border-gray-700">
-      <LayerLabel>Background — node-cron (in-process on Render)</LayerLabel>
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <FlowNode title="node-cron" sub="08:00 reminders · 6h compliance" color="gold" />
-        <span className="text-gray-300 dark:text-gray-600">→</span>
-        <FlowNode title="Services" sub="notification + email" color="slate" />
-        <span className="text-gray-300 dark:text-gray-600">→</span>
-        <FlowNode title="MongoDB / Notifications" sub="in-app + SMTP" color="green" />
+          {/* Reports (7.0) aggregate reads */}
+          <Arr d="M612,570 L802,258" dashed />
+          <Arr d="M612,580 L802,316" dashed />
+          <Arr d="M612,590 L802,494" dashed />
+          <Lbl x={706} y={540} lines={['aggregate reads']} />
+
+          {/* Audit trail writes (representative — see flow index for all writers) */}
+          <Arr d="M612,690 L802,724" dashed />
+          <Lbl x={742} y={702} lines={['audit trail']} />
+
+          {/* Administrators → processes */}
+          <Arr d="M168,58 L386,58" />
+          <Lbl x={278} y={50} lines={['approve users · roles']} />
+          <Arr d="M168,80 L386,574" dashed />
+          <Lbl x={276} y={470} lines={['monitor / view']} />
+
+          {/* SK Officials fan-out (create / update) */}
+          <Arr d="M168,258 L386,64" />
+          <Arr d="M168,260 L386,140" />
+          <Arr d="M168,262 L386,220" />
+          <Arr d="M168,264 L386,310" />
+          <Arr d="M168,266 L386,400" />
+          <Arr d="M168,268 L386,490" />
+          <Lbl x={262} y={250} lines={['create / update', 'records']} />
+
+          {/* DILG → processes / reports */}
+          <Arr d="M168,368 L386,226" />
+          <Lbl x={264} y={300} lines={['approve', 'budget / expense']} />
+          <Arr d="M168,382 L386,312" />
+          <Lbl x={264} y={356} lines={['approve liq.']} />
+          <Arr d="M386,586 L168,392" />
+          <Lbl x={266} y={452} lines={['financial reports']} />
+
+          {/* Public ↔ portal */}
+          <Arr d="M168,580 L386,662" />
+          <Lbl x={266} y={634} lines={['portal request']} />
+          <Arr d="M386,684 L168,600" />
+          <Lbl x={266} y={694} lines={['public info']} />
+
+          {/* Notifications → Email */}
+          <Arr d="M386,700 L170,700" />
+          <Lbl x={282} y={686} lines={['emails']} />
+        </svg>
       </div>
     </div>
 
-    {/* Response path note */}
-    <div className="mt-5 bg-navy-50 dark:bg-navy-900/20 border border-navy-200 dark:border-navy-800 rounded-lg p-3 text-[11px] text-navy-800 dark:text-navy-300">
-      <strong>Response path:</strong> Controller → <code className="font-mono">successResponse / paginatedResponse</code> (uniform JSON envelope) → Netlify proxy → axios interceptor (401 → <code className="font-mono">/login?reason=</code>) → React Query cache → UI re-render. PDF/Excel reports stream binary via PDFKit / ExcelJS.
-    </div>
-
-    {/* Legend */}
-    <div className="mt-4 flex flex-wrap items-center justify-center gap-3 text-[10px] text-gray-400 dark:text-gray-500">
-      <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded border ${flowColors.navy}`}></span>Actors / API</span>
-      <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded border ${flowColors.gold}`}></span>Proxy / Jobs</span>
-      <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded border ${flowColors.green}`}></span>Data / External</span>
-      <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded border ${flowColors.slate}`}></span>App layer</span>
-      <span>· ↕ = bidirectional read/write</span>
+    {/* ── Flow index (textual completeness) ── */}
+    <div className="grid md:grid-cols-3 gap-4">
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+        <p className="text-xs font-bold text-navy-800 dark:text-navy-200 mb-2">External Entities</p>
+        <ul className="space-y-1.5">
+          {DFD_ENTITIES.map((e) => (
+            <li key={e.name} className="text-[11px] text-gray-600 dark:text-gray-300">
+              <span className="font-semibold">{e.name}</span>
+              <span className="block text-gray-400 dark:text-gray-500">{e.note}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 md:col-span-2">
+        <p className="text-xs font-bold text-navy-800 dark:text-navy-200 mb-2">Processes → Data Stores &amp; Outputs</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px]">
+            <thead className="text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+              <tr>
+                <th className="text-left py-1 pr-2 font-semibold whitespace-nowrap">#</th>
+                <th className="text-left py-1 pr-2 font-semibold">Process</th>
+                <th className="text-left py-1 pr-2 font-semibold">Data Stores</th>
+                <th className="text-left py-1 font-semibold">External Output</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+              {DFD_PROCESSES.map((p) => (
+                <tr key={p.id}>
+                  <td className="py-1 pr-2 font-mono text-navy-600 dark:text-navy-300 align-top">{p.id}</td>
+                  <td className="py-1 pr-2 text-gray-700 dark:text-gray-200 align-top">{p.name}</td>
+                  <td className="py-1 pr-2 text-emerald-700 dark:text-emerald-400 align-top">{p.stores}</td>
+                  <td className="py-1 text-gray-500 dark:text-gray-400 align-top">{p.out}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">
+          Data stores: {DFD_STORES.join(' · ')}. Files for D6 are stored in Cloudinary; D10 (Audit Logs) is written by processes 1, 3, 4, 5 &amp; 8 for every financial mutation, role change and document operation.
+        </p>
+      </div>
     </div>
   </div>
 );
@@ -657,12 +872,12 @@ export default function SystemReference() {
           />
         </Section>
 
-        {/* Data Flow Diagram */}
-        <Section title="System Data Flow Diagram">
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-            End-to-end request lifecycle across the deployed architecture (Netlify → Render → Atlas/Cloudinary/SMTP). Read top-to-bottom; the request pipeline scrolls horizontally on small screens.
+        {/* Data Flow Diagram (DFD) */}
+        <Section title="Data Flow Diagram (DFD)">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+            Structured-analysis DFD showing how data moves through SKIMS — external entities (sources/sinks), processes (transformations), data stores, and labeled data flows. Level 0 (Context) gives the high-level overview; Level 1 decomposes the system into its major processes. Diagrams scroll horizontally on small screens.
           </p>
-          <DataFlowDiagram />
+          <SystemDFD />
         </Section>
 
         {/* Roles */}
