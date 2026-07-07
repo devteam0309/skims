@@ -498,6 +498,124 @@ const Pill = ({ text, color = 'gray' }) => {
   return <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${c[color]}`}>{text}</span>;
 };
 
+// ─── DATA FLOW DIAGRAM ─────────────────────────────────────────────────────────
+
+const flowColors = {
+  navy: 'bg-navy-50 dark:bg-navy-900/40 border-navy-200 dark:border-navy-700 text-navy-800 dark:text-navy-200',
+  gold: 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-300 dark:border-yellow-800 text-yellow-800 dark:text-yellow-300',
+  green: 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-800 text-green-700 dark:text-green-400',
+  gray: 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300',
+  slate: 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200',
+};
+
+const FlowNode = ({ title, sub, color = 'slate', className = '' }) => (
+  <div className={`rounded-lg border px-3 py-2 text-center min-w-[112px] shadow-sm ${flowColors[color]} ${className}`}>
+    <p className="text-xs font-semibold leading-tight">{title}</p>
+    {sub && <p className="text-[10px] opacity-70 mt-0.5 leading-tight">{sub}</p>}
+  </div>
+);
+
+const FlowArrow = ({ label, symbol = '↓' }) => (
+  <div className="flex flex-col items-center justify-center py-1.5">
+    {label && <span className="text-[10px] text-gray-400 dark:text-gray-500 mb-0.5 text-center px-2">{label}</span>}
+    <span className="text-gray-300 dark:text-gray-600 text-xl leading-none">{symbol}</span>
+  </div>
+);
+
+const LayerLabel = ({ children }) => (
+  <p className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-semibold mb-2 text-center">{children}</p>
+);
+
+const REQUEST_PIPELINE = [
+  'Helmet + CORS', 'Rate Limit', 'Body Parse', 'mongo-sanitize + HPP',
+  'protect (JWT verify)', 'authorize (RBAC)', 'express-validator', 'Controller',
+];
+
+const DataFlowDiagram = () => (
+  <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+
+    {/* Layer 1 — Actors / Browser */}
+    <LayerLabel>Actors · Browser (React 18 SPA · Zustand auth · React Query)</LayerLabel>
+    <div className="flex flex-wrap justify-center gap-2">
+      <FlowNode title="Public Citizen" sub="/portal · no auth" color="gray" />
+      <FlowNode title="SK Officials" sub="chair · treas · sec · kagawad" color="navy" />
+      <FlowNode title="Municipal / Prov. Admin" sub="scoped / all-mun" color="navy" />
+      <FlowNode title="DILG Rep" sub="read · approve" color="navy" />
+      <FlowNode title="Super Admin" sub="full access" color="navy" />
+    </div>
+
+    <FlowArrow label="HTTPS · axios baseURL '/api' · httpOnly JWT cookie (+ Bearer fallback)" />
+
+    {/* Layer 2 — Netlify */}
+    <LayerLabel>Netlify — Frontend Host</LayerLabel>
+    <div className="flex flex-wrap justify-center gap-2">
+      <FlowNode title="Static SPA" sub="Vite dist/ · SPA fallback" color="slate" />
+      <FlowNode title="/api/* proxy" sub="rewrite → Render :splat (same-origin)" color="gold" />
+    </div>
+
+    <FlowArrow label="proxied to skims.onrender.com/api/:splat" />
+
+    {/* Layer 3 — Express request pipeline */}
+    <LayerLabel>Express API (Render) — Request Pipeline</LayerLabel>
+    <div className="overflow-x-auto">
+      <div className="flex items-center justify-center gap-1 min-w-max py-1">
+        {REQUEST_PIPELINE.map((step, i) => (
+          <div key={step} className="flex items-center">
+            <div className={`rounded-md border px-2 py-1.5 text-[10px] font-medium whitespace-nowrap ${flowColors.navy}`}>{step}</div>
+            {i < REQUEST_PIPELINE.length - 1 && <span className="text-gray-300 dark:text-gray-600 px-0.5">→</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+
+    <FlowArrow label="whitelisted fields · municipality scoping · atomic updates" />
+
+    {/* Layer 4 — Domain controllers */}
+    <LayerLabel>Domain Controllers &amp; Services</LayerLabel>
+    <div className="flex flex-wrap justify-center gap-2">
+      {['Auth', 'Programs', 'Budgets', 'Expenses', 'Liquidations', 'Documents', 'Youth', 'Reports', 'Analytics', 'Monitoring', 'Notifications', 'Public'].map((m) => (
+        <span key={m} className={`rounded-md border px-2 py-1 text-[10px] font-medium ${flowColors.slate}`}>{m}</span>
+      ))}
+    </div>
+
+    <FlowArrow label="Mongoose ODM  ·  Cloudinary SDK  ·  Nodemailer" symbol="↕" />
+
+    {/* Layer 5 — Data & external services */}
+    <LayerLabel>Data &amp; External Services</LayerLabel>
+    <div className="flex flex-wrap justify-center gap-2">
+      <FlowNode title="MongoDB Atlas" sub="Mongoose · soft-delete · AuditLog 7yr" color="green" />
+      <FlowNode title="Cloudinary" sub="skims/documents · skims/avatars" color="green" />
+      <FlowNode title="SMTP (Nodemailer)" sub="verify · approve · reset · alerts" color="green" />
+    </div>
+
+    {/* Background jobs path */}
+    <div className="mt-5 pt-4 border-t border-dashed border-gray-200 dark:border-gray-700">
+      <LayerLabel>Background — node-cron (in-process on Render)</LayerLabel>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <FlowNode title="node-cron" sub="08:00 reminders · 6h compliance" color="gold" />
+        <span className="text-gray-300 dark:text-gray-600">→</span>
+        <FlowNode title="Services" sub="notification + email" color="slate" />
+        <span className="text-gray-300 dark:text-gray-600">→</span>
+        <FlowNode title="MongoDB / Notifications" sub="in-app + SMTP" color="green" />
+      </div>
+    </div>
+
+    {/* Response path note */}
+    <div className="mt-5 bg-navy-50 dark:bg-navy-900/20 border border-navy-200 dark:border-navy-800 rounded-lg p-3 text-[11px] text-navy-800 dark:text-navy-300">
+      <strong>Response path:</strong> Controller → <code className="font-mono">successResponse / paginatedResponse</code> (uniform JSON envelope) → Netlify proxy → axios interceptor (401 → <code className="font-mono">/login?reason=</code>) → React Query cache → UI re-render. PDF/Excel reports stream binary via PDFKit / ExcelJS.
+    </div>
+
+    {/* Legend */}
+    <div className="mt-4 flex flex-wrap items-center justify-center gap-3 text-[10px] text-gray-400 dark:text-gray-500">
+      <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded border ${flowColors.navy}`}></span>Actors / API</span>
+      <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded border ${flowColors.gold}`}></span>Proxy / Jobs</span>
+      <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded border ${flowColors.green}`}></span>Data / External</span>
+      <span className="flex items-center gap-1"><span className={`w-3 h-3 rounded border ${flowColors.slate}`}></span>App layer</span>
+      <span>· ↕ = bidirectional read/write</span>
+    </div>
+  </div>
+);
+
 export default function SystemReference() {
   const { user } = useAuthStore();
 
@@ -537,6 +655,14 @@ export default function SystemReference() {
               </tr>
             ))}
           />
+        </Section>
+
+        {/* Data Flow Diagram */}
+        <Section title="System Data Flow Diagram">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            End-to-end request lifecycle across the deployed architecture (Netlify → Render → Atlas/Cloudinary/SMTP). Read top-to-bottom; the request pipeline scrolls horizontally on small screens.
+          </p>
+          <DataFlowDiagram />
         </Section>
 
         {/* Roles */}
