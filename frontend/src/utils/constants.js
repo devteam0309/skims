@@ -61,7 +61,7 @@ export const DOCUMENT_CATEGORIES = [
   { value: 'other', label: 'Other' },
 ];
 
-export const MUNICIPALITIES = ['Boac', 'Buenavista', 'Gasan', 'Mogpog', 'Sta. Cruz', 'Torrijos'];
+export const MUNICIPALITIES = ['Boac', 'Gasan', 'Mogpog', 'Sta. Cruz'];
 
 export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

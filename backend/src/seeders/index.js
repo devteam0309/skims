@@ -16,11 +16,9 @@ const Announcement = require('../models/Announcement');
 
 const MUNICIPALITIES = [
   { name: 'Boac', code: 'BOA', totalBarangays: 61 },
-  { name: 'Buenavista', code: 'BUE', totalBarangays: 15 },
   { name: 'Gasan', code: 'GAS', totalBarangays: 25 },
   { name: 'Mogpog', code: 'MOG', totalBarangays: 37 },
   { name: 'Santa Cruz', code: 'STC', totalBarangays: 55 },
-  { name: 'Torrijos', code: 'TOR', totalBarangays: 25 },
 ];
 
 const BARANGAYS = {
@@ -34,11 +32,6 @@ const BARANGAYS = {
     'Murallon (Poblacion)', 'Ogbac', 'Pawa', 'Pili', 'Poctoy', 'Poras', 'Putting Buhangin',
     'Puyog', 'Sabong', 'San Miguel (Poblacion)', 'Santol', 'Sawi', 'Tabi', 'Tabigue',
     'Tagwak', 'Tambunan', 'Tampus (Poblacion)', 'Tanza', 'Tugos', 'Tumagabok', 'Tumapon',
-  ],
-  BUE: [
-    'Bagacay', 'Bagtingon', 'Barangay I (Pob.)', 'Barangay II (Pob.)', 'Barangay III (Pob.)',
-    'Barangay IV (Pob.)', 'Bicas-Bicas', 'Caigangan', 'Daykitin', 'Libas', 'Malbog',
-    'Sihi', 'Timbo (Sanggulong)', 'Tungib-Lipata', 'Yook',
   ],
   GAS: [
     'Antipolo', 'Bachao Ibaba', 'Bachao Ilaya', 'Bacongbacong', 'Bahi', 'Bangbang', 'Banot',
@@ -64,12 +57,6 @@ const BARANGAYS = {
     'Masalukot', 'Matalaba', 'Mongpong', 'Morales', 'Napo', 'Pag-Asa Pob. (4th Zone)',
     'Pantayin', 'Polo', 'Pulong-Parang', 'Punong', 'Salumangi', 'San Antonio',
     'San Isidro', 'Tagum', 'Tamayo', 'Tambangan', 'Tawiran',
-  ],
-  TOR: [
-    'Bangwayin', 'Bayakbakin', 'Bolo', 'Bonliw', 'Buangan', 'Cabuyo', 'Cagpo',
-    'Dampulan', 'Kay Duke', 'Mabuhay', 'Makawayan', 'Malibago', 'Malinao', 'Maranlig',
-    'Marlangga', 'Matuyatuya', 'Nangka', 'Pakaskasan', 'Payanas', 'Poblacion', 'Poctoy',
-    'Sibuyao', 'Suha', 'Talawan', 'Tigwi',
   ],
 };
 
@@ -161,8 +148,6 @@ const seed = async () => {
       { firstName: 'Maria', lastName: 'Santos', email: 'maria@boac.gov.ph', password: 'Admin@123', role: 'sk_treasurer', municipality: munMap['BOA']._id, isApproved: true, isEmailVerified: true },
       { firstName: 'Pedro', lastName: 'Garcia', email: 'pedro@stac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['STC']._id, isApproved: true, isEmailVerified: true },
       { firstName: 'Ana', lastName: 'Reyes', email: 'ana@gasan.gov.ph', password: 'Admin@123', role: 'sk_secretary', municipality: munMap['GAS']._id, isApproved: true, isEmailVerified: true },
-      { firstName: 'Liza', lastName: 'Cruz', email: 'liza@buenavista.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['BUE']._id, isApproved: true, isEmailVerified: true },
-      { firstName: 'Ramon', lastName: 'Diaz', email: 'ramon@torrijos.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['TOR']._id, isApproved: true, isEmailVerified: true },
       { firstName: 'DILG', lastName: 'Officer', email: 'dilg@marinduque.gov.ph', password: 'Admin@123', role: 'dilg_representative', isApproved: true, isEmailVerified: true },
       { firstName: 'Carlos', lastName: 'Munoz', email: 'municipal@boac.gov.ph', password: 'Admin@123', role: 'municipal_admin', municipality: munMap['BOA']._id, isApproved: true, isEmailVerified: true },
       { firstName: 'Youth', lastName: 'User', email: 'youth@example.com', password: 'Admin@123', role: 'public_user', isApproved: true, isEmailVerified: true },
@@ -269,8 +254,6 @@ const seed = async () => {
 
     // Users used as budget creators per municipality
     const anaGasan = users.find((u) => u.email === 'ana@gasan.gov.ph');
-    const lizaBuena = users.find((u) => u.email === 'liza@buenavista.gov.ph');
-    const ramonTorrijos = users.find((u) => u.email === 'ramon@torrijos.gov.ph');
     const provincial = users.find((u) => u.role === 'provincial_admin');
 
     // Seed one approved FY2026 budget PER municipality.
@@ -302,16 +285,6 @@ const seed = async () => {
         { category: 'environment', amount: 300000, description: 'Coastal & river clean-up drives' },
         { category: 'health', amount: 200000 },
         { category: 'governance', amount: 250000 },
-      ] },
-      { code: 'BUE', creator: lizaBuena, total: 600000, allocations: [
-        { category: 'education', amount: 250000 },
-        { category: 'livelihood', amount: 200000 },
-        { category: 'governance', amount: 150000 },
-      ] },
-      { code: 'TOR', creator: ramonTorrijos, total: 650000, allocations: [
-        { category: 'health', amount: 250000 },
-        { category: 'sports', amount: 200000 },
-        { category: 'social_services', amount: 200000 },
       ] },
     ];
 
@@ -440,14 +413,23 @@ const seed = async () => {
       (barangaysByMun[key] = barangaysByMun[key] || []).push(b);
     });
 
-    // Seed youth members
+    // Seed youth members — first/last name arrays are indexed directly (20 entries each)
+    // so every seeded youth gets a unique full name
+    const YOUTH_FIRST_NAMES = [
+      'Jose', 'Maria', 'Carlos', 'Ana', 'Miguel', 'Rosa', 'Antonio', 'Elena', 'Roberto', 'Carmen',
+      'Paolo', 'Isabel', 'Ricardo', 'Teresa', 'Andres', 'Lourdes', 'Felipe', 'Cristina', 'Manuel', 'Dolores',
+    ];
+    const YOUTH_LAST_NAMES = [
+      'Santos', 'Reyes', 'dela Cruz', 'Bautista', 'Ramos', 'Garcia', 'Torres', 'Flores', 'Rivera', 'Lopez',
+      'Mendoza', 'Aquino', 'Castillo', 'Villanueva', 'Domingo', 'Navarro', 'Salazar', 'Aguilar', 'Ocampo', 'Pascual',
+    ];
     const youthData = Array.from({ length: 20 }, (_, i) => {
       const mun = municipalities[i % municipalities.length];
       const munBarangays = barangaysByMun[mun._id.toString()] || [];
       const barangay = munBarangays[i % munBarangays.length];
       return {
-        firstName: ['Jose', 'Maria', 'Carlos', 'Ana', 'Miguel', 'Rosa', 'Antonio', 'Elena', 'Roberto', 'Carmen'][i % 10],
-        lastName: ['Santos', 'Reyes', 'dela Cruz', 'Bautista', 'Ramos', 'Garcia', 'Torres', 'Flores', 'Rivera', 'Lopez'][i % 10],
+        firstName: YOUTH_FIRST_NAMES[i],
+        lastName: YOUTH_LAST_NAMES[i],
         birthDate: new Date(2000 + (i % 5), i % 12, (i % 28) + 1),
         gender: i % 2 === 0 ? 'male' : 'female',
         municipality: mun._id,

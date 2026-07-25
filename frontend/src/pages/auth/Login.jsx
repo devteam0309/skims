@@ -30,8 +30,6 @@ const QA_ACCOUNTS = SHOW_QA_CREDS ? [
   { role: 'SK Treasurer · Boac', email: 'maria@boac.gov.ph' },
   { role: 'SK Chairperson · Sta. Cruz', email: 'pedro@stac.gov.ph' },
   { role: 'SK Secretary · Gasan', email: 'ana@gasan.gov.ph' },
-  { role: 'SK Chairperson · Buenavista', email: 'liza@buenavista.gov.ph' },
-  { role: 'SK Chairperson · Torrijos', email: 'ramon@torrijos.gov.ph' },
   { role: 'DILG Representative', email: 'dilg@marinduque.gov.ph' },
   { role: 'Public User', email: 'youth@example.com' },
 ] : [];
@@ -90,7 +88,7 @@ export default function Login() {
               Sangguniang Kabataan<br />Integrated Management
             </h1>
             <p className="text-navy-300 text-sm mb-8 leading-relaxed">
-              Digitizing youth governance across Boac, Buenavista, Gasan, Mogpog, Sta. Cruz, and Torrijos municipalities.
+              Digitizing youth governance across Boac, Gasan, Mogpog, and Sta. Cruz municipalities.
             </p>
             <div className="space-y-3">
               {[

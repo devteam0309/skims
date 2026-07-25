@@ -6,8 +6,8 @@ const SYSTEM = {
   name: 'SKIMS',
   full: 'Sangguniang Kabataan Integrated Management System',
   version: '1.0.0',
-  context: 'SK (Sangguniang Kabataan) governance platform for 6 municipalities in Marinduque, Philippines.',
-  municipalities: ['Boac (BOA)', 'Buenavista (BUE)', 'Gasan (GAS)', 'Mogpog (MOG)', 'Santa Cruz (STC)', 'Torrijos (TOR)'],
+  context: 'SK (Sangguniang Kabataan) governance platform for 4 municipalities in Marinduque, Philippines.',
+  municipalities: ['Boac (BOA)', 'Gasan (GAS)', 'Mogpog (MOG)', 'Santa Cruz (STC)'],
 };
 
 const STACK = [
@@ -93,12 +93,12 @@ const MODELS = [
   {
     name: 'Municipality',
     key_fields: 'name, code, province, region, totalBarangays',
-    notes: '6 municipalities in Marinduque: BOA, BUE, GAS, MOG, STC, TOR',
+    notes: '4 municipalities in Marinduque: BOA, GAS, MOG, STC',
   },
   {
     name: 'Barangay',
     key_fields: 'name, municipality (ref)',
-    notes: '218 total barangays across 6 municipalities',
+    notes: '178 total barangays across 4 municipalities',
   },
   {
     name: 'Program',
@@ -322,7 +322,7 @@ const API_ENDPOINTS = [
       { method: 'GET', path: '/budget', auth: 'None', roles: '—', note: 'Aggregated budget summary per municipality' },
       { method: 'GET', path: '/documents', auth: 'None', roles: '—', note: 'isPublic=true, not-archived, not-deleted; fileUrl stripped from response' },
       { method: 'GET', path: '/documents/:id/download', auth: 'None', roles: '—', note: 'isPublic check; streams file or redirects to Cloudinary; 302/404' },
-      { method: 'GET', path: '/municipalities', auth: 'None', roles: '—', note: 'All 6 municipalities' },
+      { method: 'GET', path: '/municipalities', auth: 'None', roles: '—', note: 'All 4 municipalities' },
       { method: 'GET', path: '/stats', auth: 'None', roles: '—', note: 'Aggregate counts: programs, youth, documents, municipalities' },
     ],
   },
@@ -412,8 +412,6 @@ const TEST_ACCOUNTS = [
   { role: 'sk_treasurer', email: 'maria@boac.gov.ph', password: 'Admin@123', municipality: 'Boac' },
   { role: 'sk_secretary', email: 'ana@gasan.gov.ph', password: 'Admin@123', municipality: 'Gasan' },
   { role: 'sk_chairperson', email: 'pedro@stac.gov.ph', password: 'Admin@123', municipality: 'Santa Cruz' },
-  { role: 'sk_chairperson', email: 'liza@buenavista.gov.ph', password: 'Admin@123', municipality: 'Buenavista' },
-  { role: 'sk_chairperson', email: 'ramon@torrijos.gov.ph', password: 'Admin@123', municipality: 'Torrijos' },
   { role: 'dilg_representative', email: 'dilg@marinduque.gov.ph', password: 'Admin@123', municipality: '—' },
   { role: 'public_user', email: 'youth@example.com', password: 'Admin@123', municipality: '—' },
 ];

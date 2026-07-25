@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { MUNICIPALITIES, ADMIN_ROLES, FINANCE_STAFF, YOUTH_EDITORS, ROLE_LABELS } from '../utils/constants';
 
 describe('MUNICIPALITIES', () => {
-  it('lists all six Marinduque municipalities', () => {
-    expect(MUNICIPALITIES).toHaveLength(6);
-    ['Boac', 'Buenavista', 'Gasan', 'Mogpog', 'Sta. Cruz', 'Torrijos'].forEach((m) => {
+  it('lists all four Marinduque municipalities', () => {
+    expect(MUNICIPALITIES).toHaveLength(4);
+    ['Boac', 'Gasan', 'Mogpog', 'Sta. Cruz'].forEach((m) => {
       expect(MUNICIPALITIES).toContain(m);
     });
   });
