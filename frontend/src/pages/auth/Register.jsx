@@ -4,11 +4,11 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, UserPlus } from 'lucide-react';
+import { Eye, EyeOff, UserPlus, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { authService } from '../../services/authService';
 import { municipalityService } from '../../services/documentService';
-import { ROLE_LABELS } from '../../utils/constants';
+import { ROLE_LABELS, SELF_ASSIGNABLE_ROLES } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 
 const schema = z.object({
@@ -24,7 +24,16 @@ const schema = z.object({
   }),
 }).refine((d) => d.password === d.confirmPassword, { message: 'Passwords do not match', path: ['confirmPassword'] });
 
-const ALLOWED_ROLES = Object.entries(ROLE_LABELS).filter(([k]) => k !== 'super_admin');
+/*
+ * Only roles the backend will actually grant. This previously listed every role except
+ * super_admin, including provincial_admin and municipal_admin, which authController downgrades
+ * to public_user without telling anyone — the registrant chose one account type and silently
+ * received another.
+ */
+const SELECTABLE_ROLES = SELF_ASSIGNABLE_ROLES.map((value) => [value, ROLE_LABELS[value]]);
+
+const inputClass =
+  'mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-navy-700 focus:ring-2 focus:ring-navy-700/20 aria-[invalid=true]:border-red-500';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -54,94 +63,150 @@ export default function Register() {
     }
   };
 
+  /** Field error, wired to the input via aria-describedby so it is announced, not just seen. */
+  const Error = ({ name }) =>
+    errors[name] ? (
+      <p id={`${name}-error`} className="field-error" role="alert">
+        <AlertCircle size={12} aria-hidden="true" className="shrink-0" />
+        {errors[name].message}
+      </p>
+    ) : null;
+
+  /** aria-* wiring shared by every control. */
+  const a11y = (name, hintId) => ({
+    id: name,
+    'aria-invalid': errors[name] ? 'true' : undefined,
+    'aria-describedby': [errors[name] ? `${name}-error` : null, hintId].filter(Boolean).join(' ') || undefined,
+  });
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-navy-950 to-navy-900 flex items-center justify-center p-4">
+    <div className="flex min-h-screen items-center justify-center bg-navy-950 p-4">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden"
+        transition={{ duration: 0.2 }}
+        className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-xl"
       >
         <div className="bg-navy-900 px-8 py-6 text-white">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg overflow-hidden bg-white">
-              <img src="/main_logo.jfif" alt="SKIMS" className="w-full h-full object-contain" />
+            <div className="h-10 w-10 overflow-hidden rounded-lg bg-white">
+              <img src="/main_logo.jfif" alt="" className="h-full w-full object-contain" />
             </div>
             <div>
-              <h1 className="font-bold text-lg">SKIMS Registration</h1>
-              <p className="text-navy-400 text-xs">Create your account</p>
+              <h1 className="text-lg font-semibold">SKIMS Registration</h1>
+              {/* navy-400 on navy-900 fell below AA; navy-200 reads cleanly. */}
+              <p className="text-xs text-navy-200">Create your account</p>
             </div>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="p-8 space-y-4">
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4 p-8">
+          <p className="meta-text">
+            Fields are required unless marked optional.
+          </p>
+
           <div className="grid grid-cols-2 gap-4">
-            {[['firstName', 'First Name'], ['lastName', 'Last Name']].map(([name, label]) => (
+            {[['firstName', 'First Name', 'given-name'], ['lastName', 'Last Name', 'family-name']].map(([name, label, ac]) => (
               <div key={name}>
-                <label className="form-label">{label}</label>
-                <input {...register(name)} className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700 focus:border-transparent placeholder-gray-400" />
-                {errors[name] && <p className="mt-1 text-xs text-red-500">{errors[name].message}</p>}
+                {/* htmlFor/id pairs: labels were previously unassociated, so clicking one did
+                    not focus its field and screen readers announced an unlabelled control. */}
+                <label htmlFor={name} className="form-label">{label}</label>
+                <input {...register(name)} {...a11y(name)} autoComplete={ac} className={inputClass} />
+                <Error name={name} />
               </div>
             ))}
           </div>
 
           <div>
-            <label className="form-label">Email Address</label>
-            <input {...register('email')} type="email" className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700 focus:border-transparent placeholder-gray-400" />
-            {errors.email && <p className="mt-1 text-xs text-red-500">{errors.email.message}</p>}
+            <label htmlFor="email" className="form-label">Email Address</label>
+            <input {...register('email')} {...a11y('email', 'email-hint')} type="email" autoComplete="email" className={inputClass} />
+            <p id="email-hint" className="field-hint">We send your verification link here — you cannot sign in until it is confirmed.</p>
+            <Error name="email" />
           </div>
 
           <div>
-            <label className="form-label">Role</label>
-            <select {...register('role')} className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700">
+            <label htmlFor="role" className="form-label">Role</label>
+            <select {...register('role')} {...a11y('role', 'role-hint')} className={inputClass}>
               <option value="">Select your role...</option>
-              {ALLOWED_ROLES.map(([value, label]) => (
+              {SELECTABLE_ROLES.map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
-            {errors.role && <p className="mt-1 text-xs text-red-500">{errors.role.message}</p>}
+            <p id="role-hint" className="field-hint">Administrator roles are assigned by an existing admin after your account is approved.</p>
+            <Error name="role" />
           </div>
 
           {needsMunicipality && (
             <div>
-              <label className="form-label">Municipality</label>
-              <select {...register('municipality')} className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700">
+              <label htmlFor="municipality" className="form-label">Municipality</label>
+              <select {...register('municipality')} {...a11y('municipality')} className={inputClass}>
                 <option value="">Select municipality...</option>
                 {munData?.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
               </select>
+              <Error name="municipality" />
             </div>
           )}
 
           <div>
-            <label className="form-label">Contact Number (optional)</label>
-            <input {...register('contactNumber')} type="tel" placeholder="09XXXXXXXXX" className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700 focus:border-transparent placeholder-gray-400" />
-            {errors.contactNumber && <p className="mt-1 text-xs text-red-500">{errors.contactNumber.message}</p>}
+            <label htmlFor="contactNumber" className="form-label">
+              Contact Number <span className="font-normal text-gray-500">(optional)</span>
+            </label>
+            <input {...register('contactNumber')} {...a11y('contactNumber')} type="tel" autoComplete="tel" placeholder="09XXXXXXXXX" className={inputClass} />
+            <Error name="contactNumber" />
           </div>
 
-          {[['password', 'Password'], ['confirmPassword', 'Confirm Password']].map(([name, label]) => (
-            <div key={name}>
-              <label className="form-label">{label}</label>
-              <div className="relative mt-1">
-                <input {...register(name)} type={showPass ? 'text' : 'password'}
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700 pr-10 focus:border-transparent placeholder-gray-400" />
-                {name === 'password' && (
-                  <button type="button" onClick={() => setShowPass(!showPass)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
-                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                )}
-              </div>
-              {errors[name] && <p className="mt-1 text-xs text-red-500">{errors[name].message}</p>}
+          <div>
+            <label htmlFor="password" className="form-label">Password</label>
+            <div className="relative">
+              <input
+                {...register('password')}
+                {...a11y('password', 'password-hint')}
+                type={showPass ? 'text' : 'password'}
+                autoComplete="new-password"
+                className={`${inputClass} pr-10`}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPass(!showPass)}
+                aria-label={showPass ? 'Hide password' : 'Show password'}
+                aria-pressed={showPass}
+                className="absolute right-3 top-1/2 mt-0.5 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+              >
+                {showPass ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+              </button>
             </div>
-          ))}
+            {/* Requirements stated up front rather than only after a rejected submit — the
+                cheapest possible way to prevent the error in the first place. */}
+            <p id="password-hint" className="field-hint">At least 8 characters, including one uppercase letter and one number.</p>
+            <Error name="password" />
+          </div>
 
-          <button type="submit" disabled={loading}
-            className="w-full bg-navy-900 text-white py-3 rounded-xl font-semibold text-sm hover:bg-navy-800 disabled:opacity-60 transition-all flex items-center justify-center gap-2 mt-2">
-            {loading ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <UserPlus size={16} />}
+          <div>
+            <label htmlFor="confirmPassword" className="form-label">Confirm Password</label>
+            <input
+              {...register('confirmPassword')}
+              {...a11y('confirmPassword')}
+              type={showPass ? 'text' : 'password'}
+              autoComplete="new-password"
+              className={inputClass}
+            />
+            <Error name="confirmPassword" />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-navy-900 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+          >
+            {loading
+              ? <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              : <UserPlus size={16} aria-hidden="true" />}
             {loading ? 'Creating Account...' : 'Create Account'}
           </button>
 
-          <p className="text-center text-sm text-gray-500">
-            Already have an account? <Link to="/login" className="text-navy-700 font-semibold">Sign in</Link>
+          <p className="text-center text-sm text-gray-600">
+            Already have an account?{' '}
+            <Link to="/login" className="font-semibold text-navy-700 hover:underline">Sign in</Link>
           </p>
         </form>
       </motion.div>

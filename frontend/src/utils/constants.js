@@ -65,6 +65,25 @@ export const MUNICIPALITIES = ['Boac', 'Gasan', 'Mogpog', 'Sta. Cruz'];
 
 export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/**
+ * Roles a user may choose for themselves at registration. Must stay in step with
+ * SELF_ASSIGNABLE_ROLES in backend/src/controllers/authController.js, which silently downgrades
+ * anything outside this list to public_user.
+ *
+ * The register form previously offered every role except super_admin, so a registrant could
+ * pick "Municipal SK Fed. Admin", be given public_user without any message, and land on the
+ * public portal wondering where their dashboard went. Elevated roles are assigned by an admin
+ * after the account exists.
+ */
+export const SELF_ASSIGNABLE_ROLES = [
+  'sk_chairperson',
+  'sk_treasurer',
+  'sk_secretary',
+  'sk_kagawad',
+  'dilg_representative',
+  'public_user',
+];
+
 export const ADMIN_ROLES = ['super_admin', 'provincial_admin', 'municipal_admin'];
 export const EDITOR_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];
 export const FINANCE_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'dilg_representative'];
