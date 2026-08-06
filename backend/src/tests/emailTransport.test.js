@@ -107,6 +107,34 @@ describe('emailService transport selection', () => {
     expect(JSON.parse(global.fetch.mock.calls[0][1].body).to).toEqual(['real-user@example.com']);
   });
 
+  it('formats peso amounts to exactly two decimals', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 'abc' }) });
+
+    await loadService().sendBudgetApproved(
+      { email: 'f@example.com', firstName: 'Fe' },
+      { title: 'FY2026', fiscalYear: 2026, totalBudget: 1234.567 }
+    );
+
+    const html = JSON.parse(global.fetch.mock.calls[0][1].body).html;
+    expect(html).toContain('₱1,234.57');
+    expect(html).not.toContain('1,234.567');
+  });
+
+  it('renders a zero amount rather than NaN when the amount is missing', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 'abc' }) });
+
+    await loadService().sendExpenseApproved(
+      { email: 'g@example.com', firstName: 'Gab' },
+      { title: 'Supplies', referenceNumber: 'EXP-1' }
+    );
+
+    const html = JSON.parse(global.fetch.mock.calls[0][1].body).html;
+    expect(html).toContain('₱0.00');
+    expect(html).not.toMatch(/NaN/);
+  });
+
   it('routes password reset through Resend too', async () => {
     process.env.RESEND_API_KEY = 're_test_key';
     global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 'abc' }) });
