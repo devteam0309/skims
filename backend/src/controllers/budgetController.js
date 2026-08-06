@@ -9,6 +9,35 @@ const { successResponse, errorResponse, paginatedResponse, parsePagination } = r
 const MAX_LIMIT = 100;
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Shared allocation guard for create + update. Returns an error string, or null when valid.
+// `expenseController` resolves a category allocation with a case-insensitive `.find()` and a
+// program allocation by program id, so duplicates on either key would silently under-enforce
+// the cap (only the first match is ever checked) — reject them here instead.
+const validateAllocations = (allocations, totalBudget) => {
+  if (!Array.isArray(allocations) || allocations.length === 0) return null;
+
+  const allocTotal = allocations.reduce((s, a) => s + (parseFloat(a.amount) || 0), 0);
+  if (allocTotal > parseFloat(totalBudget || 0)) {
+    return 'Total allocations cannot exceed the budget amount';
+  }
+
+  const seenCategories = new Set();
+  const seenPrograms = new Set();
+  for (const a of allocations) {
+    if (a.program) {
+      const key = a.program.toString();
+      if (seenPrograms.has(key)) return 'Duplicate program allocation — each program may only be allocated once';
+      seenPrograms.add(key);
+    } else {
+      const key = a.category?.toLowerCase();
+      if (!key) return 'Each allocation requires a category';
+      if (seenCategories.has(key)) return `Duplicate allocation for category "${a.category}" — combine them into one entry`;
+      seenCategories.add(key);
+    }
+  }
+  return null;
+};
+
 exports.getBudgets = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, municipality, fiscalYear, status, search } = req.query;
   const filter = { deletedAt: null };
@@ -54,17 +83,22 @@ exports.createBudget = asyncHandler(async (req, res) => {
     Object.entries(req.body).filter(([k]) => ALLOWED_CREATE_FIELDS.includes(k))
   );
   budgetData.createdBy = req.user._id;
-  if (!budgetData.municipality) budgetData.municipality = req.user.municipality;
 
-  if (budgetData.allocations?.length) {
-    const allocTotal = budgetData.allocations.reduce((s, a) => s + (parseFloat(a.amount) || 0), 0);
-    if (allocTotal > parseFloat(budgetData.totalBudget || 0)) {
-      return errorResponse(res, 400, 'Total allocations cannot exceed the budget amount');
-    }
+  // Only super/provincial admins operate across municipalities. For everyone else the municipality
+  // is forced from the token — accepting it from the body let a municipal_admin in one municipality
+  // create a budget assigned to another.
+  if (['super_admin', 'provincial_admin'].includes(req.user.role)) {
+    if (!budgetData.municipality) budgetData.municipality = req.user.municipality;
+  } else {
+    budgetData.municipality = req.user.municipality;
   }
+  if (!budgetData.municipality) return errorResponse(res, 400, 'Municipality is required');
+
+  const allocError = validateAllocations(budgetData.allocations, budgetData.totalBudget);
+  if (allocError) return errorResponse(res, 400, allocError);
 
   const budget = await Budget.create(budgetData);
-  await AuditLog.create({ user: req.user._id, action: 'CREATE', resource: 'budget', resourceId: budget._id, details: { title: budget.title, totalBudget: budget.totalBudget }, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'CREATE', resource: 'budget', resourceId: budget._id, details: { title: budget.title, totalBudget: budget.totalBudget }, ipAddress: req.ip, municipality: budget.municipality });
   successResponse(res, 201, 'Budget created', budget);
 });
 
@@ -80,13 +114,21 @@ exports.updateBudget = asyncHandler(async (req, res) => {
   const updates = Object.fromEntries(
     Object.entries(req.body).filter(([k]) => ALLOWED_UPDATE_FIELDS.includes(k))
   );
+
+  // Validate the RESULTING state, not just the incoming fields: lowering totalBudget on its own
+  // can strand already-saved allocations above the new cap.
+  const effectiveAllocations = updates.allocations ?? budget.allocations;
+  const effectiveTotal = updates.totalBudget ?? budget.totalBudget;
+  const allocError = validateAllocations(effectiveAllocations, effectiveTotal);
+  if (allocError) return errorResponse(res, 400, allocError);
+
   // Use aggregation pipeline to keep remainingBalance in sync when totalBudget changes
   const updated = await Budget.findByIdAndUpdate(
     req.params.id,
     [{ $set: { ...updates, remainingBalance: { $subtract: [updates.totalBudget ?? '$totalBudget', '$disbursedAmount'] } } }],
     { new: true, runValidators: true }
   );
-  await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'budget', resourceId: budget._id, details: { changes: Object.keys(updates) }, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'budget', resourceId: budget._id, details: { changes: Object.keys(updates) }, ipAddress: req.ip, municipality: budget.municipality });
   successResponse(res, 200, 'Budget updated', updated);
 });
 
@@ -104,7 +146,7 @@ exports.submitBudget = asyncHandler(async (req, res) => {
     { status: 'pending_approval' },
     { new: true }
   );
-  await AuditLog.create({ user: req.user._id, action: 'SUBMIT', resource: 'budget', resourceId: budget._id, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'SUBMIT', resource: 'budget', resourceId: budget._id, ipAddress: req.ip, municipality: budget.municipality });
   successResponse(res, 200, 'Budget submitted for approval', submitted);
 });
 
@@ -124,7 +166,7 @@ exports.approveBudget = asyncHandler(async (req, res) => {
   );
   if (!approved) return errorResponse(res, 409, 'Budget was already processed or is not pending approval');
 
-  await AuditLog.create({ user: req.user._id, action: 'APPROVE', resource: 'budget', resourceId: budget._id, details: { approvedAmount: budget.totalBudget }, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'APPROVE', resource: 'budget', resourceId: budget._id, details: { approvedAmount: budget.totalBudget }, ipAddress: req.ip, municipality: budget.municipality });
 
   User.findById(budget.createdBy).select('email firstName').then((creator) => {
     if (creator) emailService.sendBudgetApproved(creator, approved).catch(() => {});
@@ -147,7 +189,7 @@ exports.rejectBudget = asyncHandler(async (req, res) => {
     { status: 'rejected', notes: req.body.reason },
     { new: true }
   );
-  await AuditLog.create({ user: req.user._id, action: 'REJECT', resource: 'budget', resourceId: budget._id, details: { reason: req.body.reason }, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'REJECT', resource: 'budget', resourceId: budget._id, details: { reason: req.body.reason }, ipAddress: req.ip, municipality: budget.municipality });
 
   User.findById(budget.createdBy).select('email firstName').then((creator) => {
     if (creator) emailService.sendBudgetRejected(creator, budget, req.body.reason).catch(() => {});
@@ -165,7 +207,7 @@ exports.reopenBudget = asyncHandler(async (req, res) => {
   }
   if (budget.status !== 'rejected') return errorResponse(res, 400, 'Only rejected budgets can be reopened');
   const reopened = await Budget.findByIdAndUpdate(req.params.id, { status: 'draft', notes: '' }, { new: true });
-  await AuditLog.create({ user: req.user._id, action: 'REOPEN', resource: 'budget', resourceId: budget._id, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'REOPEN', resource: 'budget', resourceId: budget._id, ipAddress: req.ip, municipality: budget.municipality });
   successResponse(res, 200, 'Budget reopened for revision', reopened);
 });
 
@@ -179,7 +221,7 @@ exports.deleteBudget = asyncHandler(async (req, res) => {
   if (budget.status === 'approved') return errorResponse(res, 400, 'Approved budgets cannot be deleted — they have linked expenses');
   budget.deletedAt = new Date();
   await budget.save();
-  await AuditLog.create({ user: req.user._id, action: 'DELETE', resource: 'budget', resourceId: budget._id, details: { title: budget.title, status: budget.status }, ipAddress: req.ip, municipality: req.user.municipality });
+  await AuditLog.create({ user: req.user._id, action: 'DELETE', resource: 'budget', resourceId: budget._id, details: { title: budget.title, status: budget.status }, ipAddress: req.ip, municipality: budget.municipality });
   successResponse(res, 200, 'Budget deleted');
 });
 
