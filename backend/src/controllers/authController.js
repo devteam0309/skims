@@ -69,9 +69,10 @@ exports.register = asyncHandler(async (req, res) => {
   const verificationToken = user.getEmailVerificationToken();
   await user.save({ validateBeforeSave: false });
 
-  try {
-    await emailService.sendEmailVerification(user, verificationToken);
-  } catch (_) {}
+  // Fire-and-forget: never block the HTTP response on SMTP. A blocked or slow mail host would
+  // otherwise hang registration until nodemailer's connection timeout (~2 min by default), which
+  // reads to the client as a 504 even though the account was created successfully.
+  emailService.sendEmailVerification(user, verificationToken).catch(() => {});
 
   // Notify admins when a non-public_user registers and requires approval
   if (assignedRole !== 'public_user') {
@@ -242,9 +243,8 @@ exports.resendVerification = asyncHandler(async (req, res) => {
   if (!user) return successResponse(res, 200, 'If your email is pending verification, a new link has been sent');
   const verificationToken = user.getEmailVerificationToken();
   await user.save({ validateBeforeSave: false });
-  try {
-    await emailService.sendEmailVerification(user, verificationToken);
-  } catch (_) {}
+  // Fire-and-forget for the same reason as register() above.
+  emailService.sendEmailVerification(user, verificationToken).catch(() => {});
   successResponse(res, 200, 'If your email is pending verification, a new link has been sent');
 });
 

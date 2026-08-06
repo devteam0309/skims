@@ -3,11 +3,17 @@ const logger = require('../utils/logger');
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// Explicit timeouts matter: nodemailer defaults to a ~2 minute connection timeout, so a host that
+// blocks outbound SMTP (Render's free tier blocks 25/465/587) leaves the socket hanging that long
+// and ties up a worker. Fail fast and let the caller's .catch() log it instead.
 const createTransporter = () => nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: process.env.SMTP_PORT,
   secure: false,
   auth: { user: process.env.SMTP_EMAIL, pass: process.env.SMTP_PASSWORD },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
 });
 
 const sendEmail = async ({ to, subject, html }) => {
