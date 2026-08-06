@@ -16,19 +16,59 @@ const createTransporter = () => nodemailer.createTransport({
   socketTimeout: 15000,
 });
 
+// Resend's API documents the plain `Name <addr>` form; SMTP keeps the quoted form it already used.
+const resendFrom = () => `${process.env.FROM_NAME} <${process.env.FROM_EMAIL}>`;
+const smtpFrom = () => `"${process.env.FROM_NAME}" <${process.env.FROM_EMAIL}>`;
+
+// Resend is an HTTP API, so it works on hosts that block outbound SMTP ports (Render's free tier
+// blocks 25/465/587 — see the SMTP timeout note above). Used whenever RESEND_API_KEY is present;
+// otherwise we fall back to SMTP so local dev against Gmail keeps working unchanged.
+const useResend = () => Boolean(process.env.RESEND_API_KEY);
+
+// Until a sending domain is verified, Resend only accepts the account owner's own address as a
+// recipient. RESEND_TO redirects every message there so the flow can be demoed end to end.
+// MUST be unset once a real domain is verified — while it is set, real users never receive mail.
+const resolveRecipient = (to) => {
+  const override = process.env.RESEND_TO;
+  if (!override || override === to) return to;
+  logger.warn(`RESEND_TO override active: mail for ${to} redirected to ${override}`);
+  return override;
+};
+
+const sendViaResend = async ({ to, subject, html }) => {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ from: resendFrom(), to: [resolveRecipient(to)], subject, html }),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!res.ok) {
+    // Resend returns { name, message } on failure. Surface the message so the cause is visible
+    // in logs — an unverified sending domain is by far the most common one.
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.message) detail = `${body.message} (HTTP ${res.status})`;
+    } catch (_) {}
+    throw new Error(`Resend rejected the message: ${detail}`);
+  }
+};
+
+const sendViaSmtp = async ({ to, subject, html }) => {
+  await createTransporter().sendMail({ from: smtpFrom(), to, subject, html });
+};
+
 const sendEmail = async ({ to, subject, html }) => {
-  const transporter = createTransporter();
-  const mailOptions = {
-    from: `"${process.env.FROM_NAME}" <${process.env.FROM_EMAIL}>`,
-    to,
-    subject,
-    html,
-  };
+  const transport = useResend() ? 'resend' : 'smtp';
   try {
-    await transporter.sendMail(mailOptions);
-    logger.info(`Email sent to ${to}: ${subject}`);
+    await (transport === 'resend' ? sendViaResend : sendViaSmtp)({ to, subject, html });
+    logger.info(`Email sent to ${to} via ${transport}: ${subject}`);
   } catch (error) {
-    logger.error(`Email failed to ${to}: ${error.message}`);
+    logger.error(`Email failed to ${to} via ${transport}: ${error.message}`);
     throw error;
   }
 };

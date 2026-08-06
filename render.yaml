@@ -39,6 +39,17 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      # Email. Render's free tier BLOCKS outbound SMTP (25/465/587), so nodemailer hangs until
+      # timeout and nothing is delivered. RESEND_API_KEY switches the app to Resend's HTTP API,
+      # which is not port-restricted — set it, or email is non-functional on this plan.
+      - key: RESEND_API_KEY
+        sync: false
+      # Only needed until a sending domain is verified at resend.com/domains. With
+      # FROM_EMAIL=onboarding@resend.dev, Resend delivers ONLY to the account owner's address;
+      # RESEND_TO redirects all mail there. Remove it once a real domain is verified.
+      - key: RESEND_TO
+        sync: false
+      # SMTP fallback, used only when RESEND_API_KEY is unset.
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -47,5 +58,6 @@ services:
         sync: false
       - key: SMTP_PASSWORD
         sync: false
+      # Must be on a Resend-verified domain when using Resend. Use onboarding@resend.dev until then.
       - key: FROM_EMAIL
         sync: false
