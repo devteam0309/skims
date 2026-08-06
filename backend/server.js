@@ -4,8 +4,10 @@ const connectDB = require('./src/config/database');
 const logger = require('./src/utils/logger');
 const cron = require('node-cron');
 const notificationService = require('./src/services/notificationService');
+const emailService = require('./src/services/emailService');
 
 connectDB();
+emailService.logConfig();
 
 cron.schedule('0 8 * * *', async () => {
   logger.info('Running daily deadline reminders...');

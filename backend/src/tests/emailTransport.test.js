@@ -135,6 +135,51 @@ describe('emailService transport selection', () => {
     expect(html).not.toMatch(/NaN/);
   });
 
+  it('logConfig warns when FROM_EMAIL is on a domain Resend must verify', () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    process.env.FROM_EMAIL = 'noreply@skims.gov.ph';
+    delete process.env.RESEND_TO;
+    const logger = require('../utils/logger');
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Plain require, NOT loadService(): isolateModules would give emailService its own logger
+    // instance, and the spy below would never see the calls. logConfig reads env at call time.
+    require('../services/emailService').logConfig();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('skims.gov.ph'));
+    warn.mockRestore();
+  });
+
+  it('logConfig does not warn about the domain for onboarding@resend.dev', () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    process.env.FROM_EMAIL = 'onboarding@resend.dev';
+    delete process.env.RESEND_TO;
+    const logger = require('../utils/logger');
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Plain require, NOT loadService(): isolateModules would give emailService its own logger
+    // instance, and the spy below would never see the calls. logConfig reads env at call time.
+    require('../services/emailService').logConfig();
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('verified at resend.com'));
+    warn.mockRestore();
+  });
+
+  it('logConfig warns loudly while RESEND_TO is redirecting all mail', () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    process.env.FROM_EMAIL = 'onboarding@resend.dev';
+    process.env.RESEND_TO = 'devteam@example.com';
+    const logger = require('../utils/logger');
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Plain require, NOT loadService(): isolateModules would give emailService its own logger
+    // instance, and the spy below would never see the calls. logConfig reads env at call time.
+    require('../services/emailService').logConfig();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('devteam@example.com'));
+    warn.mockRestore();
+  });
+
   it('routes password reset through Resend too', async () => {
     process.env.RESEND_API_KEY = 're_test_key';
     global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 'abc' }) });

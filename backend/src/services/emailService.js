@@ -79,6 +79,33 @@ const sendEmail = async ({ to, subject, html }) => {
   }
 };
 
+/**
+ * Log the effective mail configuration at boot. Misconfiguration here is otherwise invisible
+ * until the first send fails, which is easy to miss when sends are fire-and-forget. Never logs
+ * the API key itself.
+ */
+exports.logConfig = () => {
+  const from = process.env.FROM_EMAIL || '(unset)';
+  if (!useResend()) {
+    logger.info(`Email transport: SMTP via ${process.env.SMTP_HOST || '(unset)'} as ${from}`);
+    logger.warn('Email transport is SMTP — this does NOT work on hosts that block outbound SMTP (e.g. Render free). Set RESEND_API_KEY to use Resend.');
+    return;
+  }
+
+  logger.info(`Email transport: Resend, sending as ${from}`);
+
+  const domain = from.split('@')[1];
+  if (!domain) {
+    logger.error('FROM_EMAIL is unset or malformed — every Resend send will be rejected.');
+  } else if (domain !== 'resend.dev') {
+    logger.warn(`FROM_EMAIL uses domain "${domain}" — Resend rejects this unless the domain is verified at resend.com/domains. Use onboarding@resend.dev until one is verified.`);
+  }
+
+  if (process.env.RESEND_TO) {
+    logger.warn(`RESEND_TO is set to ${process.env.RESEND_TO} — ALL outgoing mail is redirected there and real recipients receive nothing. Unset it once a sending domain is verified.`);
+  }
+};
+
 exports.sendEmailVerification = async (user, token) => {
   const url = `${process.env.CLIENT_URL}/verify-email/${token}`;
   await sendEmail({
