@@ -282,16 +282,22 @@ export default function Budgets() {
       {summary && (
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: 'Total Approved Budget', value: formatCurrency(summary.total), icon: Banknote, color: 'text-navy-700' },
-            { label: 'Total Disbursed', value: formatCurrency(summary.disbursed), icon: TrendingUp, color: 'text-green-600' },
-            { label: 'Total Remaining', value: formatCurrency(summary.remaining), icon: TrendingDown, color: 'text-blue-600' },
+            // The API returns totalBudget/totalDisbursed/totalRemaining (see
+            // budgetController.getBudgetSummary). These read summary.total/.disbursed/.remaining,
+            // which are undefined, so every card rendered a confident ₱0.00 next to a table
+            // showing real money — the worst possible failure for a finance screen.
+            { label: 'Total Approved Budget', value: formatCurrency(summary.totalBudget), icon: Banknote },
+            { label: 'Total Disbursed', value: formatCurrency(summary.totalDisbursed), icon: TrendingUp },
+            { label: 'Total Remaining', value: formatCurrency(summary.totalRemaining), icon: TrendingDown },
           ].map((s) => (
-            <div key={s.label} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-              <div className="flex items-center gap-2 mb-2">
-                <s.icon size={16} className={s.color} />
-                <span className="text-xs text-gray-500 dark:text-gray-400">{s.label}</span>
+            <div key={s.label} className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+              <div className="mb-2 flex items-center gap-2">
+                <s.icon size={15} className="text-gray-400 dark:text-gray-500" aria-hidden="true" />
+                <span className="meta-text">{s.label}</span>
               </div>
-              <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+              {/* Uniform colour: these three are one quantity split three ways, so colouring them
+                  differently implied a status distinction that does not exist. */}
+              <p className="numeric text-xl font-semibold text-gray-900 dark:text-white">{s.value}</p>
             </div>
           ))}
         </div>

@@ -57,39 +57,130 @@
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   ACCESSIBILITY BASELINE
+   ═══════════════════════════════════════════════════════════════ */
+@layer base {
+  /*
+   * A single visible focus ring for every interactive element. Several controls previously
+   * relied on the UA default (removed by `outline-none` on inputs) or on `focus:ring`, which
+   * also fires on mouse click and so was often suppressed for looking noisy. `:focus-visible`
+   * shows the ring only for keyboard/AT navigation, so it can be unapologetically visible.
+   */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid theme('colors.navy.700');
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  .dark :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline-color: theme('colors.gold.400');
+  }
+
+  /*
+   * Respect the OS "reduce motion" setting. Framer Motion transitions and the Tailwind
+   * keyframes below otherwise animate unconditionally, which can trigger nausea or migraine
+   * for users with vestibular disorders. Near-zero duration rather than `none` so that
+   * animation/transition end events still fire and no component waits forever on a callback.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Skip link — keyboard users can jump past the sidebar instead of tabbing through
+     every nav item on every page load. Visually hidden until focused. */
+  .skip-to-content {
+    @apply sr-only;
+  }
+  .skip-to-content:focus {
+    @apply not-sr-only fixed left-4 top-4 z-50 rounded-md bg-navy-900 px-4 py-2 text-sm font-semibold text-white shadow-lg;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TYPOGRAPHY — semantic roles, not ad-hoc sizes
+   Pages previously inlined `text-2xl font-bold text-gray-900 dark:text-white` and similar at
+   each call site. That drifted (several headings had no dark: variant at all) and made the
+   hierarchy impossible to tune globally. Each role below states the job it does.
+   ═══════════════════════════════════════════════════════════════ */
 @layer components {
-  .sidebar-link {
-    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 hover:bg-navy-800 hover:text-white;
+  /* One per page. Answers "where am I?" */
+  .page-title {
+    @apply text-xl font-semibold tracking-tight text-gray-900 dark:text-white;
   }
-  .sidebar-link.active {
-    @apply bg-navy-800 text-white;
+  /* Optional orientation line under the title. Deliberately quiet. */
+  .page-subtitle {
+    @apply mt-0.5 text-sm text-gray-500 dark:text-gray-400;
   }
-  .kpi-card {
-    @apply bg-white rounded-xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-shadow duration-200;
+  /* Groups content within a page. Smaller than the page title so hierarchy reads top-down. */
+  .section-heading {
+    @apply text-sm font-semibold text-gray-900 dark:text-white;
   }
-  .status-badge {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  /* Form field labels. */
+  .form-label {
+    @apply block text-sm font-medium text-gray-700 dark:text-gray-300;
   }
-  .page-header {
-    @apply mb-6 flex items-center justify-between;
+  /* Guidance under a field. Distinct from error text, which is colour + icon. */
+  .field-hint {
+    @apply mt-1 text-xs text-gray-500 dark:text-gray-400;
   }
-  .section-title {
-    @apply text-2xl font-bold text-navy-900;
+  .field-error {
+    @apply mt-1 flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400;
+  }
+  /* Timestamps, counts, record ids — present but never competing with content. */
+  .meta-text {
+    @apply text-xs text-gray-500 dark:text-gray-400;
   }
   .form-group {
     @apply space-y-1.5;
   }
-  .form-label {
-    @apply text-sm font-medium text-gray-700 dark:text-gray-300;
+
+  /*
+   * Figures use tabular (fixed-width) digits so that stacked amounts align on the decimal.
+   * With proportional digits a column of pesos is genuinely hard to compare at a glance —
+   * this is the single highest-value typographic change for a fund-management system.
+   */
+  .numeric {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DATA TABLES
+   ═══════════════════════════════════════════════════════════════ */
+@layer components {
+  .status-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+
   .data-table th {
-    @apply px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider bg-gray-50 dark:bg-gray-900;
+    @apply bg-gray-50 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 dark:bg-gray-900 dark:text-gray-400;
   }
   .data-table td {
-    @apply px-4 py-3 text-sm text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700;
+    @apply border-b border-gray-100 px-4 py-3 text-sm text-gray-700 dark:border-gray-700/70 dark:text-gray-300;
   }
-  .data-table tr:hover td {
-    @apply bg-gray-50 dark:bg-gray-700/50;
+  /* The last row's border duplicates the container border — remove it. */
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  /*
+   * Row hover is a scanning aid on wide tables: it ties a value on the far right back to the
+   * label on the far left. Kept subtle so it reads as a guide, not a selection.
+   */
+  .data-table tbody tr:hover td {
+    @apply bg-gray-50/70 dark:bg-gray-700/40;
+  }
+  /* Numeric columns right-align so magnitudes line up. Paired with .numeric above. */
+  .data-table .cell-numeric {
+    @apply text-right;
+    font-variant-numeric: tabular-nums;
   }
 }
 
@@ -199,9 +290,10 @@ textarea::placeholder {
 .dark ::-webkit-scrollbar-thumb { background: #4b5563; }
 .dark ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
 
-/* Loading animation */
+/* Loading placeholder. Had no dark-mode variant, so it rendered as a bright block on the
+   dark surface — brighter than the content it stood in for. */
 .skeleton {
-  @apply animate-pulse bg-gray-200 rounded;
+  @apply animate-pulse rounded bg-gray-200 dark:bg-gray-700;
 }
 
 /* Print styles */
