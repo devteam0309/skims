@@ -1,22 +1,27 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
-import { ArrowLeft, Edit, Trash2, Calendar, Banknote, Users, Target, MapPin, CheckCircle2, Clock, AlertCircle, Link2 } from 'lucide-react';
+import { motion, useReducedMotion } from 'framer-motion';
+import {
+  ArrowLeft, Edit, Trash2, Calendar, Banknote, Users, Target,
+  CheckCircle2, Clock, AlertCircle, Link2,
+} from 'lucide-react';
 import { programService } from '../../services/programService';
 import StatusBadge from '../../components/shared/StatusBadge';
 import { PageLoader } from '../../components/shared/LoadingSpinner';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
-import { useState } from 'react';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
 import { PROGRAM_EDITORS } from '../../utils/constants';
+
+const STATUSES = ['planned', 'ongoing', 'delayed', 'completed', 'cancelled'];
 
 export default function ProgramDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+  const reduceMotion = useReducedMotion();
 
   const { data: program, isLoading } = useQuery({
     queryKey: ['program', id],
@@ -26,13 +31,13 @@ export default function ProgramDetail() {
   const deleteMutation = useMutation({
     mutationFn: () => programService.delete(id),
     onSuccess: () => { toast.success('Program deleted'); navigate('/programs'); queryClient.invalidateQueries(['programs']); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Delete failed'),
   });
 
   const statusMutation = useMutation({
     mutationFn: (status) => programService.updateStatus(id, status),
     onSuccess: () => { toast.success('Status updated'); queryClient.invalidateQueries(['program', id]); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Status update failed'),
   });
 
   const handleDelete = async () => {
@@ -46,214 +51,339 @@ export default function ProgramDetail() {
   };
 
   if (isLoading) return <PageLoader />;
-  if (!program) return <div className="text-center py-16 text-gray-400 dark:text-gray-500">Program not found</div>;
+
+  // Previously a bare centred line of grey text — a dead end with no way onward, reached by
+  // following a link to a program someone else had just deleted.
+  if (!program) {
+    return (
+      <div className="mx-auto max-w-5xl rounded-xl border border-gray-200 bg-white py-16 text-center dark:border-gray-700 dark:bg-gray-800">
+        <Target size={24} className="mx-auto mb-3 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+        <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Program not found</p>
+        <p className="meta-text mt-1">It may have been deleted.</p>
+        <Link to="/programs" className="mt-3 inline-block text-sm font-medium text-navy-700 hover:underline dark:text-navy-300">
+          Back to programs
+        </Link>
+      </div>
+    );
+  }
 
   const canEdit = PROGRAM_EDITORS.includes(user?.role);
+  const completion = program.completionRate || 0;
+
+  /*
+   * Budget figures are derived once, with the zero-budget case handled explicitly.
+   * `(spent / budget) * 100` was computed inline in two places against a budget that can legally
+   * be 0 (an unfunded program), which rendered "Infinity%" in the bar width and the literal text
+   * "NaN% utilized" underneath it.
+   */
+  const allocated = program.budget || 0;
+  const spent = program.actualExpenses || 0;
+  const remaining = allocated - spent;
+  const overBudget = remaining < 0;
+  const utilization = allocated > 0 ? Math.round((spent / allocated) * 100) : null;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-5">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-start gap-3">
-          <button onClick={() => navigate(-1)} className="mt-1 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors">
-            <ArrowLeft size={18} />
+    <div className="mx-auto max-w-5xl space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            aria-label="Go back"
+            className="mt-0.5 shrink-0 rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
+          >
+            <ArrowLeft size={18} aria-hidden="true" />
           </button>
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{program.title}</h1>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="page-title">{program.title}</h1>
               <StatusBadge status={program.status} />
             </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {program.municipality?.name} {program.barangay ? `· ${program.barangay.name}` : ''} · {program.category?.replace(/_/g, ' ')}
+            <p className="page-subtitle">
+              {program.municipality?.name}
+              {program.barangay ? ` · ${program.barangay.name}` : ''}
+              {' · '}
+              <span className="capitalize">{program.category?.replace(/_/g, ' ')}</span>
             </p>
           </div>
         </div>
+
         {canEdit && (
           <div className="flex items-center gap-2">
+            {/* The select carried no accessible name — a screen reader announced only the current
+                status, with no indication that changing it rewrites the program's state. */}
+            <label htmlFor="program-status" className="sr-only">Change program status</label>
             <select
+              id="program-status"
               value={program.status}
               onChange={(e) => handleStatusChange(e.target.value)}
-              className="text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-navy-700 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300"
+              disabled={statusMutation.isPending}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition-colors focus:border-navy-700 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
             >
-              {['planned', 'ongoing', 'delayed', 'completed', 'cancelled'].map((s) => (
+              {STATUSES.map((s) => (
                 <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
               ))}
             </select>
-            <Link to={`/programs/${id}/edit`} className="p-2 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors">
-              <Edit size={16} />
+            <Link
+              to={`/programs/${id}/edit`}
+              aria-label={`Edit ${program.title}`}
+              title="Edit program"
+              className="rounded-lg border border-gray-300 p-2 text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+            >
+              <Edit size={16} aria-hidden="true" />
             </Link>
-            <button onClick={handleDelete} className="p-2 rounded-lg border border-red-200 hover:bg-red-50 text-red-600 transition-colors">
-              <Trash2 size={16} />
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+              aria-label={`Delete ${program.title}`}
+              title="Delete program"
+              className="rounded-lg border border-red-200 p-2 text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
+            >
+              <Trash2 size={16} aria-hidden="true" />
             </button>
           </div>
         )}
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { icon: Banknote, label: 'Budget', value: formatCurrency(program.budget), sub: `${formatCurrency(program.actualExpenses || 0)} spent` },
-          { icon: Calendar, label: 'Start Date', value: formatDate(program.startDate), sub: `Ends ${formatDate(program.endDate)}` },
-          { icon: Users, label: 'Participants', value: `${program.actualParticipants || 0}`, sub: `of ${program.targetParticipants} target` },
-          { icon: Target, label: 'Completion', value: `${program.completionRate || 0}%`, sub: `${program.milestones?.length || 0} milestones` },
-        ].map((stat) => (
-          <div key={stat.label} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <stat.icon size={16} className="text-gray-400 dark:text-gray-500" />
-              <span className="text-xs text-gray-500 dark:text-gray-400">{stat.label}</span>
-            </div>
-            <p className="text-lg font-bold text-gray-900 dark:text-white">{stat.value}</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{stat.sub}</p>
-          </div>
-        ))}
-      </div>
+      {/* Figures carry .numeric so amounts and counts align on the digit rather than drifting
+          with proportional glyph widths. */}
+      <dl className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Stat icon={Banknote} label="Budget" value={formatCurrency(allocated)} sub={`${formatCurrency(spent)} spent`} />
+        <Stat icon={Calendar} label="Start Date" value={formatDate(program.startDate)} sub={`Ends ${formatDate(program.endDate)}`} />
+        <Stat
+          icon={Users}
+          label="Participants"
+          value={String(program.actualParticipants || 0)}
+          sub={`of ${program.targetParticipants || 0} target`}
+        />
+        <Stat
+          icon={Target}
+          label="Completion"
+          value={`${completion}%`}
+          sub={`${program.milestones?.length || 0} milestones`}
+        />
+      </dl>
 
-      {/* Progress bar */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-        <div className="flex justify-between text-sm mb-2">
+      <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+        <div className="mb-2 flex justify-between text-sm">
           <span className="font-medium text-gray-700 dark:text-gray-300">Overall Completion</span>
-          <span className="font-bold text-navy-700">{program.completionRate || 0}%</span>
+          <span className="numeric font-semibold text-navy-700 dark:text-navy-300">{completion}%</span>
         </div>
-        <div className="h-2.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+        <div
+          className="h-2.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700"
+          role="progressbar"
+          aria-valuenow={completion}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Overall completion"
+        >
+          {/*
+            Framer animates in JavaScript, so the global `prefers-reduced-motion` CSS override in
+            index.css does not reach it — a one-second sweep still played for users who asked the
+            OS for no motion. useReducedMotion lets the bar simply appear at its final width.
+          */}
           <motion.div
-            initial={{ width: 0 }}
-            animate={{ width: `${program.completionRate || 0}%` }}
-            transition={{ duration: 1, ease: 'easeOut' }}
-            className={`h-full rounded-full ${program.status === 'delayed' ? 'bg-red-500' : program.status === 'completed' ? 'bg-green-500' : 'bg-navy-700'}`}
+            initial={reduceMotion ? false : { width: 0 }}
+            animate={{ width: `${Math.min(completion, 100)}%` }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 1, ease: 'easeOut' }}
+            className={`h-full rounded-full ${
+              program.status === 'delayed'
+                ? 'bg-red-500'
+                : program.status === 'completed'
+                ? 'bg-green-500'
+                : 'bg-navy-700 dark:bg-navy-400'
+            }`}
           />
         </div>
-      </div>
+      </section>
 
-      <div className="grid lg:grid-cols-3 gap-5">
-        {/* Description */}
-        <div className="lg:col-span-2 space-y-5">
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-            <h2 className="font-semibold text-gray-900 dark:text-white mb-3">Description</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">{program.description}</p>
+      <div className="grid gap-5 lg:grid-cols-3">
+        <div className="space-y-5 lg:col-span-2">
+          <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+            <h2 className="section-heading mb-3">Description</h2>
+            <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-300">{program.description}</p>
+
             {program.objectives?.length > 0 && (
               <>
-                <h3 className="font-semibold text-gray-800 dark:text-white mt-4 mb-2">Objectives</h3>
-                <ul className="space-y-1">
+                <h3 className="section-heading mb-2 mt-5">Objectives</h3>
+                <ol className="space-y-1.5">
                   {program.objectives.map((obj, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <span className="w-5 h-5 bg-navy-100 text-navy-700 rounded-full flex items-center justify-center text-xs flex-shrink-0 mt-0.5">{i + 1}</span>
+                      {/* The counter had no dark variant, so navy-on-navy-100 stayed a pale chip
+                          on the dark surface. */}
+                      <span
+                        aria-hidden="true"
+                        className="numeric mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-100 text-xs font-medium text-navy-700 dark:bg-navy-500/20 dark:text-navy-300"
+                      >
+                        {i + 1}
+                      </span>
                       {obj}
                     </li>
                   ))}
-                </ul>
+                </ol>
               </>
             )}
-          </div>
+          </section>
 
-          {/* Milestones */}
           {program.milestones?.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-              <h2 className="font-semibold text-gray-900 dark:text-white mb-4">Milestones</h2>
-              <div className="space-y-3">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+              <h2 className="section-heading mb-4">Milestones</h2>
+              <ul className="space-y-3">
                 {program.milestones.map((m) => (
-                  <div key={m._id} className="flex items-start gap-3 p-3 rounded-lg border border-gray-100 dark:border-gray-700">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${m.status === 'completed' ? 'bg-green-100' : m.status === 'delayed' ? 'bg-red-100' : 'bg-blue-100'}`}>
-                      {m.status === 'completed' ? <CheckCircle2 size={14} className="text-green-600" /> :
-                       m.status === 'delayed' ? <AlertCircle size={14} className="text-red-600" /> :
-                       <Clock size={14} className="text-blue-600" />}
-                    </div>
-                    <div className="flex-1">
+                  <li key={m._id} className="flex items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                    <MilestoneIcon status={m.status} />
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-gray-900 dark:text-white">{m.title}</p>
-                      {m.targetDate && <p className="text-xs text-gray-400 dark:text-gray-500">Target: {formatDate(m.targetDate)}</p>}
-                      {m.notes && <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{m.notes}</p>}
+                      {m.targetDate && <p className="meta-text">Target: {formatDate(m.targetDate)}</p>}
+                      {m.notes && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{m.notes}</p>}
                     </div>
                     <StatusBadge status={m.status} />
-                  </div>
+                  </li>
                 ))}
-              </div>
-            </div>
+              </ul>
+            </section>
           )}
         </div>
 
-        {/* Sidebar */}
         <div className="space-y-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-            <h2 className="font-semibold text-gray-900 dark:text-white mb-4">Details</h2>
+          <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+            <h2 className="section-heading mb-4">Details</h2>
             <dl className="space-y-3 text-sm">
               {[
-                ['Created By', `${program.createdBy?.firstName} ${program.createdBy?.lastName}`],
+                ['Created By', program.createdBy ? `${program.createdBy.firstName} ${program.createdBy.lastName}` : 'Unknown'],
                 ['Municipality', program.municipality?.name || 'N/A'],
                 ['Barangay', program.barangay?.name || 'All Barangays'],
                 ['Visibility', program.isPublic ? 'Public' : 'Internal'],
               ].map(([label, val]) => (
                 <div key={label}>
-                  <dt className="text-gray-400 dark:text-gray-500 text-xs">{label}</dt>
+                  <dt className="meta-text">{label}</dt>
                   <dd className="font-medium text-gray-800 dark:text-gray-200">{val}</dd>
                 </div>
               ))}
               {program.budgetRef && (
                 <div>
-                  <dt className="text-gray-400 dark:text-gray-500 text-xs">Linked Budget</dt>
-                  <dd className="font-medium text-navy-700">
-                    <Link to={`/budgets/${program.budgetRef._id}`} className="flex items-center gap-1 hover:underline">
-                      <Link2 size={12} />
+                  <dt className="meta-text">Linked Budget</dt>
+                  <dd>
+                    <Link
+                      to={`/budgets/${program.budgetRef._id}`}
+                      className="flex items-center gap-1 font-medium text-navy-700 hover:underline dark:text-navy-300"
+                    >
+                      <Link2 size={12} aria-hidden="true" className="shrink-0" />
                       {program.budgetRef.title} (FY {program.budgetRef.fiscalYear})
                     </Link>
                   </dd>
                 </div>
               )}
             </dl>
-          </div>
+          </section>
 
           {program.budgetRef && (
-            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-              <h2 className="font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
-                <Link2 size={14} className="text-gray-400 dark:text-gray-500" /> Budget Utilization
+            <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+              <h2 className="section-heading mb-3 flex items-center gap-2">
+                <Link2 size={14} aria-hidden="true" className="text-gray-400 dark:text-gray-500" />
+                Budget Utilization
               </h2>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500 dark:text-gray-400">Allocated</span>
-                  <span className="font-medium">{formatCurrency(program.budget)}</span>
+              <dl className="space-y-2 text-sm">
+                <Row label="Allocated" value={formatCurrency(allocated)} />
+                {/*
+                  "Spent" was red. Spending an allocated budget is the program working as
+                  intended, not a fault — colouring it as one made every healthy program look
+                  like it had a problem. Red is now reserved for the case that genuinely needs
+                  intervention: spending past the allocation.
+                */}
+                <Row label="Spent" value={formatCurrency(spent)} />
+                <div className="flex justify-between border-t border-gray-200 pt-2 dark:border-gray-700">
+                  <dt className="text-gray-500 dark:text-gray-400">{overBudget ? 'Over budget by' : 'Remaining'}</dt>
+                  <dd className={`numeric font-semibold ${overBudget ? 'text-red-600 dark:text-red-400' : 'text-green-700 dark:text-emerald-400'}`}>
+                    {formatCurrency(Math.abs(remaining))}
+                  </dd>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500 dark:text-gray-400">Spent</span>
-                  <span className="font-medium text-red-600">{formatCurrency(program.actualExpenses || 0)}</span>
+              </dl>
+
+              <div className="mt-3">
+                <div
+                  className="h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700"
+                  role="progressbar"
+                  aria-valuenow={utilization ?? 0}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Budget utilization"
+                >
+                  <div
+                    className={`h-full rounded-full transition-all ${overBudget ? 'bg-red-500' : 'bg-navy-700 dark:bg-navy-400'}`}
+                    style={{ width: `${Math.min(100, utilization ?? 0)}%` }}
+                  />
                 </div>
-                <div className="flex justify-between border-t border-gray-100 dark:border-gray-700 pt-2">
-                  <span className="text-gray-500 dark:text-gray-400">Remaining</span>
-                  <span className="font-semibold text-green-700">{formatCurrency(program.budget - (program.actualExpenses || 0))}</span>
-                </div>
-                <div className="mt-2">
-                  <div className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-navy-700 rounded-full transition-all"
-                      style={{ width: `${Math.min(100, ((program.actualExpenses || 0) / program.budget) * 100)}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 text-right">
-                    {Math.round(((program.actualExpenses || 0) / program.budget) * 100)}% utilized
-                  </p>
-                </div>
+                <p className="meta-text mt-1 text-right">
+                  {utilization === null ? 'No budget allocated' : `${utilization}% utilized`}
+                </p>
               </div>
-            </div>
+            </section>
           )}
 
           {program.assignedOfficers?.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-              <h2 className="font-semibold text-gray-900 dark:text-white mb-3">Assigned Officers</h2>
-              <div className="space-y-2">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+              <h2 className="section-heading mb-3">Assigned Officers</h2>
+              <ul className="space-y-2">
                 {program.assignedOfficers.map((o) => (
-                  <div key={o._id} className="flex items-center gap-2">
-                    <div className="w-7 h-7 bg-navy-100 rounded-full flex items-center justify-center">
-                      <span className="text-navy-700 font-bold text-xs">{o.firstName?.[0]}{o.lastName?.[0]}</span>
+                  <li key={o._id} className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-navy-100 text-xs font-bold text-navy-700 dark:bg-navy-500/20 dark:text-navy-300"
+                    >
+                      {o.firstName?.[0]}{o.lastName?.[0]}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-gray-800 dark:text-gray-200">{o.firstName} {o.lastName}</p>
+                      <p className="meta-text capitalize">{o.role?.replace(/_/g, ' ')}</p>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{o.firstName} {o.lastName}</p>
-                      <p className="text-xs text-gray-400 dark:text-gray-500">{o.role?.replace(/_/g, ' ')}</p>
-                    </div>
-                  </div>
+                  </li>
                 ))}
-              </div>
-            </div>
+              </ul>
+            </section>
           )}
         </div>
       </div>
-
     </div>
+  );
+}
+
+function Stat({ icon: Icon, label, value, sub }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+      <div className="mb-2 flex items-center gap-2">
+        <Icon size={16} aria-hidden="true" className="text-gray-400 dark:text-gray-500" />
+        <dt className="text-xs text-gray-500 dark:text-gray-400">{label}</dt>
+      </div>
+      <dd>
+        <p className="numeric text-lg font-semibold text-gray-900 dark:text-white">{value}</p>
+        <p className="meta-text mt-0.5">{sub}</p>
+      </dd>
+    </div>
+  );
+}
+
+function Row({ label, value }) {
+  return (
+    <div className="flex justify-between">
+      <dt className="text-gray-500 dark:text-gray-400">{label}</dt>
+      <dd className="numeric font-medium text-gray-900 dark:text-gray-100">{value}</dd>
+    </div>
+  );
+}
+
+/** Milestone state icon. Each tone previously had a light-mode background only. */
+function MilestoneIcon({ status }) {
+  const map = {
+    completed: ['bg-green-100 dark:bg-emerald-500/15', 'text-green-600 dark:text-emerald-400', CheckCircle2],
+    delayed: ['bg-red-100 dark:bg-red-500/15', 'text-red-600 dark:text-red-400', AlertCircle],
+  };
+  const [bg, fg, Icon] = map[status] || ['bg-blue-100 dark:bg-blue-500/15', 'text-blue-600 dark:text-blue-300', Clock];
+
+  return (
+    <span aria-hidden="true" className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${bg}`}>
+      <Icon size={14} className={fg} />
+    </span>
   );
 }

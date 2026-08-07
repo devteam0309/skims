@@ -1,16 +1,17 @@
-import { cloneElement, isValidElement, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, X, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Plus, X } from 'lucide-react';
 import { programService } from '../../services/programService';
 import { municipalityService } from '../../services/documentService';
 import { budgetService } from '../../services/budgetService';
 import { PROGRAM_CATEGORIES } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 import { confirm } from '../../utils/confirm';
+import { Field, RequiredNote, control } from '../../components/shared/FormField';
 
 const schema = z.object({
   title: z.string().min(5, 'Title must be at least 5 characters'),
@@ -27,9 +28,6 @@ const schema = z.object({
   message: 'End date must be after start date',
   path: ['endDate'],
 });
-
-const control =
-  'mt-1 w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-navy-700 focus:ring-2 focus:ring-navy-700/20 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 aria-[invalid=true]:border-red-500';
 
 export default function ProgramCreate() {
   const navigate = useNavigate();
@@ -107,9 +105,7 @@ export default function ProgramCreate() {
             Basic Information
           </h2>
           {/* The asterisk convention was never explained anywhere on the page. */}
-          <p className="meta-text mt-2">
-            <span aria-hidden="true">*</span> indicates a required field.
-          </p>
+          <RequiredNote />
 
           <div className="mt-5 space-y-5">
             <Field id="title" label="Program Title" required error={errors.title}>
@@ -250,48 +246,6 @@ export default function ProgramCreate() {
           </button>
         </div>
       </form>
-    </div>
-  );
-}
-
-/**
- * Label, control, hint and error as one unit.
- *
- * Every field on this page previously rendered a bare <label> with no htmlFor and an input with
- * no id, so clicking a label did not focus its control and assistive tech announced each one as
- * unlabelled. Errors sat in a loose <p> with no programmatic link to the field they described.
- */
-function Field({ id, label, required, optional, hint, error, children }) {
-  const hintId = hint ? `${id}-hint` : undefined;
-  const errorId = error ? `${id}-error` : undefined;
-
-  return (
-    <div>
-      <label htmlFor={id} className="form-label">
-        {label}
-        {required && <span className="text-red-600" aria-hidden="true"> *</span>}
-        {required && <span className="sr-only"> (required)</span>}
-        {optional && <span className="font-normal text-gray-500"> (optional)</span>}
-      </label>
-
-      {/* Cloned so each control inherits its id and aria wiring without every call site
-          repeating six attributes. */}
-      {isValidElement(children)
-        ? cloneElement(children, {
-            id,
-            'aria-required': required || undefined,
-            'aria-invalid': error ? 'true' : undefined,
-            'aria-describedby': [errorId, hintId].filter(Boolean).join(' ') || undefined,
-          })
-        : children}
-
-      {hint && <p id={hintId} className="field-hint">{hint}</p>}
-      {error && (
-        <p id={errorId} className="field-error" role="alert">
-          <AlertCircle size={12} aria-hidden="true" className="shrink-0" />
-          {error.message}
-        </p>
-      )}
     </div>
   );
 }

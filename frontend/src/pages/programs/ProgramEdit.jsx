@@ -1,9 +1,9 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { programService } from '../../services/programService';
 import { budgetService } from '../../services/budgetService';
@@ -11,16 +11,23 @@ import { PROGRAM_CATEGORIES } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 import { PageLoader } from '../../components/shared/LoadingSpinner';
 import { confirm } from '../../utils/confirm';
+import { Field, RequiredNote, control } from '../../components/shared/FormField';
 
+/*
+ * Messages are spelled out rather than left to Zod's defaults. Unmessaged rules surfaced as
+ * "String must contain at least 20 character(s)" under the Description box, which names the
+ * constraint but not what the user should do about it — and differed in wording from the create
+ * form, which validates the same program with the same rules.
+ */
 const schema = z.object({
-  title: z.string().min(5),
-  description: z.string().min(20),
-  category: z.string().min(1),
-  budget: z.coerce.number().min(0),
-  startDate: z.string().min(1),
-  endDate: z.string().min(1),
-  targetParticipants: z.coerce.number().min(1),
-  actualParticipants: z.coerce.number().min(0).optional(),
+  title: z.string().min(5, 'Title must be at least 5 characters'),
+  description: z.string().min(20, 'Description must be at least 20 characters'),
+  category: z.string().min(1, 'Category is required'),
+  budget: z.coerce.number({ invalid_type_error: 'Budget must be a number' }).min(0, 'Budget cannot be negative'),
+  startDate: z.string().min(1, 'Start date is required'),
+  endDate: z.string().min(1, 'End date is required'),
+  targetParticipants: z.coerce.number({ invalid_type_error: 'Enter a number' }).min(1, 'Target participants required'),
+  actualParticipants: z.coerce.number({ invalid_type_error: 'Enter a number' }).min(0, 'Cannot be negative').optional(),
   budgetRef: z.string().optional(),
   isPublic: z.boolean().optional(),
 }).refine((d) => !d.startDate || !d.endDate || new Date(d.endDate) > new Date(d.startDate), {
@@ -43,7 +50,13 @@ export default function ProgramEdit() {
     queryFn: () => budgetService.getAll({ status: 'approved', limit: 100 }).then((r) => r.data.data),
   });
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm({ resolver: zodResolver(schema) });
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setFocus,
+    formState: { errors, isDirty },
+  } = useForm({ resolver: zodResolver(schema) });
 
   useEffect(() => {
     if (program) {
@@ -64,76 +77,161 @@ export default function ProgramEdit() {
       queryClient.invalidateQueries(['programs']);
       navigate(`/programs/${id}`);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Failed to update program'),
   });
+
+  const onSubmit = async (data) => {
+    const result = await confirm.save();
+    if (result.isConfirmed) mutation.mutate(data);
+  };
+
+  // A rejected submit on a form this long can leave the failing field off screen, so the user
+  // sees the page simply not respond. Focusing the first invalid field scrolls to it and
+  // announces it. Matches the create form.
+  const onInvalid = (formErrors) => {
+    const first = Object.keys(formErrors)[0];
+    if (first) setFocus(first);
+  };
 
   if (isLoading) return <PageLoader />;
 
+  // The query can resolve to nothing — a deleted program, or an id typed by hand. This
+  // previously rendered the full form bound to `undefined`: every field blank, and saving it
+  // would have posted an empty program back.
+  if (!program) {
+    return (
+      <div className="mx-auto max-w-3xl rounded-xl border border-gray-200 bg-white py-16 text-center dark:border-gray-700 dark:bg-gray-800">
+        <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Program not found</p>
+        <p className="meta-text mt-1">It may have been deleted.</p>
+        <Link to="/programs" className="mt-3 inline-block text-sm font-medium text-navy-700 hover:underline dark:text-navy-300">
+          Back to programs
+        </Link>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"><ArrowLeft size={20} /></button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Edit Program</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">{program?.title}</p>
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          aria-label="Go back"
+          className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
+        >
+          <ArrowLeft size={20} aria-hidden="true" />
+        </button>
+        <div className="min-w-0">
+          <h1 className="page-title">Edit Program</h1>
+          <p className="page-subtitle truncate">{program.title}</p>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit(async (d) => { const r = await confirm.save(); if (r.isConfirmed) mutation.mutate(d); })} className="space-y-5">
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-6 space-y-5">
-          {[['title', 'Program Title', 'text'], ['description', 'Description', 'textarea']].map(([name, label, type]) => (
-            <div key={name}>
-              <label className="form-label">{label} *</label>
-              {type === 'textarea' ? (
-                <textarea {...register(name)} rows={4} className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 resize-none" />
-              ) : (
-                <input {...register(name)} className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-              )}
-              {errors[name] && <p className="mt-1 text-xs text-red-500">{errors[name].message}</p>}
+      <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-5">
+        <section className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
+          <h2 className="border-b border-gray-200 pb-3 text-sm font-semibold text-gray-900 dark:border-gray-700 dark:text-white">
+            Basic Information
+          </h2>
+          <RequiredNote />
+
+          <div className="mt-5 space-y-5">
+            <Field id="title" label="Program Title" required error={errors.title}>
+              <input {...register('title')} className={control} />
+            </Field>
+
+            <Field id="description" label="Description" required error={errors.description} hint="At least 20 characters.">
+              <textarea {...register('description')} rows={4} className={`${control} resize-y`} />
+            </Field>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field id="category" label="Category" required error={errors.category}>
+                <select {...register('category')} className={control}>
+                  {PROGRAM_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </Field>
+
+              <Field
+                id="budgetRef"
+                label="Linked Budget"
+                optional
+                error={errors.budgetRef}
+                hint="Only approved budgets can be linked."
+              >
+                <select {...register('budgetRef')} className={control}>
+                  <option value="">No budget linked</option>
+                  {(budgetsData || []).map((b) => <option key={b._id} value={b._id}>{b.title} — FY {b.fiscalYear}</option>)}
+                </select>
+              </Field>
             </div>
-          ))}
+          </div>
+        </section>
 
-          <div>
-            <label className="form-label">Category *</label>
-            <select {...register('category')} className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 bg-white">
-              {PROGRAM_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
+        <section className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
+          <h2 className="border-b border-gray-200 pb-3 text-sm font-semibold text-gray-900 dark:border-gray-700 dark:text-white">
+            Timeline &amp; Participation
+          </h2>
+
+          {/* Single column on phones — two date controls at 360px wide leave neither wide enough
+              to show its own value. Matches the create form. */}
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <Field id="startDate" label="Start Date" required error={errors.startDate}>
+              <input {...register('startDate')} type="date" className={control} />
+            </Field>
+            <Field id="endDate" label="End Date" required error={errors.endDate}>
+              <input {...register('endDate')} type="date" className={control} />
+            </Field>
+            <Field id="budget" label="Budget (₱)" required error={errors.budget}>
+              <input {...register('budget')} type="number" min="0" step="0.01" className={`${control} numeric`} />
+            </Field>
+            <Field id="targetParticipants" label="Target Participants" required error={errors.targetParticipants}>
+              <input {...register('targetParticipants')} type="number" min="1" className={`${control} numeric`} />
+            </Field>
+            <Field
+              id="actualParticipants"
+              label="Actual Participants"
+              optional
+              error={errors.actualParticipants}
+              hint="Attendance recorded so far. Drives the completion figure."
+            >
+              <input {...register('actualParticipants')} type="number" min="0" className={`${control} numeric`} />
+            </Field>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            {[['startDate', 'Start Date'], ['endDate', 'End Date']].map(([name, label]) => (
-              <div key={name}>
-                <label className="form-label">{label} *</label>
-                <input {...register(name)} type="date" className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-                {errors[name] && <p className="mt-1 text-xs text-red-500">{errors[name].message}</p>}
-              </div>
-            ))}
-            {[['budget', 'Budget (₱)'], ['targetParticipants', 'Target Participants'], ['actualParticipants', 'Actual Participants']].map(([name, label]) => (
-              <div key={name}>
-                <label className="form-label">{label}</label>
-                <input {...register(name)} type="number" min="0" className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-                {errors[name] && <p className="mt-1 text-xs text-red-500">{errors[name].message}</p>}
-              </div>
-            ))}
+          <div className="mt-5 flex items-start gap-3">
+            <input
+              {...register('isPublic')}
+              type="checkbox"
+              id="isPublic"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-700"
+            />
+            <div>
+              <label htmlFor="isPublic" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Show on Public Transparency Portal
+              </label>
+              {/* Toggling this off unpublishes a page the public may already be linking to.
+                  Neither direction was stated on the control. */}
+              <p className="field-hint">Visible to the public without signing in.</p>
+            </div>
           </div>
+        </section>
 
-          <div>
-            <label className="form-label">Linked Budget (optional)</label>
-            <select {...register('budgetRef')} className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 bg-white">
-              <option value="">No budget linked</option>
-              {(budgetsData || []).map((b) => <option key={b._id} value={b._id}>{b.title} — FY {b.fiscalYear}</option>)}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <input {...register('isPublic')} type="checkbox" id="isPublic" className="w-4 h-4 text-navy-700 rounded" />
-            <label htmlFor="isPublic" className="text-sm text-gray-700 dark:text-gray-300">Show on Public Portal</label>
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-3">
-          <button type="button" onClick={() => navigate(-1)} className="px-5 py-2.5 border border-gray-200 dark:border-gray-600 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Cancel</button>
-          <button type="submit" disabled={mutation.isPending} className="px-6 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 disabled:opacity-60">
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
+          {/* Nothing on the page previously indicated whether there was anything to save. */}
+          {!isDirty && !mutation.isPending && (
+            <p className="meta-text sm:mr-auto">No changes yet.</p>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={mutation.isPending || !isDirty}
+            className="rounded-xl bg-navy-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
             {mutation.isPending ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
