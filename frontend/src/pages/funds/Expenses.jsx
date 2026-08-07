@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { expenseService, budgetService } from '../../services/budgetService';
@@ -7,6 +7,7 @@ import DataTable from '../../components/shared/DataTable';
 import StatusBadge from '../../components/shared/StatusBadge';
 import Modal from '../../components/shared/Modal';
 import SearchInput from '../../components/shared/SearchInput';
+import SelectAllCheckbox from '../../components/shared/SelectAllCheckbox';
 import { Field, RequiredNote, control } from '../../components/shared/FormField';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { toFormData } from '../../utils/formData';
@@ -169,6 +170,7 @@ export default function Expenses() {
           indeterminate={selectedOnPage > 0 && !allPageSelected}
           onChange={toggleAll}
           disabled={allPageIds.length === 0}
+          label="Select all expenses on this page"
         />
       ),
       render: (_, row) => (
@@ -475,32 +477,5 @@ export default function Expenses() {
         </div>
       </Modal>
     </div>
-  );
-}
-
-/**
- * Header checkbox for bulk selection.
- *
- * `indeterminate` is a DOM property with no HTML attribute, so it can only be set through a ref.
- * Without it the header box read as fully unchecked while a subset of the page was selected —
- * and clicking it then selected everything rather than clearing, which on a bulk-approve control
- * over money is the wrong default to guess at.
- */
-function SelectAllCheckbox({ checked, indeterminate, onChange, disabled }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = indeterminate;
-  }, [indeterminate]);
-
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      checked={checked}
-      onChange={onChange}
-      disabled={disabled}
-      aria-label="Select all expenses on this page"
-      className="h-4 w-4 rounded border-gray-300 accent-navy-700 disabled:opacity-40"
-    />
   );
 }
