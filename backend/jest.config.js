@@ -14,10 +14,14 @@ module.exports = {
    * only sometimes, which is the worst kind of red build to chase.
    *
    * Capping workers bounds the concurrent servers instead of letting suite count decide. A '50%'
-   * cap (six workers here) still failed roughly two runs in three; four is the first value that
-   * ran clean three times consecutively, at a steady ~60s. The real fix is one shared server
-   * across suites via globalSetup rather than one per suite, which is a larger change to the test
-   * harness than this branch should carry.
+   * cap (six workers here) failed roughly two runs in three; four is much better but is a
+   * mitigation, not a fix — it has still been observed failing about one run in six, always with
+   * the same buffering timeout and never with a real assertion failure.
+   *
+   * `npx jest --runInBand` is the deterministic option and has not been seen to fail; use it when
+   * a green run actually matters. The real fix is one shared MongoMemoryServer across suites via
+   * globalSetup instead of one per suite, which is a larger change to the harness than this
+   * branch should carry.
    */
   maxWorkers: 4,
 };

@@ -35,7 +35,11 @@ const STACK = [
 const ROLES = [
   { role: 'super_admin', label: 'Super Administrator', scope: 'All municipalities', autoApproved: false, canAssign: 'All 9 roles' },
   { role: 'provincial_admin', label: 'Provincial SK Fed. Admin', scope: 'All municipalities', autoApproved: false, canAssign: 'All except super_admin' },
-  { role: 'municipal_admin', label: 'Municipal SK Fed. Admin', scope: 'Own municipality', autoApproved: false, canAssign: 'sk_* + dilg + public_user' },
+  // routes/users.js authorizes PUT /:id/role for super_admin and provincial_admin only, so a
+  // municipal_admin cannot assign any role. The controller's ASSIGNABLE_ROLES still carries a
+  // municipal_admin entry, but the route rejects the request before it is ever consulted — this
+  // table previously reported that unreachable entry as though it were the behaviour.
+  { role: 'municipal_admin', label: 'Municipal SK Fed. Admin', scope: 'Own municipality', autoApproved: false, canAssign: '— (route-gated)' },
   { role: 'sk_chairperson', label: 'SK Chairperson', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
   { role: 'sk_treasurer', label: 'SK Treasurer', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
   { role: 'sk_secretary', label: 'SK Secretary', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
