@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { Camera, Save, Key, X } from 'lucide-react';
 import { authService } from '../../services/authService';
 import useAuthStore from '../../store/authStore';
-import { ROLE_LABELS } from '../../utils/constants';
+import { ROLE_LABELS, PASSWORD_PATTERN, PASSWORD_RULE_TEXT } from '../../utils/constants';
 import { formatDate, formatFileSize } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
 import { PageLoader } from '../../components/shared/LoadingSpinner';
@@ -19,13 +19,6 @@ import { confirm } from '../../utils/confirm';
 const AVATAR_ACCEPT = '.jpg,.jpeg,.png,.gif';
 const MAX_AVATAR_BYTES = 10 * 1024 * 1024;
 
-/*
- * Stated because User.js enforces it on save, and does so more strictly than the register route
- * validator: the model also requires a special character. A user changing their password with
- * "Password1" satisfies the rule they were shown at sign-up and is then refused by a raw Mongoose
- * validation message. The form now states what the model actually demands.
- */
-const PASSWORD_RULE = 'At least 8 characters, with an uppercase letter, a number and a special character.';
 
 export default function UserProfile() {
   const { user, updateUser } = useAuthStore();
@@ -256,13 +249,13 @@ export default function UserProfile() {
                   />
                 </Field>
 
-                <Field id="newPassword" label="New Password" required hint={PASSWORD_RULE} error={pwdErrors.newPassword}>
+                <Field id="newPassword" label="New Password" required hint={PASSWORD_RULE_TEXT} error={pwdErrors.newPassword}>
                   <input
                     {...regPwd('newPassword', {
                       required: 'Enter a new password',
                       minLength: { value: 8, message: 'Password must be at least 8 characters' },
                       validate: (v) =>
-                        /^(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9])/.test(v) ||
+                        PASSWORD_PATTERN.test(v) ||
                         'Include an uppercase letter, a number and a special character',
                     })}
                     type="password"

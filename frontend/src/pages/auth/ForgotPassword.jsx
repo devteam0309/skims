@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Mail, ArrowLeft } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { toast } from '../../components/ui/toaster';
-import { Mail, ArrowLeft } from 'lucide-react';
+import AuthCard from '../../components/layout/AuthCard';
+import { Field, control } from '../../components/shared/FormField';
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState('');
@@ -15,7 +17,6 @@ export default function ForgotPassword() {
     try {
       await authService.forgotPassword(email);
       setSent(true);
-      toast.success('Password reset email sent!');
     } catch (err) {
       toast.error(err.message || 'Failed to send reset email');
     } finally {
@@ -24,39 +25,61 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-navy-950 to-navy-900 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-navy-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Mail size={24} className="text-navy-700" />
+    <AuthCard
+      icon={Mail}
+      title="Forgot Password"
+      subtitle="Enter your email and we'll send a reset link"
+    >
+      {sent ? (
+        <div className="text-center">
+          {/*
+            The server deliberately answers "If that email is registered, a password reset link
+            has been sent" for every address, so it cannot be used to discover who holds an
+            account. This screen used to reply "Reset link sent to <address>. Check your inbox." —
+            a definite claim the server had pointedly refused to make, which also left anyone who
+            mistyped their address waiting for mail that was never going to arrive.
+          */}
+          <div role="status" className="mb-6 rounded-xl border border-green-200 bg-green-50 p-4 text-left">
+            <p className="text-sm text-green-800">
+              If <strong className="break-all">{email}</strong> is registered, a reset link is on its way.
+            </p>
+            <p className="mt-2 text-xs text-green-700">
+              It can take a few minutes. Check your spam folder, and contact your administrator if
+              nothing arrives.
+            </p>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Forgot Password</h1>
-          <p className="text-gray-500 text-sm mt-1">Enter your email and we'll send a reset link</p>
+          <Link to="/login" className="text-sm font-semibold text-navy-700 hover:underline">
+            Back to Login
+          </Link>
         </div>
-        {sent ? (
-          <div className="text-center">
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6">
-              <p className="text-green-700 text-sm">Reset link sent to <strong>{email}</strong>. Check your inbox.</p>
-            </div>
-            <Link to="/login" className="text-navy-700 font-semibold text-sm">Back to Login</Link>
-          </div>
-        ) : (
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div>
-              <label className="form-label">Email Address</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
-                className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700" />
-            </div>
-            <button type="submit" disabled={loading}
-              className="w-full bg-navy-900 text-white py-3 rounded-xl font-semibold text-sm hover:bg-navy-800 disabled:opacity-60 transition-all">
-              {loading ? 'Sending...' : 'Send Reset Link'}
-            </button>
-            <Link to="/login" className="flex items-center justify-center gap-2 text-sm text-gray-500 hover:text-gray-700 mt-2">
-              <ArrowLeft size={14} /> Back to Login
-            </Link>
-          </form>
-        )}
-      </div>
-    </div>
+      ) : (
+        <form onSubmit={onSubmit} className="space-y-4">
+          <Field id="email" label="Email Address" required>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+              autoFocus
+              placeholder="yourname@municipality.gov.ph"
+              className={control}
+            />
+          </Field>
+
+          <button
+            type="submit"
+            disabled={loading || !email}
+            className="w-full rounded-xl bg-navy-900 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+          >
+            {loading ? 'Sending...' : 'Send Reset Link'}
+          </button>
+
+          <Link to="/login" className="mt-2 flex items-center justify-center gap-2 text-sm text-gray-500 hover:text-gray-700">
+            <ArrowLeft size={14} aria-hidden="true" /> Back to Login
+          </Link>
+        </form>
+      )}
+    </AuthCard>
   );
 }

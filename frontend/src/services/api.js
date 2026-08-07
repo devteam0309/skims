@@ -46,8 +46,17 @@ api.interceptors.response.use(
       } catch (refreshError) {
         processQueue(refreshError);
         localStorage.removeItem('auth-storage');
-        const message = error.response?.data?.message || 'Session expired. Please log in again.';
-        setTimeout(() => { window.location.href = `/login?reason=${encodeURIComponent(message)}`; }, 100);
+        /*
+         * A code, not the server's text. This previously forwarded whatever message came back
+         * straight into the URL, and the login page rendered it verbatim — so a hand-crafted
+         * link could put any message into the app's own error toast on the real domain. The
+         * login page resolves these against LOGIN_NOTICES and ignores anything else.
+         */
+        const serverMessage = error.response?.data?.message || '';
+        const reason = /deactivat|inactive|disabled|suspend/i.test(serverMessage)
+          ? 'account_inactive'
+          : 'session_expired';
+        setTimeout(() => { window.location.href = `/login?reason=${reason}`; }, 100);
         return Promise.reject(error.response?.data || error);
       } finally {
         isRefreshing = false;

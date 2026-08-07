@@ -8,14 +8,23 @@ import { Eye, EyeOff, UserPlus, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { authService } from '../../services/authService';
 import { municipalityService } from '../../services/documentService';
-import { ROLE_LABELS, SELF_ASSIGNABLE_ROLES } from '../../utils/constants';
+import { ROLE_LABELS, SELF_ASSIGNABLE_ROLES, PASSWORD_PATTERN, PASSWORD_RULE_TEXT } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 
 const schema = z.object({
   firstName: z.string().min(2, 'First name must be at least 2 characters'),
   lastName: z.string().min(2, 'Last name must be at least 2 characters'),
   email: z.string().email('Invalid email'),
-  password: z.string().min(8, 'Password must be at least 8 characters').regex(/(?=.*[A-Z])(?=.*[0-9])/, 'Must contain uppercase and number'),
+  /*
+   * The rule here was `(?=.*[A-Z])(?=.*[0-9])` — uppercase and a digit — matching the register
+   * route's validator but not User.js, which also requires a special character and runs last.
+   * "Password1" therefore satisfied both the form and the route, and was rejected on save with
+   * "must contain ... one special character": a requirement the form never mentioned, at the end
+   * of a sign-up. Verified against the API before changing.
+   */
+  password: z.string()
+    .min(8, 'Password must be at least 8 characters')
+    .regex(PASSWORD_PATTERN, 'Include an uppercase letter, a number and a special character'),
   confirmPassword: z.string(),
   role: z.string().min(1, 'Please select a role'),
   municipality: z.string().optional(),
@@ -177,7 +186,7 @@ export default function Register() {
             </div>
             {/* Requirements stated up front rather than only after a rejected submit — the
                 cheapest possible way to prevent the error in the first place. */}
-            <p id="password-hint" className="field-hint">At least 8 characters, including one uppercase letter and one number.</p>
+            <p id="password-hint" className="field-hint">{PASSWORD_RULE_TEXT}</p>
             <Error name="password" />
           </div>
 
