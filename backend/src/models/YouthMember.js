@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { calculateAge } = require('../utils/age');
 
 const youthMemberSchema = new mongoose.Schema(
   {
@@ -32,8 +33,7 @@ const youthMemberSchema = new mongoose.Schema(
 );
 
 youthMemberSchema.virtual('age').get(function () {
-  if (!this.birthDate) return null;
-  return Math.floor((Date.now() - this.birthDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+  return calculateAge(this.birthDate);
 });
 
 youthMemberSchema.index({ municipality: 1, barangay: 1 });

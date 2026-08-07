@@ -1,23 +1,26 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Pencil, Trash2, ChevronDown } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronDown } from 'lucide-react';
 import { youthService, municipalityService } from '../../services/documentService';
 import DataTable from '../../components/shared/DataTable';
 import Modal from '../../components/shared/Modal';
-import { formatDate } from '../../utils/formatters';
+import SearchInput from '../../components/shared/SearchInput';
+import { Field, RequiredNote, control } from '../../components/shared/FormField';
+import { formatDate, calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
 import { confirm } from '../../utils/confirm';
 import useAuthStore from '../../store/authStore';
-import { YOUTH_EDITORS } from '../../utils/constants';
-
-const ADMIN_ROLES = ['super_admin', 'provincial_admin', 'municipal_admin'];
+import { YOUTH_EDITORS, ADMIN_ROLES } from '../../utils/constants';
 
 const EMPTY_FORM = {
   firstName: '', lastName: '', birthDate: '', gender: '',
   educationalAttainment: '', contactNumber: '', email: '',
   address: '', occupation: '', barangay: '', municipality: '',
   isRegisteredVoter: false,
+  // Was absent, so a newly registered member had no isActive in the payload at all and relied on
+  // the schema default, while an edited one always sent it. Same record, two shapes.
+  isActive: true,
 };
 
 const EDUCATION_OPTIONS = [
@@ -29,84 +32,204 @@ const EDUCATION_OPTIONS = [
   ['out_of_school', 'Out of School'],
 ];
 
-const cls = 'mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700';
+const GENDERS = [['', 'All'], ['male', 'Male'], ['female', 'Female'], ['other', 'Other']];
 
-function BarangaySelect({ barangays, value, onChange }) {
+const PH_PHONE = /^(09|\+639)\d{9}$/;
+
+/**
+ * Searchable barangay picker.
+ *
+ * Rebuilt rather than restyled. The original was a button that opened a portalled div of buttons:
+ *  - it took no keyboard input at all — no arrows, no Enter, no Escape — so the field was
+ *    unusable without a mouse, on a registration form for a government registry;
+ *  - it exposed no combobox semantics, so assistive tech announced an unlabelled button and then
+ *    a stack of unrelated buttons;
+ *  - its position was measured once on open and written as `position: fixed`, so any scroll of
+ *    the surrounding modal left the list floating over unrelated content, still anchored to
+ *    where the trigger used to be.
+ */
+function BarangaySelect({ id, barangays, value, onChange, disabled, disabledHint }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+
   const triggerRef = useRef(null);
   const dropdownRef = useRef(null);
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const optionRefs = useRef([]);
+  const listboxId = `${useId()}-barangay-listbox`;
 
   const selected = barangays.find((b) => b._id === value);
   const filtered = barangays.filter((b) => b.name.toLowerCase().includes(search.toLowerCase()));
-  const isDark = document.documentElement.classList.contains('dark');
+  // "None" is a real choice, so it belongs in the keyboard sequence rather than sitting outside it.
+  const options = [{ _id: '', name: 'None' }, ...filtered];
 
   const openDropdown = () => {
-    const rect = triggerRef.current.getBoundingClientRect();
-    setPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    if (disabled) return;
     setSearch('');
+    setActiveIndex(Math.max(0, options.findIndex((o) => o._id === value)));
     setOpen(true);
   };
 
+  const closeDropdown = ({ refocus = true } = {}) => {
+    setOpen(false);
+    if (refocus) triggerRef.current?.focus();
+  };
+
+  const choose = (optionValue) => {
+    onChange(optionValue);
+    closeDropdown();
+  };
+
+  // Re-measure while open. Listening in the capture phase catches scrolls of any ancestor —
+  // the modal body scrolls, and that is exactly the case the original missed.
   useEffect(() => {
-    if (!open) return;
-    // The dropdown is portaled to <body>, so it is NOT inside triggerRef. Without also
-    // checking dropdownRef, a click on an option fires this mousedown handler first,
-    // unmounts the dropdown, and the option's onClick never fires (barangay never changes).
-    const close = (e) => {
-      if (!triggerRef.current?.contains(e.target) && !dropdownRef.current?.contains(e.target)) setOpen(false);
+    if (!open) return undefined;
+    const reposition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
     };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
+    reposition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    /*
+     * The dropdown is portalled to <body>, so it is not inside triggerRef. Without also checking
+     * dropdownRef a click on an option fires this handler first, unmounts the list, and the
+     * option's onClick never runs — the barangay silently never changes.
+     */
+    const onPointerDown = (e) => {
+      if (!triggerRef.current?.contains(e.target) && !dropdownRef.current?.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [open]);
+
+  // Keep the highlighted option in view when arrowing past the visible window.
+  useEffect(() => {
+    if (open) optionRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex, open]);
+
+  const onKeyDown = (e) => {
+    if (!open) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openDropdown();
+      }
+      return;
+    }
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setActiveIndex((i) => Math.min(i + 1, options.length - 1));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setActiveIndex((i) => Math.max(i - 1, 0));
+        break;
+      case 'Home':
+        e.preventDefault();
+        setActiveIndex(0);
+        break;
+      case 'End':
+        e.preventDefault();
+        setActiveIndex(options.length - 1);
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (options[activeIndex]) choose(options[activeIndex]._id);
+        break;
+      case 'Escape':
+        // Stopped here so the surrounding Modal does not also close: Escape should dismiss the
+        // innermost layer only.
+        e.preventDefault();
+        e.stopPropagation();
+        closeDropdown();
+        break;
+      case 'Tab':
+        closeDropdown({ refocus: false });
+        break;
+      default:
+        break;
+    }
+  };
+
   return (
-    <div ref={triggerRef} className="relative">
+    <div className="relative">
       <button
+        id={id}
+        ref={triggerRef}
         type="button"
-        onClick={openDropdown}
-        className={`${cls} flex items-center justify-between`}
+        onClick={() => (open ? closeDropdown() : openDropdown())}
+        onKeyDown={onKeyDown}
+        disabled={disabled}
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={open ? listboxId : undefined}
+        className={`${control} flex items-center justify-between text-left disabled:cursor-not-allowed disabled:bg-gray-50 dark:disabled:bg-gray-700/50`}
       >
         <span className={selected ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500'}>
-          {selected?.name || 'Select barangay...'}
+          {disabled ? (disabledHint || 'Select a municipality first') : (selected?.name || 'Select barangay...')}
         </span>
-        <ChevronDown size={14} className="text-gray-400 dark:text-gray-500 flex-shrink-0" />
+        <ChevronDown size={14} aria-hidden="true" className="shrink-0 text-gray-400 dark:text-gray-500" />
       </button>
+
       {open && createPortal(
         <div
           ref={dropdownRef}
           style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 9999 }}
-          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl shadow-lg overflow-hidden"
+          className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-600 dark:bg-gray-800"
         >
-          <div className="p-2 border-b border-gray-100 dark:border-gray-700">
+          <div className="border-b border-gray-100 p-2 dark:border-gray-700">
+            <label htmlFor={`${listboxId}-search`} className="sr-only">Search barangays</label>
             <input
+              id={`${listboxId}-search`}
               autoFocus
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg outline-none focus:ring-2 focus:ring-navy-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              onChange={(e) => { setSearch(e.target.value); setActiveIndex(0); }}
+              onKeyDown={onKeyDown}
               placeholder="Search barangay..."
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
             />
           </div>
-          <div className="max-h-48 overflow-y-auto">
-            <button type="button" onClick={() => { onChange(''); setOpen(false); }}
-              className="w-full px-4 py-2.5 text-left text-sm text-gray-400 dark:text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700">
-              None
-            </button>
-            {filtered.map((b) => (
-              <button
-                type="button"
-                key={b._id}
-                onClick={() => { onChange(b._id); setOpen(false); }}
-                className={`w-full px-4 py-2.5 text-left text-sm hover:bg-navy-50 dark:hover:bg-navy-900/30 hover:text-navy-700 ${value === b._id ? 'bg-navy-50 dark:bg-navy-900/30 text-navy-700 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
-              >
-                {b.name}
-              </button>
-            ))}
+
+          <ul id={listboxId} role="listbox" aria-label="Barangays" className="max-h-48 overflow-y-auto">
+            {options.map((o, i) => {
+              const isSelected = value === o._id;
+              const isActive = i === activeIndex;
+              return (
+                <li key={o._id || '__none'} role="option" aria-selected={isSelected}>
+                  <button
+                    type="button"
+                    ref={(el) => { optionRefs.current[i] = el; }}
+                    onClick={() => choose(o._id)}
+                    onMouseEnter={() => setActiveIndex(i)}
+                    tabIndex={-1}
+                    className={`w-full px-4 py-2.5 text-left text-sm ${
+                      o._id === '' ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'
+                    } ${isActive ? 'bg-navy-50 dark:bg-navy-900/30' : ''} ${
+                      isSelected ? 'font-medium text-navy-700 dark:text-navy-300' : ''
+                    }`}
+                  >
+                    {o.name}
+                  </button>
+                </li>
+              );
+            })}
             {filtered.length === 0 && (
-              <p className="px-4 py-3 text-sm text-gray-400 dark:text-gray-500 text-center">No barangays found</p>
+              <li className="px-4 py-3 text-center text-sm text-gray-400 dark:text-gray-500">No barangays found</li>
             )}
-          </div>
+          </ul>
         </div>,
         document.body
       )}
@@ -120,7 +243,11 @@ export default function Youth() {
   const isAdmin = ADMIN_ROLES.includes(user?.role);
   const canRegister = [...ADMIN_ROLES, 'sk_chairperson'].includes(user?.role);
   const canEdit = YOUTH_EDITORS.includes(user?.role);
-  const [filters, setFilters] = useState({ page: 1, limit: 20, search: '', gender: '', educationalAttainment: '', isActive: '', barangay: '' });
+
+  const [filters, setFilters] = useState({
+    page: 1, limit: 20, search: '', gender: '', educationalAttainment: '', isActive: '',
+    barangay: '', municipality: '',
+  });
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -133,7 +260,6 @@ export default function Youth() {
   });
 
   const userMunId = user?.municipality?._id || user?.municipality;
-  const effectiveMunId = isAdmin ? form.municipality : userMunId;
 
   const { data: municipalities = [] } = useQuery({
     queryKey: ['municipalities'],
@@ -141,13 +267,31 @@ export default function Youth() {
     enabled: isAdmin,
   });
 
-  const { data: barangays = [] } = useQuery({
-    queryKey: ['barangays', effectiveMunId],
-    queryFn: () => municipalityService.getBarangays(effectiveMunId).then((r) => r.data.data),
-    enabled: !!effectiveMunId,
+  /*
+   * The barangay list is fetched twice against two different municipalities, because the filter
+   * bar and the registration form are asking different questions.
+   *
+   * Both previously shared one query keyed on the *form's* municipality. For an admin that is
+   * empty until they open the modal and choose one, so the "All Barangays" filter sat permanently
+   * empty and there was no way to filter the registry by barangay at all.
+   */
+  const filterMunId = isAdmin ? filters.municipality : userMunId;
+  const formMunId = isAdmin ? form.municipality : userMunId;
+
+  const { data: filterBarangays = [] } = useQuery({
+    queryKey: ['barangays', filterMunId],
+    queryFn: () => municipalityService.getBarangays(filterMunId).then((r) => r.data.data),
+    enabled: !!filterMunId,
+  });
+
+  const { data: formBarangays = [] } = useQuery({
+    queryKey: ['barangays', formMunId],
+    queryFn: () => municipalityService.getBarangays(formMunId).then((r) => r.data.data),
+    enabled: !!formMunId,
   });
 
   const openCreate = () => { setEditTarget(null); setForm(EMPTY_FORM); setShowModal(true); };
+
   const openEdit = (m) => {
     setEditTarget(m);
     setForm({
@@ -167,6 +311,7 @@ export default function Youth() {
     });
     setShowModal(true);
   };
+
   const closeModal = () => { setShowModal(false); setEditTarget(null); setForm(EMPTY_FORM); };
 
   const createMutation = useMutation({
@@ -176,7 +321,7 @@ export default function Youth() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => youthService.update(id, data),
+    mutationFn: ({ id, data: payload }) => youthService.update(id, payload),
     onSuccess: () => { toast.success('Youth member updated'); queryClient.invalidateQueries(['youth']); closeModal(); },
     onError: (e) => toast.error(e?.response?.data?.message || e.message),
   });
@@ -187,7 +332,7 @@ export default function Youth() {
     onError: (e) => toast.error(e?.response?.data?.message || e.message),
   });
 
-  const PH_PHONE = /^(09|\+639)\d{9}$/;
+  const formAge = calculateAge(form.birthDate);
 
   const handleSave = async () => {
     if (!form.firstName || !form.lastName || !form.birthDate || !form.gender) {
@@ -196,33 +341,38 @@ export default function Youth() {
     if (isAdmin && !editTarget && !form.municipality) {
       return toast.error('Please select a municipality');
     }
-    const age = Math.floor((Date.now() - new Date(form.birthDate).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-    if (age < 15 || age > 30) {
-      return toast.error('Youth member must be between 15 and 30 years old');
+    // Calendar age, matching backend/src/utils/age.js. The previous 365.25-day approximation
+    // disagreed with the calendar around a birthday, and from 2027 would have started refusing
+    // 15-year-olds and admitting 31-year-olds.
+    if (formAge === null || formAge < YOUTH_MIN_AGE || formAge > YOUTH_MAX_AGE) {
+      return toast.error(`Youth member must be between ${YOUTH_MIN_AGE} and ${YOUTH_MAX_AGE} years old`);
     }
     if (form.contactNumber && !PH_PHONE.test(form.contactNumber)) {
       return toast.error('Contact number must be a valid PH mobile number (09XXXXXXXXX or +639XXXXXXXXX)');
     }
+
     if (editTarget) {
       const r = await confirm.save({ text: `Save changes to ${form.firstName} ${form.lastName}?` });
       if (r.isConfirmed) updateMutation.mutate({ id: editTarget._id, data: form });
-    } else {
-      try {
-        const { data: dupData } = await youthService.checkDuplicate({
-          firstName: form.firstName, lastName: form.lastName, birthDate: form.birthDate,
-        });
-        if (dupData.exists) {
-          const r = await confirm.save({
-            title: 'Possible Duplicate Detected',
-            text: `A youth member named "${form.firstName} ${form.lastName}" with the same birth date already exists. Register anyway?`,
-          });
-          if (r.isConfirmed) createMutation.mutate(form);
-          return;
-        }
-      } catch { /* proceed if check fails */ }
-      const r = await confirm.register({ text: `Register ${form.firstName} ${form.lastName} as a youth member?` });
-      if (r.isConfirmed) createMutation.mutate(form);
+      return;
     }
+
+    try {
+      const { data: dupData } = await youthService.checkDuplicate({
+        firstName: form.firstName, lastName: form.lastName, birthDate: form.birthDate,
+      });
+      if (dupData.exists) {
+        const r = await confirm.save({
+          title: 'Possible Duplicate Detected',
+          text: `A youth member named "${form.firstName} ${form.lastName}" with the same birth date already exists. Register anyway?`,
+        });
+        if (r.isConfirmed) createMutation.mutate(form);
+        return;
+      }
+    } catch { /* the duplicate check is advisory — a failure here must not block registration */ }
+
+    const r = await confirm.register({ text: `Register ${form.firstName} ${form.lastName} as a youth member?` });
+    if (r.isConfirmed) createMutation.mutate(form);
   };
 
   const handleDelete = async (member) => {
@@ -231,228 +381,333 @@ export default function Youth() {
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
+  const hasFilters = Boolean(
+    filters.gender || filters.barangay || filters.educationalAttainment || filters.isActive || filters.municipality || filters.search
+  );
+  const clearFilters = () => setFilters((f) => ({
+    ...f, gender: '', barangay: '', educationalAttainment: '', isActive: '', municipality: '', search: '', page: 1,
+  }));
 
   const columns = [
-    { key: 'lastName', header: 'Name', render: (v, row) => <p className="font-medium text-sm">{row.firstName} {v}</p> },
-    { key: 'gender', header: 'Gender', render: (v) => <span className="capitalize text-sm">{v}</span> },
-    { key: 'birthDate', header: 'Birthday', render: (v) => formatDate(v) },
-    { key: 'educationalAttainment', header: 'Education', render: (v) => <span className="text-xs capitalize">{v?.replace(/_/g, ' ')}</span> },
+    { key: 'lastName', header: 'Name', render: (v, row) => <p className="text-sm font-medium text-gray-900 dark:text-white">{row.firstName} {v}</p> },
+    { key: 'gender', header: 'Gender', render: (v) => <span className="text-sm capitalize">{v}</span> },
+    {
+      key: 'birthDate',
+      header: 'Birthday',
+      // The registry is age-gated, so the age is the operative fact; the date alone made every
+      // reader do the arithmetic themselves.
+      render: (v) => (
+        <span>
+          {formatDate(v)}
+          <span className="meta-text"> · <span className="numeric">{calculateAge(v) ?? '—'}</span> yrs</span>
+        </span>
+      ),
+    },
+    { key: 'educationalAttainment', header: 'Education', render: (v) => <span className="text-xs capitalize">{v?.replace(/_/g, ' ') || '—'}</span> },
     { key: 'municipality', header: 'Municipality', render: (v) => v?.name || '—' },
     { key: 'barangay', header: 'Barangay', render: (v) => v?.name || '—' },
     { key: 'contactNumber', header: 'Contact', render: (v) => v || '—' },
     ...(canEdit ? [{
-      key: '_id', header: '', width: 80,
+      key: '_id',
+      // The header was an empty string, leaving the column with no name for anyone navigating
+      // the table by headers.
+      header: <span className="sr-only">Actions</span>,
+      width: 80,
       render: (_, row) => (
         <div className="flex items-center gap-1">
-          <button onClick={() => openEdit(row)} title="Edit"
-            className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-navy-700 hover:bg-navy-50 dark:hover:bg-navy-900/30 rounded-lg transition-colors">
-            <Pencil size={14} />
+          <button
+            type="button"
+            onClick={() => openEdit(row)}
+            aria-label={`Edit ${row.firstName} ${row.lastName}`}
+            title="Edit"
+            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-navy-50 hover:text-navy-700 dark:text-gray-500 dark:hover:bg-navy-900/30 dark:hover:text-navy-300"
+          >
+            <Pencil size={14} aria-hidden="true" />
           </button>
-          <button onClick={() => handleDelete(row)} title="Delete" disabled={deleteMutation.isPending}
-            className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-40">
-            <Trash2 size={14} />
+          <button
+            type="button"
+            onClick={() => handleDelete(row)}
+            disabled={deleteMutation.isPending}
+            aria-label={`Delete ${row.firstName} ${row.lastName}`}
+            title="Delete"
+            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:text-gray-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+          >
+            <Trash2 size={14} aria-hidden="true" />
           </button>
         </div>
       ),
     }] : []),
   ];
 
+  const selectClass = 'rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200';
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Youth Registry</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Track and manage youth member records</p>
+          <h1 className="page-title">Youth Registry</h1>
+          <p className="page-subtitle">Track and manage youth member records</p>
         </div>
         {canRegister && (
-          <button onClick={openCreate}
-            className="flex items-center gap-2 bg-navy-900 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors">
-            <Plus size={16} />Register Youth
+          <button
+            type="button"
+            onClick={openCreate}
+            className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
+          >
+            <Plus size={16} aria-hidden="true" />Register Youth
           </button>
         )}
       </div>
 
-      <div className="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm rounded-xl p-4">
-        <Search size={14} className="text-gray-400 dark:text-gray-500 ml-1" />
-        <input type="text" placeholder="Search by name..." value={filters.search}
-          onChange={(e) => setFilters({ ...filters, search: e.target.value, page: 1 })}
-          className="flex-1 text-sm outline-none text-gray-600 dark:text-gray-300" />
-      </div>
+      <section aria-label="Filter youth members" className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+        <SearchInput
+          id="youth-search"
+          label="Search youth members"
+          placeholder="Search by name..."
+          value={filters.search}
+          onSearch={(search) => setFilters((f) => ({ ...f, search, page: 1 }))}
+        />
 
-      {/* Demographic filters */}
-      <div className="flex flex-wrap gap-2 items-center">
-        {[['', 'All'], ['male', 'Male'], ['female', 'Female'], ['other', 'Other']].map(([val, label]) => (
-          <button key={val} onClick={() => setFilters({ ...filters, gender: val, page: 1 })}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filters.gender === val ? 'bg-navy-900 text-white' : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>
-            {label}
-          </button>
-        ))}
-        <select value={filters.barangay} onChange={(e) => setFilters({ ...filters, barangay: e.target.value, page: 1 })}
-          className="px-3 py-1.5 border border-gray-200 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 outline-none focus:ring-2 focus:ring-navy-700">
-          <option value="">All Barangays</option>
-          {barangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
-        </select>
-        <select value={filters.educationalAttainment} onChange={(e) => setFilters({ ...filters, educationalAttainment: e.target.value, page: 1 })}
-          className="px-3 py-1.5 border border-gray-200 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 outline-none focus:ring-2 focus:ring-navy-700">
-          <option value="">All Education</option>
-          {EDUCATION_OPTIONS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-        </select>
-        <select value={filters.isActive} onChange={(e) => setFilters({ ...filters, isActive: e.target.value, page: 1 })}
-          className="px-3 py-1.5 border border-gray-200 dark:border-gray-600 rounded-lg text-xs bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 outline-none focus:ring-2 focus:ring-navy-700">
-          <option value="">All Status</option>
-          <option value="true">Active</option>
-          <option value="false">Inactive</option>
-        </select>
-        {(filters.gender || filters.barangay || filters.educationalAttainment || filters.isActive) && (
-          <button onClick={() => setFilters({ ...filters, gender: '', barangay: '', educationalAttainment: '', isActive: '', page: 1 })}
-            className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-            Clear filters
-          </button>
-        )}
-      </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Gender is a single-choice group, so each button reports its own pressed state. */}
+          {GENDERS.map(([val, label]) => (
+            <button
+              key={val || 'all'}
+              type="button"
+              aria-pressed={filters.gender === val}
+              onClick={() => setFilters({ ...filters, gender: val, page: 1 })}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                filters.gender === val
+                  ? 'bg-navy-900 text-white dark:bg-navy-600'
+                  : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+
+          {isAdmin && (
+            <>
+              <label htmlFor="filter-municipality" className="sr-only">Filter by municipality</label>
+              <select
+                id="filter-municipality"
+                value={filters.municipality}
+                onChange={(e) => setFilters({ ...filters, municipality: e.target.value, barangay: '', page: 1 })}
+                className={selectClass}
+              >
+                <option value="">All Municipalities</option>
+                {municipalities.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
+              </select>
+            </>
+          )}
+
+          <label htmlFor="filter-barangay" className="sr-only">Filter by barangay</label>
+          <select
+            id="filter-barangay"
+            value={filters.barangay}
+            onChange={(e) => setFilters({ ...filters, barangay: e.target.value, page: 1 })}
+            disabled={!filterMunId}
+            className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-60`}
+          >
+            <option value="">{filterMunId ? 'All Barangays' : 'Pick a municipality'}</option>
+            {filterBarangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+          </select>
+
+          <label htmlFor="filter-education" className="sr-only">Filter by educational attainment</label>
+          <select
+            id="filter-education"
+            value={filters.educationalAttainment}
+            onChange={(e) => setFilters({ ...filters, educationalAttainment: e.target.value, page: 1 })}
+            className={selectClass}
+          >
+            <option value="">All Education</option>
+            {EDUCATION_OPTIONS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+          </select>
+
+          <label htmlFor="filter-active" className="sr-only">Filter by membership status</label>
+          <select
+            id="filter-active"
+            value={filters.isActive}
+            onChange={(e) => setFilters({ ...filters, isActive: e.target.value, page: 1 })}
+            className={selectClass}
+          >
+            <option value="">All Status</option>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </section>
 
       {data?.meta && (
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4">
-          <div className="text-center">
-            <p className="text-2xl font-bold text-navy-900 dark:text-white">{data.meta.total}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Total Members</p>
-          </div>
+        <div className="rounded-xl border border-gray-200 bg-white p-4 text-center dark:border-gray-700 dark:bg-gray-800">
+          <p className="numeric text-2xl font-bold text-navy-900 dark:text-white">{data.meta.total}</p>
+          <p className="meta-text">{hasFilters ? 'Members matching filters' : 'Total members'}</p>
         </div>
       )}
 
-      <DataTable columns={columns} data={data?.data} loading={isLoading}
-        pagination={data?.meta} onPageChange={(p) => setFilters({ ...filters, page: p })}
-        emptyMessage="No youth members registered" />
+      <DataTable
+        columns={columns}
+        data={data?.data}
+        loading={isLoading}
+        pagination={data?.meta}
+        onPageChange={(p) => setFilters({ ...filters, page: p })}
+        emptyMessage={hasFilters ? 'No youth members match these filters' : 'No youth members registered'}
+        emptyAction={hasFilters ? (
+          <button type="button" onClick={clearFilters} className="text-sm font-medium text-navy-700 hover:underline dark:text-navy-300">
+            Clear filters
+          </button>
+        ) : null}
+      />
 
-      <Modal isOpen={showModal} onClose={closeModal}
+      <Modal
+        isOpen={showModal}
+        onClose={closeModal}
         title={editTarget ? `Edit — ${editTarget.firstName} ${editTarget.lastName}` : 'Register Youth Member'}
         size="md"
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={closeModal} className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button onClick={handleSave} disabled={isPending}
-              className="px-5 py-2 bg-navy-900 text-white text-sm rounded-xl font-semibold hover:bg-navy-800 disabled:opacity-60">
+            <button
+              type="button"
+              onClick={closeModal}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isPending}
+              className="rounded-xl bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+            >
               {isPending ? 'Saving...' : editTarget ? 'Save Changes' : 'Register'}
             </button>
           </div>
-        }>
+        }
+      >
         <div className="space-y-4">
+          <RequiredNote />
 
-          {/* Name */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">First Name *</label>
-              <input value={form.firstName} onChange={(e) => set('firstName', e.target.value)} className={cls} />
-            </div>
-            <div>
-              <label className="form-label">Last Name *</label>
-              <input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} className={cls} />
-            </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="youth-firstName" label="First Name" required>
+              <input value={form.firstName} onChange={(e) => set('firstName', e.target.value)} className={control} />
+            </Field>
+            <Field id="youth-lastName" label="Last Name" required>
+              <input value={form.lastName} onChange={(e) => set('lastName', e.target.value)} className={control} />
+            </Field>
           </div>
 
-          {/* Birth date + Gender */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Birth Date *</label>
-              <input type="date" value={form.birthDate} onChange={(e) => set('birthDate', e.target.value)} className={cls} />
-            </div>
-            <div>
-              <label className="form-label">Gender *</label>
-              <select value={form.gender} onChange={(e) => set('gender', e.target.value)} className={cls}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              id="youth-birthDate"
+              label="Birth Date"
+              required
+              // Eligibility was only revealed by pressing Register and reading a toast. The age
+              // now appears as soon as a date is entered, and says whether it qualifies.
+              hint={
+                form.birthDate && formAge !== null
+                  ? `Age ${formAge}${formAge < YOUTH_MIN_AGE || formAge > YOUTH_MAX_AGE ? ` — outside the ${YOUTH_MIN_AGE}–${YOUTH_MAX_AGE} range` : ''}`
+                  : `Members must be ${YOUTH_MIN_AGE}–${YOUTH_MAX_AGE} years old.`
+              }
+            >
+              <input type="date" value={form.birthDate} onChange={(e) => set('birthDate', e.target.value)} className={control} />
+            </Field>
+            <Field id="youth-gender" label="Gender" required>
+              <select value={form.gender} onChange={(e) => set('gender', e.target.value)} className={control}>
                 <option value="">Select...</option>
                 <option value="male">Male</option>
                 <option value="female">Female</option>
                 <option value="other">Other</option>
               </select>
-            </div>
+            </Field>
           </div>
 
-          {/* Education */}
-          <div>
-            <label className="form-label">Educational Attainment</label>
-            <select value={form.educationalAttainment} onChange={(e) => set('educationalAttainment', e.target.value)} className={cls}>
+          <Field id="youth-education" label="Educational Attainment" optional>
+            <select value={form.educationalAttainment} onChange={(e) => set('educationalAttainment', e.target.value)} className={control}>
               <option value="">Select...</option>
-              {EDUCATION_OPTIONS.map(([val, label]) => (
-                <option key={val} value={val}>{label}</option>
-              ))}
+              {EDUCATION_OPTIONS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
             </select>
-          </div>
+          </Field>
 
-          {/* Municipality + Barangay */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Municipality {isAdmin && !editTarget && <span className="text-red-500">*</span>}</label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="youth-municipality" label="Municipality" required={isAdmin && !editTarget}>
               {isAdmin && !editTarget ? (
                 <select
                   value={form.municipality}
                   onChange={(e) => { set('municipality', e.target.value); set('barangay', ''); }}
-                  className={cls}
+                  className={control}
                 >
                   <option value="">Select municipality...</option>
-                  {municipalities.map((m) => (
-                    <option key={m._id} value={m._id}>{m.name}</option>
-                  ))}
+                  {municipalities.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
                 </select>
               ) : (
                 <input
                   value={editTarget ? (editTarget.municipality?.name || '') : (user?.municipality?.name || '')}
                   readOnly
-                  className={`${cls} bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400`}
+                  disabled
+                  className={`${control} cursor-not-allowed bg-gray-50 text-gray-500 dark:bg-gray-700 dark:text-gray-400`}
                 />
               )}
-            </div>
-            <div>
-              <label className="form-label">Barangay</label>
+            </Field>
+
+            <Field id="youth-barangay" label="Barangay" optional>
               <BarangaySelect
-                barangays={barangays}
+                barangays={formBarangays}
                 value={form.barangay}
                 onChange={(val) => set('barangay', val)}
+                disabled={!formMunId}
               />
-            </div>
+            </Field>
           </div>
 
-          {/* Contact + Email */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Contact Number</label>
-              <input type="tel" value={form.contactNumber} onChange={(e) => set('contactNumber', e.target.value)} className={cls} />
-            </div>
-            <div>
-              <label className="form-label">Email</label>
-              <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} className={cls} />
-            </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="youth-contact" label="Contact Number" optional hint="09XXXXXXXXX or +639XXXXXXXXX">
+              <input type="tel" value={form.contactNumber} onChange={(e) => set('contactNumber', e.target.value)} className={control} />
+            </Field>
+            <Field id="youth-email" label="Email" optional>
+              <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} className={control} />
+            </Field>
           </div>
 
-          {/* Address */}
-          <div>
-            <label className="form-label">Street Address</label>
-            <input value={form.address} onChange={(e) => set('address', e.target.value)} className={cls} placeholder="House no., street name" />
-          </div>
+          <Field id="youth-address" label="Street Address" optional>
+            <input value={form.address} onChange={(e) => set('address', e.target.value)} className={control} placeholder="House no., street name" />
+          </Field>
 
-          {/* Occupation */}
-          <div>
-            <label className="form-label">Occupation</label>
-            <input value={form.occupation} onChange={(e) => set('occupation', e.target.value)} className={cls} />
-          </div>
+          <Field id="youth-occupation" label="Occupation" optional>
+            <input value={form.occupation} onChange={(e) => set('occupation', e.target.value)} className={control} />
+          </Field>
 
-          {/* Checkboxes */}
-          <div className="flex items-center gap-6 pt-1">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={form.isRegisteredVoter}
+          <div className="flex flex-wrap items-center gap-6 pt-1">
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={form.isRegisteredVoter}
                 onChange={(e) => set('isRegisteredVoter', e.target.checked)}
-                className="w-4 h-4 accent-navy-900" />
+                className="h-4 w-4 accent-navy-900"
+              />
               <span className="text-sm text-gray-700 dark:text-gray-300">Registered Voter</span>
             </label>
             {editTarget && (
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={form.isActive}
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.isActive}
                   onChange={(e) => set('isActive', e.target.checked)}
-                  className="w-4 h-4 accent-navy-900" />
+                  className="h-4 w-4 accent-navy-900"
+                />
                 <span className="text-sm text-gray-700 dark:text-gray-300">Active Member</span>
               </label>
             )}
           </div>
-
         </div>
       </Modal>
     </div>

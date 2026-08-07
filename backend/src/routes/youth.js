@@ -9,6 +9,7 @@ const Barangay = require('../models/Barangay');
 const AuditLog = require('../models/AuditLog');
 const validate = require('../middleware/validate');
 const { successResponse, errorResponse, paginatedResponse } = require('../utils/apiResponse');
+const { calculateAge, isYouthEligibleAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } = require('../utils/age');
 
 const mongoose = require('mongoose');
 
@@ -120,8 +121,10 @@ router.post('/', authorize(...YOUTH_REGISTRARS), youthValidation, asyncHandler(a
       .filter(([, v]) => v !== '' && v !== null && v !== undefined)
   );
   if (data.birthDate) {
-    const age = Math.floor((Date.now() - new Date(data.birthDate).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-    if (age < 15 || age > 30) return errorResponse(res, 400, 'Youth member must be between 15 and 30 years old');
+    const age = calculateAge(data.birthDate);
+    if (!isYouthEligibleAge(age)) {
+      return errorResponse(res, 400, `Youth member must be between ${YOUTH_MIN_AGE} and ${YOUTH_MAX_AGE} years old`);
+    }
   }
   data.registeredBy = req.user._id;
   data.municipality = targetMunId;
