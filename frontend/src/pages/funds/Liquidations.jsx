@@ -1,19 +1,32 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ClipboardList, Search } from 'lucide-react';
-import { liquidationService } from '../../services/budgetService';
-import { budgetService } from '../../services/budgetService';
+import { Plus } from 'lucide-react';
+import { liquidationService, budgetService } from '../../services/budgetService';
 import { programService } from '../../services/programService';
 import DataTable from '../../components/shared/DataTable';
 import StatusBadge from '../../components/shared/StatusBadge';
+import Modal from '../../components/shared/Modal';
+import SearchInput from '../../components/shared/SearchInput';
+import { Field, RequiredNote, control } from '../../components/shared/FormField';
 import { formatCurrency, formatDate } from '../../utils/formatters';
+import { toFormData } from '../../utils/formData';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
-import Modal from '../../components/shared/Modal';
 import { confirm } from '../../utils/confirm';
 import { FINANCE_STAFF, ADMIN_ROLES } from '../../utils/constants';
 
 const EMPTY_FORM = { title: '', program: '', budget: '', totalAmount: '', liquidatedAmount: '', dueDate: '', remarks: '' };
+
+const STATUS_FILTERS = ['', 'draft', 'submitted', 'under_review', 'approved', 'rejected'];
+
+/** The DILG document chain a liquidation sits at the end of. */
+const WORKFLOW = [
+  'Purchase Request', 'Purchase Order', 'Delivery Receipt', 'Inspection Report',
+  'Sales Invoice', 'Disbursement Voucher', 'Official Receipt', 'Liquidation',
+];
+
+/** Statuses past which a due date no longer demands anything of anyone. */
+const SETTLED = ['approved', 'liquidated'];
 
 export default function Liquidations() {
   const queryClient = useQueryClient();
@@ -39,31 +52,28 @@ export default function Liquidations() {
     enabled: showModal,
   });
 
+  const closeModal = () => { setShowModal(false); setForm(EMPTY_FORM); };
+
   const createMutation = useMutation({
-    mutationFn: (data) => {
-      const fd = new FormData();
-      Object.entries(data).forEach(([k, v]) => { if (v) fd.append(k, v); });
-      return liquidationService.create(fd);
-    },
+    mutationFn: (values) => liquidationService.create(toFormData(values)),
     onSuccess: () => {
       toast.success('Liquidation report created');
       queryClient.invalidateQueries(['liquidations']);
-      setShowModal(false);
-      setForm(EMPTY_FORM);
+      closeModal();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Failed to create liquidation'),
   });
 
   const approveMutation = useMutation({
     mutationFn: (id) => liquidationService.approve(id),
     onSuccess: () => { toast.success('Liquidation approved'); queryClient.invalidateQueries(['liquidations']); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Approval failed'),
   });
 
   const submitMutation = useMutation({
     mutationFn: (id) => liquidationService.submit(id),
     onSuccess: () => { toast.success('Liquidation submitted for review'); queryClient.invalidateQueries(['liquidations']); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Submission failed'),
   });
 
   const canCreate = FINANCE_STAFF.includes(user?.role);
@@ -76,7 +86,10 @@ export default function Liquidations() {
     if (form.liquidatedAmount && parseFloat(form.liquidatedAmount) > parseFloat(form.totalAmount)) {
       return toast.error('Liquidated amount cannot exceed total amount');
     }
-    const result = await confirm.financial({ title: 'Create Liquidation Report?', text: `Total amount: ${formatCurrency(parseFloat(form.totalAmount))}` });
+    const result = await confirm.financial({
+      title: 'Create Liquidation Report?',
+      text: `Total amount: ${formatCurrency(parseFloat(form.totalAmount))}`,
+    });
     if (result.isConfirmed) createMutation.mutate(form);
   };
 
@@ -90,133 +103,291 @@ export default function Liquidations() {
     if (result.isConfirmed) approveMutation.mutate(id);
   };
 
+  const hasFilters = Boolean(filters.search || filters.status);
+
   const columns = [
-    { key: 'referenceNumber', header: 'Reference', render: (v) => <span className="font-mono text-xs font-bold text-navy-700">{v}</span> },
-    { key: 'title', header: 'Title', render: (v, row) => <div><p className="font-medium text-sm text-gray-900 dark:text-white">{v}</p><p className="text-xs text-gray-400 dark:text-gray-500">{row.program?.title}</p></div> },
-    { key: 'totalAmount', header: 'Amount', render: (v) => <span className="font-semibold">{formatCurrency(v)}</span> },
-    { key: 'liquidatedAmount', header: 'Liquidated', render: (v) => <span className="text-green-600">{formatCurrency(v)}</span> },
-    { key: 'variance', header: 'Variance', render: (v) => <span className={v > 0 ? 'text-red-600' : 'text-green-600'}>{formatCurrency(Math.abs(v))}</span> },
-    { key: 'dueDate', header: 'Due Date', render: (v) => v ? <span className={new Date(v) < new Date() ? 'text-red-600 font-medium' : ''}>{formatDate(v)}</span> : '—' },
+    {
+      key: 'referenceNumber',
+      header: 'Reference',
+      render: (v) => <span className="font-mono text-xs font-bold text-navy-700 dark:text-navy-300">{v}</span>,
+    },
+    {
+      key: 'title',
+      header: 'Title',
+      render: (v, row) => (
+        <div>
+          <p className="text-sm font-medium text-gray-900 dark:text-white">{v}</p>
+          <p className="meta-text">{row.program?.title || '—'}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'totalAmount',
+      header: 'Amount',
+      className: 'cell-numeric',
+      render: (v) => <span className="font-semibold text-gray-900 dark:text-white">{formatCurrency(v)}</span>,
+    },
+    {
+      key: 'liquidatedAmount',
+      header: 'Liquidated',
+      className: 'cell-numeric',
+      render: (v) => formatCurrency(v),
+    },
+    {
+      /*
+       * The model computes variance as totalAmount − liquidatedAmount and forbids liquidating
+       * more than the total, so it is never negative: any positive figure is money not yet
+       * accounted for. The column showed a bare coloured amount with no indication of which
+       * direction it ran, and Math.abs() hid a sign that cannot occur anyway.
+       */
+      key: 'variance',
+      header: 'Unliquidated',
+      className: 'cell-numeric',
+      render: (v) => (v > 0
+        ? <span className="font-medium text-red-600 dark:text-red-400">{formatCurrency(v)}</span>
+        : <span className="text-gray-500 dark:text-gray-400">Fully liquidated</span>),
+    },
+    {
+      key: 'dueDate',
+      header: 'Due Date',
+      render: (v, row) => {
+        if (!v) return '—';
+        // An approved report that happens to sit past its due date is finished business; it was
+        // still painted red, so settled rows competed for attention with genuinely late ones.
+        const overdue = new Date(v) < new Date() && !SETTLED.includes(row.status);
+        return overdue ? (
+          <span className="font-medium text-red-600 dark:text-red-400">
+            {formatDate(v)} <span className="meta-text text-red-600 dark:text-red-400">· overdue</span>
+          </span>
+        ) : formatDate(v);
+      },
+    },
     { key: 'status', header: 'Status', render: (v) => <StatusBadge status={v} /> },
     {
-      key: '_id', header: 'Actions', render: (id, row) => (
+      key: '_id',
+      header: 'Actions',
+      render: (id, row) => (
         <div className="flex gap-2">
           {row.status === 'draft' && canCreate && (
-            <button onClick={() => handleSubmitLiquidation(id)} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100">Submit</button>
+            <button
+              type="button"
+              onClick={() => handleSubmitLiquidation(id)}
+              disabled={submitMutation.isPending}
+              aria-label={`Submit ${row.title}`}
+              className="rounded-lg bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-60 dark:bg-blue-500/15 dark:text-blue-300 dark:hover:bg-blue-500/25"
+            >
+              Submit
+            </button>
           )}
           {row.status === 'submitted' && canApprove && (
-            <button onClick={() => handleApproveLiquidation(id)} className="text-xs px-2 py-1 bg-green-50 text-green-700 rounded-lg hover:bg-green-100">Approve</button>
+            <button
+              type="button"
+              onClick={() => handleApproveLiquidation(id)}
+              disabled={approveMutation.isPending}
+              aria-label={`Approve ${row.title}`}
+              className="rounded-lg bg-green-50 px-2 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-100 disabled:opacity-60 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25"
+            >
+              Approve
+            </button>
           )}
         </div>
-      )
+      ),
     },
   ];
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Liquidations</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Manage program fund liquidation reports</p>
+          <h1 className="page-title">Liquidations</h1>
+          <p className="page-subtitle">Manage program fund liquidation reports</p>
         </div>
         {canCreate && (
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-navy-900 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors">
-            <Plus size={16} />New Liquidation
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
+          >
+            <Plus size={16} aria-hidden="true" />
+            New Liquidation
           </button>
         )}
       </div>
 
-      {/* Workflow guide */}
-      <div className="bg-navy-50 dark:bg-navy-900/20 border border-navy-200 dark:border-navy-800 rounded-xl p-4">
-        <p className="text-sm font-semibold text-navy-800 dark:text-navy-300 mb-2">Financial Workflow</p>
-        <div className="flex items-center gap-2 flex-wrap text-xs text-navy-600 dark:text-navy-400">
-          {['Purchase Request', 'Purchase Order', 'Delivery Receipt', 'Inspection Report', 'Sales Invoice', 'Disbursement Voucher', 'Official Receipt', 'Liquidation'].map((step, i) => (
-            <span key={step} className="flex items-center gap-1">
-              <span className="bg-navy-200 dark:bg-navy-800 text-navy-800 dark:text-navy-200 px-2 py-0.5 rounded font-medium">{step}</span>
-              {i < 7 && <span className="text-navy-400">→</span>}
-            </span>
+      {/* An ordered sequence, so it is marked up as one rather than as a row of loose spans.
+          The arrows are decorative — the list order already carries the meaning. */}
+      <section aria-label="Financial workflow" className="rounded-xl border border-navy-200 bg-navy-50 p-4 dark:border-navy-800 dark:bg-navy-900/20">
+        <h2 className="mb-2 text-sm font-semibold text-navy-800 dark:text-navy-300">Financial Workflow</h2>
+        <ol className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-navy-600 dark:text-navy-400">
+          {WORKFLOW.map((step, i) => (
+            <li key={step} className="flex items-center gap-2">
+              <span className="rounded bg-navy-200 px-2 py-0.5 font-medium text-navy-800 dark:bg-navy-800 dark:text-navy-200">{step}</span>
+              {i < WORKFLOW.length - 1 && <span aria-hidden="true" className="text-navy-400">→</span>}
+            </li>
           ))}
+        </ol>
+      </section>
+
+      <section aria-label="Filter liquidations" className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+        <SearchInput
+          id="liquidation-search"
+          label="Search liquidations"
+          placeholder="Search liquidations..."
+          value={filters.search}
+          onSearch={(search) => setFilters((f) => ({ ...f, search, page: 1 }))}
+        />
+
+        {/* Six filters overflowed the viewport on a phone with no way to reach the last two. */}
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+          {STATUS_FILTERS.map((s) => {
+            const active = filters.status === s;
+            return (
+              <button
+                key={s || 'all'}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setFilters({ ...filters, status: s, page: 1 })}
+                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                  active
+                    ? 'bg-navy-900 text-white dark:bg-navy-600'
+                    : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                }`}
+              >
+                {s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'All'}
+              </button>
+            );
+          })}
         </div>
-      </div>
+      </section>
 
-      {/* Search */}
-      <div className="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm rounded-xl p-4">
-        <Search size={14} className="text-gray-400 dark:text-gray-500 ml-1" />
-        <input type="text" placeholder="Search liquidations..." value={filters.search}
-          onChange={(e) => setFilters({ ...filters, search: e.target.value, page: 1 })}
-          className="flex-1 text-sm outline-none text-gray-600 dark:text-gray-300" />
-      </div>
-
-      {/* Status filter */}
-      <div className="flex gap-2">
-        {['', 'draft', 'submitted', 'under_review', 'approved', 'rejected'].map((s) => (
-          <button key={s} onClick={() => setFilters({ ...filters, status: s })}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filters.status === s ? 'bg-navy-900 text-white' : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>
-            {s ? s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'All'}
+      <DataTable
+        columns={columns}
+        data={data?.data}
+        loading={isLoading}
+        pagination={data?.meta}
+        onPageChange={(p) => setFilters({ ...filters, page: p })}
+        emptyMessage={hasFilters ? 'No liquidations match these filters' : 'No liquidation reports yet'}
+        emptyAction={hasFilters ? (
+          <button
+            type="button"
+            onClick={() => setFilters({ page: 1, limit: 10, status: '', search: '' })}
+            className="text-sm font-medium text-navy-700 hover:underline dark:text-navy-300"
+          >
+            Clear filters
           </button>
-        ))}
-      </div>
+        ) : null}
+      />
 
-      <DataTable columns={columns} data={data?.data} loading={isLoading}
-        pagination={data?.meta} onPageChange={(p) => setFilters({ ...filters, page: p })} />
-
-      {/* Create Liquidation Modal */}
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="New Liquidation Report" size="md"
+      <Modal
+        isOpen={showModal}
+        onClose={closeModal}
+        title="New Liquidation Report"
+        size="md"
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button onClick={handleCreate} disabled={createMutation.isPending}
-              className="px-5 py-2 bg-navy-900 text-white text-sm rounded-xl font-semibold hover:bg-navy-800 disabled:opacity-60">
+            <button
+              type="button"
+              onClick={closeModal}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleCreate}
+              disabled={createMutation.isPending}
+              className="rounded-xl bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+            >
               {createMutation.isPending ? 'Creating...' : 'Create Report'}
             </button>
           </div>
-        }>
+        }
+      >
         <div className="space-y-4">
-          <div>
-            <label className="form-label">Title *</label>
-            <input type="text" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
+          <RequiredNote />
+
+          <Field id="liq-title" label="Title" required>
+            <input
+              type="text"
+              value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
               placeholder="e.g. Q1 2026 Program Liquidation"
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700" />
-          </div>
-          <div>
-            <label className="form-label">Program *</label>
-            <select value={form.program} onChange={(e) => setForm({ ...form, program: e.target.value })}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 bg-white">
+              className={control}
+            />
+          </Field>
+
+          <Field id="liq-program" label="Program" required>
+            <select value={form.program} onChange={(e) => setForm({ ...form, program: e.target.value })} className={control}>
               <option value="">Select program...</option>
               {(programsData || []).map((p) => <option key={p._id} value={p._id}>{p.title}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="form-label">Linked Budget</label>
-            <select value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 bg-white">
+          </Field>
+
+          <Field id="liq-budget" label="Linked Budget" optional>
+            <select value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} className={control}>
               <option value="">No budget linked</option>
               {(budgetsData || []).map((b) => <option key={b._id} value={b._id}>{b.title} — FY {b.fiscalYear}</option>)}
             </select>
+          </Field>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="liq-total" label="Total Amount (₱)" required>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.totalAmount}
+                onChange={(e) => setForm({ ...form, totalAmount: e.target.value })}
+                placeholder="0.00"
+                className={`${control} numeric`}
+              />
+            </Field>
+            <Field
+              id="liq-liquidated"
+              label="Liquidated Amount (₱)"
+              optional
+              hint="Cannot exceed the total."
+            >
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.liquidatedAmount}
+                onChange={(e) => setForm({ ...form, liquidatedAmount: e.target.value })}
+                placeholder="0.00"
+                className={`${control} numeric`}
+              />
+            </Field>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Total Amount (₱) *</label>
-              <input type="number" min="0" value={form.totalAmount} onChange={(e) => setForm({ ...form, totalAmount: e.target.value })}
-                className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-            </div>
-            <div>
-              <label className="form-label">Liquidated Amount (₱)</label>
-              <input type="number" min="0" value={form.liquidatedAmount} onChange={(e) => setForm({ ...form, liquidatedAmount: e.target.value })}
-                className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-            </div>
-          </div>
-          <div>
-            <label className="form-label">Due Date</label>
-            <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-          </div>
-          <div>
-            <label className="form-label">Remarks</label>
-            <textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} rows={2}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 resize-none" />
-          </div>
+
+          {/* The remaining figure was only discoverable by saving and reading it back off the
+              table. It is the number the report exists to explain, so it is shown while typing. */}
+          {form.totalAmount > 0 && (
+            <p className="meta-text">
+              Unliquidated:{' '}
+              <span className="numeric font-medium text-gray-700 dark:text-gray-300">
+                {formatCurrency(Math.max(0, parseFloat(form.totalAmount || 0) - parseFloat(form.liquidatedAmount || 0)))}
+              </span>
+            </p>
+          )}
+
+          <Field id="liq-due" label="Due Date" optional>
+            <input
+              type="date"
+              value={form.dueDate}
+              onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+              className={control}
+            />
+          </Field>
+
+          <Field id="liq-remarks" label="Remarks" optional>
+            <textarea
+              value={form.remarks}
+              onChange={(e) => setForm({ ...form, remarks: e.target.value })}
+              rows={2}
+              className={`${control} resize-y`}
+            />
+          </Field>
         </div>
       </Modal>
     </div>
