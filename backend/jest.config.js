@@ -7,7 +7,10 @@ module.exports = {
   coveragePathIgnorePatterns: ['/node_modules/', '/src/tests/'],
   /*
    * Only affects running `jest` directly — `npm test` passes --runInBand, which overrides this
-   * and is what CI uses. That path is deterministic and has not been seen to fail.
+   * and is what CI uses. Serial is far more reliable but is not immune: one suite in a 28-suite
+   * serial run has been seen to fail on the same startup timeout, so a lone red suite whose
+   * failures are all `buffering timed out` (and which passes when run alone) is environmental,
+   * not a regression. Re-run before investigating.
    *
    * It matters for the bare invocation because each suite stands up its own MongoMemoryServer
    * (see src/tests/setup.js), so concurrent mongod processes track the worker count. Left

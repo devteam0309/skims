@@ -5,7 +5,7 @@ const User = require('../models/User');
 const Notification = require('../models/Notification');
 const AuditLog = require('../models/AuditLog');
 const emailService = require('../services/emailService');
-const { cloudinary, uploadToCloudinary } = require('../config/cloudinary');
+const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 
 const ACCESS_COOKIE_OPTIONS = {
@@ -185,7 +185,7 @@ exports.updateProfile = asyncHandler(async (req, res) => {
         .split('/upload/')[1]
         ?.replace(/^v\d+\//, '')
         .replace(/\.[^.]+$/, '');
-      if (publicId) cloudinary.uploader.destroy(publicId).catch(() => {});
+      destroyQuietly(publicId);
     }
 
     const result = await uploadToCloudinary(req.file.buffer, {
