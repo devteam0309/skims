@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
+import { KeyRound, AlertCircle } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { toast } from '../../components/ui/toaster';
-import { KeyRound } from 'lucide-react';
+import AuthCard from '../../components/layout/AuthCard';
+import { Field, control } from '../../components/shared/FormField';
+import { PASSWORD_PATTERN, PASSWORD_RULE_TEXT } from '../../utils/constants';
 
 export default function ResetPassword() {
   const { token } = useParams();
@@ -10,11 +13,32 @@ export default function ResetPassword() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  /*
+   * The only check here used to be `password.length < 8`, while User.js requires an uppercase
+   * letter, a digit and a special character as well. "password1" cleared the form and was then
+   * refused by the server with a raw Mongoose validation message citing a rule the screen had
+   * never mentioned — at the end of a reset flow, with the token already spent from the user's
+   * point of view.
+   */
+  const tooShort = password.length > 0 && password.length < 8;
+  const failsPolicy = password.length >= 8 && !PASSWORD_PATTERN.test(password);
+  const mismatch = confirm.length > 0 && password !== confirm;
+
+  const passwordError = (submitted || tooShort || failsPolicy)
+    ? (tooShort ? 'Password must be at least 8 characters'
+      : failsPolicy ? 'Include an uppercase letter, a number and a special character'
+        : null)
+    : null;
+  const confirmError = mismatch ? 'Passwords do not match' : null;
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    if (password !== confirm) return toast.error('Passwords do not match');
-    if (password.length < 8) return toast.error('Password must be at least 8 characters');
+    setSubmitted(true);
+    if (!PASSWORD_PATTERN.test(password)) return;
+    if (password !== confirm) return;
+
     setLoading(true);
     try {
       await authService.resetPassword(token, password);
@@ -28,29 +52,62 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-navy-950 to-navy-900 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-navy-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <KeyRound size={24} className="text-navy-700" />
-          </div>
-          <h1 className="text-2xl font-bold">Reset Password</h1>
-          <p className="text-gray-500 text-sm mt-1">Enter your new password</p>
-        </div>
-        <form onSubmit={onSubmit} className="space-y-4">
-          {[['New Password', password, setPassword], ['Confirm Password', confirm, setConfirm]].map(([label, val, setter]) => (
-            <div key={label}>
-              <label className="form-label">{label}</label>
-              <input type="password" value={val} onChange={(e) => setter(e.target.value)} required
-                className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700" />
-            </div>
-          ))}
-          <button type="submit" disabled={loading}
-            className="w-full bg-navy-900 text-white py-3 rounded-xl font-semibold hover:bg-navy-800 disabled:opacity-60 transition-all">
-            {loading ? 'Resetting...' : 'Reset Password'}
-          </button>
-        </form>
-      </div>
-    </div>
+    <AuthCard icon={KeyRound} title="Reset Password" subtitle="Enter your new password">
+      <form onSubmit={onSubmit} noValidate className="space-y-4">
+        <Field
+          id="newPassword"
+          label="New Password"
+          required
+          hint={PASSWORD_RULE_TEXT}
+          error={passwordError ? { message: passwordError } : undefined}
+        >
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            // Without this the browser offers the old password and never prompts to update the
+            // saved one — the single place where updating it matters most.
+            autoComplete="new-password"
+            autoFocus
+            className={control}
+          />
+        </Field>
+
+        <Field
+          id="confirmPassword"
+          label="Confirm Password"
+          required
+          error={confirmError ? { message: confirmError } : undefined}
+        >
+          <input
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            autoComplete="new-password"
+            className={control}
+          />
+        </Field>
+
+        {/* A mismatch used to surface only as a toast after pressing the button. */}
+        {mismatch && (
+          <p className="flex items-center gap-1.5 text-xs text-red-600" role="alert">
+            <AlertCircle size={12} aria-hidden="true" className="shrink-0" />
+            The two passwords must match.
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-xl bg-navy-900 py-3 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+        >
+          {loading ? 'Resetting...' : 'Reset Password'}
+        </button>
+
+        <Link to="/login" className="block text-center text-sm text-gray-500 hover:text-gray-700">
+          Back to Login
+        </Link>
+      </form>
+    </AuthCard>
   );
 }

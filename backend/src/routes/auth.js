@@ -21,9 +21,18 @@ const registerValidation = validate([
     .matches(/^(09|\+639)\d{9}$/).withMessage('Use PH format: 09XXXXXXXXX or +639XXXXXXXXX'),
 ]);
 
+// normalizeEmail() MUST match registerValidation above. Register normalizes (which strips Gmail
+// dots and +tags and lowercases) before storing, so any lookup that skips it will miss the record:
+// registering "john.doe@gmail.com" stores "johndoe@gmail.com", and logging in with the address the
+// user actually typed then fails as "Invalid credentials" despite a correct password.
 const loginValidation = validate([
-  body('email').isEmail().withMessage('Valid email address is required'),
+  body('email').isEmail().withMessage('Valid email address is required').normalizeEmail(),
   body('password').notEmpty().withMessage('Password is required'),
+]);
+
+// Same reason: these look users up by email and must normalize identically.
+const emailLookupValidation = validate([
+  body('email').isEmail().withMessage('Valid email address is required').normalizeEmail(),
 ]);
 
 const rateLimit = require('express-rate-limit');
@@ -50,8 +59,8 @@ router.get('/me', protect, getMe);
 router.put('/me', protect, upload.single('avatar'), updateProfile);
 router.put('/password', protect, updatePassword);
 router.get('/verify-email/:token', verifyEmail);
-router.post('/forgot-password', emailLimiter, forgotPassword);
-router.post('/resend-verification', emailLimiter, resendVerification);
+router.post('/forgot-password', emailLimiter, emailLookupValidation, forgotPassword);
+router.post('/resend-verification', emailLimiter, emailLookupValidation, resendVerification);
 router.put('/reset-password/:token', resetPassword);
 
 module.exports = router;

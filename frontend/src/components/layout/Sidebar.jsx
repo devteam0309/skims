@@ -1,14 +1,12 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  LayoutDashboard, FolderOpen, Banknote, FileText, BarChart3,
-  Activity, Users, Bell, ChevronDown, ChevronRight, LogOut,
-  BookOpen, Target, CreditCard, ClipboardList, Globe, UserCircle,
-  TrendingUp, Megaphone, Shield,
+  LayoutDashboard, FolderOpen, Banknote, FileText,
+  Activity, Users, Bell, LogOut,
+  Target, CreditCard, ClipboardList, Globe,
+  TrendingUp, Megaphone, Shield, ExternalLink,
 } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
-import { ROLE_LABELS } from '../../utils/constants';
-import { getInitials } from '../../utils/formatters';
 import { confirm } from '../../utils/confirm';
 
 const navGroups = [
@@ -61,7 +59,6 @@ const navGroups = [
 
 export default function Sidebar({ isOpen, onClose }) {
   const { user, logout } = useAuthStore();
-  const location = useLocation();
 
   const handleLogout = async () => {
     const result = await confirm.logout();
@@ -75,101 +72,92 @@ export default function Sidebar({ isOpen, onClose }) {
 
   return (
     <>
-      {/* Mobile overlay */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 z-20 lg:hidden"
+            className="fixed inset-0 z-20 bg-gray-900/50 lg:hidden"
             onClick={onClose}
+            aria-hidden="true"
           />
         )}
       </AnimatePresence>
 
-      {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 h-full w-64 bg-navy-900 text-white z-30 flex flex-col transition-transform duration-300 lg:translate-x-0 lg:static lg:z-auto ${
+        className={`fixed left-0 top-0 z-30 flex h-full w-64 flex-col bg-navy-900 text-white transition-transform duration-300 lg:static lg:z-auto lg:translate-x-0 ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Logo */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-navy-800">
-          <div className="w-10 h-10 rounded-lg overflow-hidden bg-white flex-shrink-0">
-            <img src="/main_logo.jfif" alt="SKIMS" className="w-full h-full object-contain" />
+        <div className="flex items-center gap-3 border-b border-navy-800 px-5 py-4">
+          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-white">
+            <img src="/main_logo.jfif" alt="" className="h-full w-full object-contain" />
           </div>
-          <div>
-            <div className="font-bold text-white text-sm leading-tight">SKIMS</div>
-            <div className="text-navy-400 text-xs">Marinduque, Philippines</div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold leading-tight text-white">SKIMS</div>
+            {/* navy-400 rather than navy-500: the old value sat at roughly 2.9:1 against the
+                navy-900 panel, below the 4.5:1 needed for text this size. */}
+            <div className="truncate text-xs text-navy-300">Marinduque, Philippines</div>
           </div>
         </div>
 
-        {/* User info */}
-        {/* <div className="px-4 py-3 border-b border-navy-800">
-          <NavLink to="/profile" className="flex items-center gap-3 hover:bg-navy-800 rounded-lg p-2 transition-colors">
-            <div className="w-9 h-9 rounded-full bg-gold-500 flex items-center justify-center flex-shrink-0">
-              {user?.avatar ? (
-                <img src={user.avatar} alt="" className="w-9 h-9 rounded-full object-cover" />
-              ) : (
-                <span className="text-navy-900 font-bold text-sm">
-                  {getInitials(user?.firstName, user?.lastName)}
-                </span>
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-white truncate">
-                {user?.firstName} {user?.lastName}
-              </div>
-              <div className="text-xs text-navy-400 truncate">
-                {ROLE_LABELS[user?.role]}
-              </div>
-            </div>
-          </NavLink>
-        </div> */}
-
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+        <nav aria-label="Main navigation" className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
           {filteredGroups.map((group) => (
             <div key={group.label}>
-              <p className="px-3 mb-1.5 text-xs font-semibold text-navy-500 uppercase tracking-widest">
+              {/*
+                Group headings were navy-500 on navy-900 — about 2.9:1, well under AA for
+                small uppercase text, so the structure they provide was barely perceptible.
+              */}
+              <h2 className="mb-1.5 px-3 text-xs font-semibold uppercase tracking-widest text-navy-300">
                 {group.label}
-              </p>
-              <div className="space-y-0.5">
+              </h2>
+              <ul className="space-y-0.5">
                 {group.items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    onClick={() => window.innerWidth < 1024 && onClose()}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
-                        isActive
-                          ? 'bg-gold-500 text-navy-900 shadow-md'
-                          : 'text-navy-300 hover:bg-navy-800 hover:text-white'
-                      }`
-                    }
-                  >
-                    <item.icon size={17} />
-                    {item.label}
-                  </NavLink>
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      onClick={() => window.innerWidth < 1024 && onClose()}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                          isActive
+                            ? 'bg-gold-500 text-navy-900'
+                            : 'text-navy-200 hover:bg-navy-800 hover:text-white'
+                        }`
+                      }
+                    >
+                      {/* NavLink sets aria-current="page" itself, so the active state is
+                          conveyed to assistive tech and not by colour alone. */}
+                      <item.icon size={17} aria-hidden="true" className="shrink-0" />
+                      {item.label}
+                    </NavLink>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           ))}
         </nav>
 
-        {/* Bottom actions */}
-        <div className="px-3 py-4 border-t border-navy-800 space-y-1">
-          <a href="/portal" target="_blank" rel="noreferrer"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:bg-navy-800 hover:text-white transition-all">
-            <Globe size={17} />
-            Public Portal
+        <div className="space-y-1 border-t border-navy-800 px-3 py-4">
+          <a
+            href="/portal"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-navy-200 transition-colors hover:bg-navy-800 hover:text-white"
+          >
+            <Globe size={17} aria-hidden="true" className="shrink-0" />
+            <span className="flex-1">Public Portal</span>
+            {/* This link opens a new tab. Previously nothing signalled that, so the back button
+                appearing dead was the first the user knew of it. */}
+            <ExternalLink size={13} aria-hidden="true" className="shrink-0 text-navy-400" />
+            <span className="sr-only">(opens in a new tab)</span>
           </a>
           <button
+            type="button"
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:bg-red-900 hover:text-white transition-all"
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-navy-200 transition-colors hover:bg-red-900/70 hover:text-white"
           >
-            <LogOut size={17} />
+            <LogOut size={17} aria-hidden="true" className="shrink-0" />
             Sign Out
           </button>
         </div>

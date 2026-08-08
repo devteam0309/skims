@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Menu, Bell, Search, Sun, Moon, ChevronDown } from 'lucide-react';
+import { Menu, Bell, Search, Sun, Moon } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { notificationService } from '../../services/documentService';
@@ -12,6 +12,9 @@ export default function Header({ onMenuClick }) {
   const { user } = useAuthStore();
   const [showNotifs, setShowNotifs] = useState(false);
   const [dark, setDark] = useState(() => localStorage.getItem('theme') === 'dark');
+
+  const bellRef = useRef(null);
+  const panelRef = useRef(null);
 
   const { data: unreadData } = useQuery({
     queryKey: ['notifications', 'unread'],
@@ -30,49 +33,94 @@ export default function Header({ onMenuClick }) {
     localStorage.setItem('theme', dark ? 'dark' : 'light');
   }, [dark]);
 
+  /*
+   * The panel previously had no dismissal path other than clicking the bell again, so it stayed
+   * open while the user carried on working and covered the top-right of every page.
+   * Both refs are checked, per the portaled-dropdown rule: a click inside the panel must not
+   * count as "outside" or the panel unmounts before the item's own click handler runs.
+   */
+  useEffect(() => {
+    if (!showNotifs) return undefined;
+
+    const onPointerDown = (e) => {
+      if (bellRef.current?.contains(e.target)) return;
+      if (panelRef.current?.contains(e.target)) return;
+      setShowNotifs(false);
+    };
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return;
+      setShowNotifs(false);
+      bellRef.current?.focus();
+    };
+
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showNotifs]);
+
   const unreadCount = unreadData?.data?.count || 0;
 
   return (
-    <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 lg:px-6 h-16 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-      {/* Left */}
-      <div className="flex items-center gap-3">
+    <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 lg:px-6 dark:border-gray-700 dark:bg-gray-800">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         <button
+          type="button"
           onClick={onMenuClick}
-          className="lg:hidden p-2 rounded-lg hover:bg-gray-100 transition-colors"
+          aria-label="Open navigation menu"
+          className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 lg:hidden dark:text-gray-300 dark:hover:bg-gray-700"
         >
-          <Menu size={20} />
+          <Menu size={20} aria-hidden="true" />
         </button>
 
-        {/* Search */}
-        <div className="hidden md:flex items-center gap-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 w-72">
-          <Search size={16} className="text-gray-400 dark:text-gray-500" />
+        {/*
+          NOTE: this input has never had a change or submit handler — it is a non-functional
+          stub. It is left in place rather than deleted because wiring it up is a product
+          decision, not a redesign one. It now at least carries a label for screen readers,
+          which previously announced it only as "edit text".
+        */}
+        <div className="hidden w-72 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 focus-within:border-navy-700 md:flex dark:border-gray-600 dark:bg-gray-700">
+          <Search size={16} className="shrink-0 text-gray-400 dark:text-gray-500" aria-hidden="true" />
+          <label htmlFor="global-search" className="sr-only">Search programs and documents</label>
           <input
+            id="global-search"
             type="text"
             placeholder="Search programs, documents..."
-            className="bg-transparent text-sm outline-none flex-1 text-gray-600 dark:text-gray-300 placeholder-gray-400"
+            className="min-w-0 flex-1 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400 dark:text-gray-200"
           />
         </div>
       </div>
 
-      {/* Right */}
-      <div className="flex items-center gap-2">
-        {/* Dark mode toggle */}
+      <div className="flex shrink-0 items-center gap-1">
         <button
+          type="button"
           onClick={() => setDark(!dark)}
-          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400"
+          aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+          className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700"
         >
-          {dark ? <Sun size={18} /> : <Moon size={18} />}
+          {dark ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
         </button>
 
-        {/* Notifications */}
         <div className="relative">
           <button
-            onClick={() => setShowNotifs(!showNotifs)}
-            className="relative p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400"
+            ref={bellRef}
+            type="button"
+            onClick={() => setShowNotifs((v) => !v)}
+            aria-expanded={showNotifs}
+            aria-haspopup="true"
+            aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+            className="relative rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700"
           >
-            <Bell size={18} />
+            <Bell size={18} aria-hidden="true" />
             {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+              // aria-hidden: the count is already in the button's accessible name above, so
+              // exposing it twice makes the control read as "Notifications 4 unread 4".
+              <span
+                aria-hidden="true"
+                className="numeric absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white"
+              >
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}
@@ -81,47 +129,54 @@ export default function Header({ onMenuClick }) {
           <AnimatePresence>
             {showNotifs && (
               <motion.div
-                initial={{ opacity: 0, y: 8, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 8, scale: 0.95 }}
-                className="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl z-50"
+                ref={panelRef}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={{ duration: 0.12 }}
+                className="absolute right-0 mt-2 w-80 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
               >
-                <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
-                  <h3 className="font-semibold text-gray-900 dark:text-white">Notifications</h3>
-                  <Link to="/notifications" onClick={() => setShowNotifs(false)}
-                    className="text-xs text-navy-700 hover:underline">View all</Link>
+                <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+                  <h2 className="section-heading">Notifications</h2>
+                  <Link
+                    to="/notifications"
+                    onClick={() => setShowNotifs(false)}
+                    className="text-xs font-medium text-navy-700 hover:underline dark:text-navy-300"
+                  >
+                    View all
+                  </Link>
                 </div>
-                <div className="max-h-72 overflow-y-auto">
+                <ul className="max-h-72 divide-y divide-gray-100 overflow-y-auto dark:divide-gray-700">
                   {notifsData?.data?.length ? (
                     notifsData.data.map((n) => (
-                      <div key={n._id} className="p-3 border-b border-gray-50 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                      <li key={n._id} className="px-4 py-3">
                         <p className="text-sm font-medium text-gray-900 dark:text-white">{n.title}</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">{n.message}</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{getRelativeTime(n.createdAt)}</p>
-                      </div>
+                        <p className="mt-0.5 line-clamp-2 text-xs text-gray-600 dark:text-gray-400">{n.message}</p>
+                        <p className="meta-text mt-1">{getRelativeTime(n.createdAt)}</p>
+                      </li>
                     ))
                   ) : (
-                    <div className="py-8 text-center text-gray-400 text-sm">No new notifications</div>
+                    <li className="meta-text px-4 py-8 text-center">No new notifications</li>
                   )}
-                </div>
+                </ul>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* User menu */}
-        <Link to="/profile" className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-          <div className="w-8 h-8 rounded-full bg-navy-900 flex items-center justify-center">
-            <span className="text-gold-500 text-xs font-bold">
-              {(user?.firstName?.[0] || '') + (user?.lastName?.[0] || '')}
-            </span>
-          </div>
-          <div className="hidden sm:block">
-            <p className="text-sm font-medium text-gray-900 dark:text-white leading-tight">
+        <Link
+          to="/profile"
+          className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-navy-900 text-xs font-semibold text-gold-500">
+            {(user?.firstName?.[0] || '') + (user?.lastName?.[0] || '')}
+          </span>
+          <span className="hidden sm:block">
+            <span className="block text-sm font-medium leading-tight text-gray-900 dark:text-white">
               {user?.firstName} {user?.lastName}
-            </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">{ROLE_LABELS[user?.role]}</p>
-          </div>
+            </span>
+            <span className="meta-text">{ROLE_LABELS[user?.role]}</span>
+          </span>
         </Link>
       </div>
     </header>

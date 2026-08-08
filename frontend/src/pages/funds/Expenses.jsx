@@ -1,12 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, CreditCard } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { expenseService, budgetService } from '../../services/budgetService';
 import { programService } from '../../services/programService';
 import DataTable from '../../components/shared/DataTable';
 import StatusBadge from '../../components/shared/StatusBadge';
 import Modal from '../../components/shared/Modal';
+import SearchInput from '../../components/shared/SearchInput';
+import SelectAllCheckbox from '../../components/shared/SelectAllCheckbox';
+import { Field, RequiredNote, control } from '../../components/shared/FormField';
 import { formatCurrency, formatDate } from '../../utils/formatters';
+import { toFormData } from '../../utils/formData';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
@@ -22,12 +26,19 @@ const EXPENSE_TYPES = [
   { value: 'official_receipt', label: 'Official Receipt' },
 ];
 
+const EXPENSE_STATUSES = ['pending', 'approved', 'rejected', 'liquidated'];
+
+const emptyForm = () => ({
+  type: '', title: '', description: '', amount: '',
+  transactionDate: '', vendorName: '', budget: '', program: '',
+});
+
 export default function Expenses() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
   const [showModal, setShowModal] = useState(false);
   const [filters, setFilters] = useState({ page: 1, limit: 10, search: '', type: '', status: '' });
-  const [form, setForm] = useState({ type: '', title: '', description: '', amount: '', transactionDate: '', vendorName: '', budget: '', program: '' });
+  const [form, setForm] = useState(emptyForm());
   const [selectedIds, setSelectedIds] = useState(new Set());
 
   useEffect(() => { setSelectedIds(new Set()); }, [filters]);
@@ -52,20 +63,37 @@ export default function Expenses() {
     queryFn: () => programService.getAll({ status: 'ongoing', limit: 100 }).then((r) => r.data.data),
   });
 
+  const closeModal = () => { setShowModal(false); setForm(emptyForm()); };
+
+  /*
+   * The submit handler used to build a FormData and pass *that* in, while this mutationFn ran
+   * `Object.entries()` over it to build another — and a FormData has no own enumerable
+   * properties, so that yields []. Every field was dropped and the request went out with an empty
+   * body. The server rejected it on `type`, `title`, `amount` and `transactionDate`, so the user
+   * filled the form in full, confirmed an amount, and was told the fields they had just filled in
+   * were required. Recording an expense could not succeed at all.
+   *
+   * toFormData is idempotent, so neither shape of argument can resurrect this.
+   */
   const createMutation = useMutation({
-    mutationFn: (d) => {
-      const fd = new FormData();
-      Object.entries(d).forEach(([k, v]) => { if (v) fd.append(k, v); });
-      return expenseService.create(fd);
+    mutationFn: (values) => expenseService.create(toFormData(values)),
+    onSuccess: () => {
+      toast.success('Expense recorded');
+      queryClient.invalidateQueries(['expenses']);
+      queryClient.invalidateQueries(['expense-summary']);
+      closeModal();
     },
-    onSuccess: () => { toast.success('Expense recorded'); queryClient.invalidateQueries(['expenses']); setShowModal(false); setForm({ type: '', title: '', description: '', amount: '', transactionDate: '', vendorName: '', budget: '', program: '' }); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Failed to record expense'),
   });
 
   const approveMutation = useMutation({
     mutationFn: (id) => expenseService.approve(id),
-    onSuccess: () => { toast.success('Expense approved'); queryClient.invalidateQueries(['expenses']); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => {
+      toast.success('Expense approved');
+      queryClient.invalidateQueries(['expenses']);
+      queryClient.invalidateQueries(['expense-summary']);
+    },
+    onError: (e) => toast.error(e.message || 'Approval failed'),
   });
 
   const bulkApproveMutation = useMutation({
@@ -75,8 +103,9 @@ export default function Expenses() {
       toast.success(`${approved} expense${approved !== 1 ? 's' : ''} approved${skipped > 0 ? `, ${skipped} skipped` : ''}`);
       setSelectedIds(new Set());
       queryClient.invalidateQueries(['expenses']);
+      queryClient.invalidateQueries(['expense-summary']);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Bulk approval failed'),
   });
 
   const canCreate = FINANCE_STAFF.includes(user?.role);
@@ -87,12 +116,12 @@ export default function Expenses() {
     if (!form.title.trim()) return toast.error('Expense title is required');
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Amount must be greater than zero');
     if (!form.transactionDate) return toast.error('Transaction date is required');
-    const result = await confirm.financial({ title: 'Record Expense?', text: `You are about to record an expense of ${formatCurrency(parseFloat(form.amount))}.` });
-    if (result.isConfirmed) {
-      const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => { if (v) fd.append(k, v); });
-      createMutation.mutate(fd);
-    }
+
+    const result = await confirm.financial({
+      title: 'Record Expense?',
+      text: `You are about to record an expense of ${formatCurrency(parseFloat(form.amount))}.`,
+    });
+    if (result.isConfirmed) createMutation.mutate(form);
   };
 
   const handleApproveExpense = async (id) => {
@@ -109,169 +138,342 @@ export default function Expenses() {
     if (result.isConfirmed) bulkApproveMutation.mutate([...selectedIds]);
   };
 
-  const allPageIds = (data?.data || []).map((r) => r._id);
-  const allPageSelected = allPageIds.length > 0 && allPageIds.every((id) => selectedIds.has(id));
+  const rows = data?.data || [];
+  const allPageIds = rows.map((r) => r._id);
+  const selectedOnPage = allPageIds.filter((id) => selectedIds.has(id)).length;
+  const allPageSelected = allPageIds.length > 0 && selectedOnPage === allPageIds.length;
+
+  const toggleAll = () => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (allPageSelected) allPageIds.forEach((id) => next.delete(id));
+    else allPageIds.forEach((id) => next.add(id));
+    return next;
+  });
+
+  const toggleOne = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const hasFilters = Boolean(filters.search || filters.type || filters.status);
+  const clearFilters = () => setFilters({ page: 1, limit: 10, search: '', type: '', status: '' });
 
   const columns = [
-    {
+    // The bulk-select column only earns its width for someone who can actually approve.
+    ...(canApprove ? [{
       key: '__select',
       width: '40px',
       header: (
-        <input type="checkbox" checked={allPageSelected}
-          onChange={() => setSelectedIds((prev) => {
-            const next = new Set(prev);
-            if (allPageSelected) allPageIds.forEach((id) => next.delete(id));
-            else allPageIds.forEach((id) => next.add(id));
-            return next;
-          })}
-          className="w-4 h-4 accent-navy-700 rounded border-gray-300" />
+        <SelectAllCheckbox
+          checked={allPageSelected}
+          indeterminate={selectedOnPage > 0 && !allPageSelected}
+          onChange={toggleAll}
+          disabled={allPageIds.length === 0}
+          label="Select all expenses on this page"
+        />
       ),
       render: (_, row) => (
-        <input type="checkbox" checked={selectedIds.has(row._id)}
-          onChange={() => setSelectedIds((prev) => {
-            const next = new Set(prev);
-            next.has(row._id) ? next.delete(row._id) : next.add(row._id);
-            return next;
-          })}
-          className="w-4 h-4 accent-navy-700 rounded border-gray-300" />
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row._id)}
+          onChange={() => toggleOne(row._id)}
+          // Row checkboxes announced as bare "checkbox" with no indication of which record
+          // they governed — on a control that approves money.
+          aria-label={`Select ${row.title}`}
+          className="h-4 w-4 rounded border-gray-300 accent-navy-700"
+        />
+      ),
+    }] : []),
+    {
+      key: 'referenceNumber',
+      header: 'Reference',
+      render: (v) => <span className="font-mono text-xs font-semibold text-navy-700 dark:text-navy-300">{v}</span>,
+    },
+    {
+      key: 'title',
+      header: 'Expense Title',
+      render: (v, row) => (
+        <div>
+          <p className="text-sm font-medium text-gray-900 dark:text-white">{v}</p>
+          <p className="meta-text capitalize">{row.type?.replace(/_/g, ' ')}</p>
+        </div>
       ),
     },
-    { key: 'referenceNumber', header: 'Reference', render: (v) => <span className="font-mono text-xs font-semibold text-navy-700">{v}</span> },
-    { key: 'title', header: 'Expense Title', render: (v, row) => <div><p className="font-medium text-gray-900 dark:text-white text-sm">{v}</p><p className="text-xs text-gray-400 dark:text-gray-500">{row.type?.replace(/_/g, ' ')}</p></div> },
     { key: 'program', header: 'Program', render: (v) => v?.title || '—' },
-    { key: 'amount', header: 'Amount', render: (v) => <span className="font-semibold text-gray-900 dark:text-white">{formatCurrency(v)}</span> },
+    {
+      key: 'amount',
+      header: 'Amount',
+      className: 'cell-numeric',
+      render: (v) => <span className="font-semibold text-gray-900 dark:text-white">{formatCurrency(v)}</span>,
+    },
     { key: 'transactionDate', header: 'Date', render: (v) => formatDate(v) },
     { key: 'status', header: 'Status', render: (v) => <StatusBadge status={v} /> },
     {
-      key: '_id', header: 'Actions', render: (id, row) => (
+      key: '_id',
+      header: 'Actions',
+      render: (id, row) => (
         row.status === 'pending' && canApprove ? (
-          <button onClick={() => handleApproveExpense(id)}
-            className="text-xs px-2 py-1 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors">
+          <button
+            type="button"
+            onClick={() => handleApproveExpense(id)}
+            disabled={approveMutation.isPending}
+            aria-label={`Approve ${row.title}`}
+            className="rounded-lg bg-green-50 px-2 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-100 disabled:opacity-60 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25"
+          >
             Approve
           </button>
         ) : null
-      )
+      ),
     },
   ];
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Expenses</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Track all financial transactions</p>
+          <h1 className="page-title">Expenses</h1>
+          <p className="page-subtitle">Track all financial transactions</p>
         </div>
         {canCreate && (
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-navy-900 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors">
-            <Plus size={16} />Record Expense
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
+          >
+            <Plus size={16} aria-hidden="true" />
+            Record Expense
           </button>
         )}
       </div>
 
-      {/* Summary */}
-      {summary && (
-        <div className="grid grid-cols-4 gap-3">
-          {(summary.byType || []).slice(0, 4).map((t) => (
-            <div key={t._id} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4">
-              <p className="text-xs text-gray-400 dark:text-gray-500 capitalize">{t._id?.replace(/_/g, ' ')}</p>
-              <p className="text-sm font-bold text-gray-900 dark:text-white mt-1">{formatCurrency(t.total)}</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500">{t.count} transactions</p>
+      {/* Four fixed columns squeezed each figure to a couple of characters on a phone. */}
+      {summary?.byType?.length > 0 && (
+        <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {summary.byType.slice(0, 4).map((t) => (
+            <div key={t._id} className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+              <dt className="meta-text capitalize">{t._id?.replace(/_/g, ' ')}</dt>
+              <dd>
+                <p className="numeric mt-1 text-sm font-semibold text-gray-900 dark:text-white">{formatCurrency(t.total)}</p>
+                <p className="meta-text">
+                  <span className="numeric">{t.count}</span> transaction{t.count !== 1 ? 's' : ''}
+                </p>
+              </dd>
             </div>
           ))}
-        </div>
+        </dl>
       )}
 
-      {/* Filters */}
-      <div className="flex gap-3 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4">
-        <div className="flex items-center gap-2 flex-1 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2">
-          <Search size={14} className="text-gray-400 dark:text-gray-500" />
-          <input type="text" placeholder="Search expenses..." value={filters.search}
-            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-            className="bg-transparent text-sm outline-none flex-1 text-gray-600 dark:text-gray-300" />
+      <section aria-label="Filter expenses" className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex flex-wrap gap-3">
+          <SearchInput
+            id="expense-search"
+            label="Search expenses"
+            placeholder="Search expenses..."
+            value={filters.search}
+            // Searching from page 3 previously kept you on page 3 of the new result set, which
+            // is frequently past its end — so a matching search looked like it found nothing.
+            onSearch={(search) => setFilters((f) => ({ ...f, search, page: 1 }))}
+          />
+
+          <div>
+            <label htmlFor="filter-type" className="sr-only">Filter by expense type</label>
+            <select
+              id="filter-type"
+              value={filters.type}
+              onChange={(e) => setFilters({ ...filters, type: e.target.value, page: 1 })}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+            >
+              <option value="">All Types</option>
+              {EXPENSE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="filter-status" className="sr-only">Filter by status</label>
+            <select
+              id="filter-status"
+              value={filters.status}
+              onChange={(e) => setFilters({ ...filters, status: e.target.value, page: 1 })}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+            >
+              <option value="">All Statuses</option>
+              {EXPENSE_STATUSES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+            </select>
+          </div>
+
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
-        <select value={filters.type} onChange={(e) => setFilters({ ...filters, type: e.target.value })}
-          className="px-3 py-2 border border-gray-200 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 outline-none focus:ring-2 focus:ring-navy-700">
-          <option value="">All Types</option>
-          {EXPENSE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
-        <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-          className="px-3 py-2 border border-gray-200 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 outline-none focus:ring-2 focus:ring-navy-700">
-          <option value="">All Statuses</option>
-          {['pending', 'approved', 'rejected', 'liquidated'].map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-        </select>
-      </div>
+      </section>
 
       {canApprove && selectedIds.size > 0 && (
-        <div className="flex items-center justify-between bg-navy-50 dark:bg-navy-900/20 border border-navy-200 dark:border-navy-800 rounded-xl px-4 py-3">
-          <span className="text-sm font-medium text-navy-700 dark:text-navy-300">{selectedIds.size} expense{selectedIds.size !== 1 ? 's' : ''} selected</span>
+        <div
+          // Announced, because the bar appears well away from the checkbox that summoned it.
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-navy-200 bg-navy-50 px-4 py-3 dark:border-navy-800 dark:bg-navy-900/20"
+        >
+          <span className="text-sm font-medium text-navy-700 dark:text-navy-300">
+            <span className="numeric">{selectedIds.size}</span> expense{selectedIds.size !== 1 ? 's' : ''} selected
+          </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelectedIds(new Set())}
-              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-white dark:hover:bg-gray-700 transition-colors">
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-white hover:text-gray-700 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+            >
               Clear
             </button>
-            <button onClick={handleBulkApprove} disabled={bulkApproveMutation.isPending}
-              className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60 font-semibold transition-colors">
+            <button
+              type="button"
+              onClick={handleBulkApprove}
+              disabled={bulkApproveMutation.isPending}
+              className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-60"
+            >
               {bulkApproveMutation.isPending ? 'Approving...' : `Approve ${selectedIds.size}`}
             </button>
           </div>
         </div>
       )}
 
-      <DataTable columns={columns} data={data?.data} loading={isLoading}
-        pagination={data?.meta} onPageChange={(p) => setFilters({ ...filters, page: p })} />
+      <DataTable
+        columns={columns}
+        data={rows}
+        loading={isLoading}
+        pagination={data?.meta}
+        onPageChange={(p) => setFilters({ ...filters, page: p })}
+        emptyMessage={hasFilters ? 'No expenses match these filters' : 'No expenses recorded yet'}
+        emptyAction={hasFilters ? (
+          <button type="button" onClick={clearFilters} className="text-sm font-medium text-navy-700 hover:underline dark:text-navy-300">
+            Clear filters
+          </button>
+        ) : null}
+      />
 
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Record New Expense" size="md"
+      <Modal
+        isOpen={showModal}
+        onClose={closeModal}
+        title="Record New Expense"
+        size="md"
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button onClick={handleRecordExpense} disabled={createMutation.isPending}
-              className="px-5 py-2 bg-navy-900 text-white text-sm rounded-xl font-semibold hover:bg-navy-800 disabled:opacity-60">
+            <button
+              type="button"
+              onClick={closeModal}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleRecordExpense}
+              disabled={createMutation.isPending}
+              className="rounded-xl bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+            >
               {createMutation.isPending ? 'Saving...' : 'Record Expense'}
             </button>
           </div>
-        }>
+        }
+      >
         <div className="space-y-4">
-          <div>
-            <label className="form-label">Expense Type *</label>
-            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 bg-white">
+          <RequiredNote />
+
+          <Field id="expense-type" label="Expense Type" required>
+            <select
+              value={form.type}
+              onChange={(e) => setForm({ ...form, type: e.target.value })}
+              className={control}
+            >
               <option value="">Select type...</option>
               {EXPENSE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
+          </Field>
+
+          <Field id="expense-title" label="Title" required>
+            <input
+              type="text"
+              value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
+              placeholder="e.g., Tarpaulin printing for youth summit"
+              className={control}
+            />
+          </Field>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="expense-amount" label="Amount (₱)" required>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                placeholder="0.00"
+                className={`${control} numeric`}
+              />
+            </Field>
+            <Field id="expense-date" label="Transaction Date" required>
+              <input
+                type="date"
+                value={form.transactionDate}
+                onChange={(e) => setForm({ ...form, transactionDate: e.target.value })}
+                className={control}
+              />
+            </Field>
           </div>
-          {[['title', 'Title', 'text'], ['amount', 'Amount (₱)', 'number'], ['transactionDate', 'Transaction Date', 'date'], ['vendorName', 'Vendor Name', 'text']].map(([key, label, type]) => (
-            <div key={key}>
-              <label className="form-label">{label}</label>
-              <input type={type} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-            </div>
-          ))}
-          <div>
-            <label className="form-label">Budget</label>
-            <select value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 bg-white">
+
+          <Field id="expense-vendor" label="Vendor Name" optional>
+            <input
+              type="text"
+              value={form.vendorName}
+              onChange={(e) => setForm({ ...form, vendorName: e.target.value })}
+              className={control}
+            />
+          </Field>
+
+          <Field id="expense-budget" label="Budget" optional hint="Only approved budgets can be charged.">
+            <select
+              value={form.budget}
+              onChange={(e) => setForm({ ...form, budget: e.target.value })}
+              className={control}
+            >
               <option value="">No budget linked</option>
               {(budgetsData || []).map((b) => (
                 <option key={b._id} value={b._id}>{b.title} — FY {b.fiscalYear}</option>
               ))}
             </select>
-          </div>
-          <div>
-            <label className="form-label">Program</label>
-            <select value={form.program} onChange={(e) => setForm({ ...form, program: e.target.value })}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 bg-white">
+          </Field>
+
+          <Field
+            id="expense-program"
+            label="Program"
+            optional
+            hint="The program's category is checked against the budget's per-category cap."
+          >
+            <select
+              value={form.program}
+              onChange={(e) => setForm({ ...form, program: e.target.value })}
+              className={control}
+            >
               <option value="">No program linked</option>
-              {(programsData || []).map((p) => (
-                <option key={p._id} value={p._id}>{p.title}</option>
-              ))}
+              {(programsData || []).map((p) => <option key={p._id} value={p._id}>{p.title}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="form-label">Description</label>
-            <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 resize-none" />
-          </div>
+          </Field>
+
+          <Field id="expense-description" label="Description" optional>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              rows={3}
+              className={`${control} resize-y`}
+            />
+          </Field>
         </div>
       </Modal>
     </div>

@@ -65,6 +65,53 @@ export const MUNICIPALITIES = ['Boac', 'Gasan', 'Mogpog', 'Sta. Cruz'];
 
 export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/**
+ * Roles a user may choose for themselves at registration. Must stay in step with
+ * SELF_ASSIGNABLE_ROLES in backend/src/controllers/authController.js, which silently downgrades
+ * anything outside this list to public_user.
+ *
+ * The register form previously offered every role except super_admin, so a registrant could
+ * pick "Municipal SK Fed. Admin", be given public_user without any message, and land on the
+ * public portal wondering where their dashboard went. Elevated roles are assigned by an admin
+ * after the account exists.
+ */
+export const SELF_ASSIGNABLE_ROLES = [
+  'sk_chairperson',
+  'sk_treasurer',
+  'sk_secretary',
+  'sk_kagawad',
+  'dilg_representative',
+  'public_user',
+];
+
+/**
+ * The password rule the server actually enforces.
+ *
+ * User.js validates on save with this pattern, and it is stricter than the register route's own
+ * validator, which checks only for an uppercase letter and a digit. Any form that sets a password
+ * must state and check this one, or the user satisfies what they were shown and is then refused
+ * by a raw Mongoose validation message naming a rule nobody mentioned.
+ *
+ * Kept in step with backend/src/models/User.js.
+ */
+export const PASSWORD_PATTERN = /^(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}$/;
+export const PASSWORD_RULE_TEXT =
+  'At least 8 characters, with an uppercase letter, a number and a special character.';
+
+/**
+ * Messages the login page is willing to display from the `reason` query parameter.
+ *
+ * The parameter used to carry free text straight into a toast. It is only ever set by the API
+ * client after a failed token refresh, but anyone could hand out a link like
+ * `/login?reason=Account+locked,+call+0917...` and have an arbitrary message render in the app's
+ * own error styling, on the real domain — a convincing prop for a phishing call. Codes are
+ * resolved against this map and anything unrecognised is ignored.
+ */
+export const LOGIN_NOTICES = {
+  session_expired: 'Your session has expired. Please sign in again.',
+  account_inactive: 'Your account is no longer active. Contact an administrator.',
+};
+
 export const ADMIN_ROLES = ['super_admin', 'provincial_admin', 'municipal_admin'];
 export const EDITOR_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];
 export const FINANCE_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'dilg_representative'];

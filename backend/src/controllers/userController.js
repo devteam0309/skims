@@ -104,8 +104,24 @@ const ASSIGNABLE_ROLES = {
   municipal_admin: ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'public_user'],
 };
 
+/**
+ * Acting on your own account through the admin endpoints is a one-way door.
+ *
+ * A super_admin may assign `public_user`, and every admin may deactivate or delete an account —
+ * so each of these could be pointed at the caller and strip the caller's own access. Recovering
+ * from that needs another administrator, or direct database surgery if the account was the last
+ * super_admin. None of it is malicious; it is a misclick on the row that happens to be yours.
+ *
+ * The UI withholds these controls on your own row, but that is presentation, not enforcement:
+ * the endpoints are reachable directly.
+ */
+const isSelf = (req) => req.user._id.equals(req.params.id);
+
 exports.updateUserRole = asyncHandler(async (req, res) => {
   const { role, municipality, barangay } = req.body;
+  if (isSelf(req)) {
+    return errorResponse(res, 403, 'You cannot change your own role. Ask another administrator.');
+  }
   const allowed = ASSIGNABLE_ROLES[req.user.role] || [];
   if (!allowed.includes(role)) {
     return errorResponse(res, 403, `Your role cannot assign the '${role}' role`);
@@ -121,6 +137,9 @@ exports.updateUserRole = asyncHandler(async (req, res) => {
 });
 
 exports.toggleUserStatus = asyncHandler(async (req, res) => {
+  if (isSelf(req)) {
+    return errorResponse(res, 403, 'You cannot deactivate your own account. Ask another administrator.');
+  }
   const user = await User.findById(req.params.id);
   if (!user) return errorResponse(res, 404, 'User not found');
   user.isActive = !user.isActive;
@@ -129,6 +148,9 @@ exports.toggleUserStatus = asyncHandler(async (req, res) => {
 });
 
 exports.deleteUser = asyncHandler(async (req, res) => {
+  if (isSelf(req)) {
+    return errorResponse(res, 403, 'You cannot delete your own account. Ask another administrator.');
+  }
   const user = await User.findById(req.params.id);
   if (!user) return errorResponse(res, 404, 'User not found');
   user.deletedAt = new Date();

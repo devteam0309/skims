@@ -49,6 +49,13 @@ jobs:
       - name: Install dependencies
         working-directory: ./frontend
         run: npm ci
+      # The frontend job only ever built. The suite existed and was never run, so nothing in CI
+      # guarded the regressions it covers -- the empty-FormData expense payload, the age
+      # calculation at its eligibility boundaries, and the password rule the sign-up form states.
+      # Runs before the build so a broken expectation fails fast.
+      - name: Test
+        working-directory: ./frontend
+        run: npm test
       - name: Build
         working-directory: ./frontend
         run: npm run build

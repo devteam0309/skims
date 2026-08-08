@@ -2,7 +2,7 @@ const asyncHandler = require('express-async-handler');
 const { randomUUID } = require('crypto');
 const Document = require('../models/Document');
 const AuditLog = require('../models/AuditLog');
-const { cloudinary, uploadToCloudinary } = require('../config/cloudinary');
+const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 
 const MAX_LIMIT = 100;
@@ -221,7 +221,7 @@ exports.replaceFile = asyncHandler(async (req, res) => {
 
   if (doc.fileName) {
     const oldResourceType = doc.fileType?.startsWith('image/') ? 'image' : 'raw';
-    cloudinary.uploader.destroy(doc.fileName, { resource_type: oldResourceType }).catch(() => {});
+    destroyQuietly(doc.fileName, { resource_type: oldResourceType });
   }
 
   await AuditLog.create({
@@ -295,7 +295,7 @@ exports.deleteDocument = asyncHandler(async (req, res) => {
   // Clean up file from Cloudinary
   if (doc.fileName) {
     const resourceType = doc.fileType?.startsWith('image/') ? 'image' : 'raw';
-    cloudinary.uploader.destroy(doc.fileName, { resource_type: resourceType }).catch(() => {});
+    destroyQuietly(doc.fileName, { resource_type: resourceType });
   }
   await AuditLog.create({ user: req.user._id, action: 'DELETE', resource: 'document', resourceId: doc._id, details: { title: doc.title, category: doc.category }, municipality: req.user.municipality, ipAddress: req.ip });
   successResponse(res, 200, 'Document deleted');

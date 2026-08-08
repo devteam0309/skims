@@ -1,19 +1,31 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import { Camera, Save, Key } from 'lucide-react';
+import { Camera, Save, Key, X } from 'lucide-react';
 import { authService } from '../../services/authService';
 import useAuthStore from '../../store/authStore';
-import { ROLE_LABELS } from '../../utils/constants';
-import { formatDate } from '../../utils/formatters';
+import { ROLE_LABELS, PASSWORD_PATTERN, PASSWORD_RULE_TEXT } from '../../utils/constants';
+import { formatDate, formatFileSize } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
 import { PageLoader } from '../../components/shared/LoadingSpinner';
+import { Field, control } from '../../components/shared/FormField';
 import { confirm } from '../../utils/confirm';
+
+/*
+ * The avatar goes through the same multer instance as document uploads
+ * (backend/src/routes/auth.js -> upload.single('avatar')), so the same ceiling and extension list
+ * apply. Images only here, since the destination is an <img>.
+ */
+const AVATAR_ACCEPT = '.jpg,.jpeg,.png,.gif';
+const MAX_AVATAR_BYTES = 10 * 1024 * 1024;
+
 
 export default function UserProfile() {
   const { user, updateUser } = useAuthStore();
   const queryClient = useQueryClient();
   const [changingPassword, setChangingPassword] = useState(false);
+  const [avatarFile, setAvatarFile] = useState(null);
+  const avatarInputRef = useRef(null);
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ['profile'],
@@ -21,111 +33,247 @@ export default function UserProfile() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data) => {
+    /*
+     * Deliberately not toFormData: that helper drops blanks, and here a blank is meaningful.
+     * Clearing your contact number has to reach the server as an empty value, otherwise the field
+     * is simply absent from the body and updateProfile leaves the old number in place — the box
+     * looks cleared until the next reload puts it back.
+     */
+    mutationFn: ({ avatar, ...values }) => {
       const fd = new FormData();
-      Object.entries(data).forEach(([k, v]) => { if (v !== undefined) fd.append(k, v); });
+      Object.entries(values).forEach(([k, v]) => fd.append(k, v ?? ''));
+      if (avatar) fd.append('avatar', avatar);
       return authService.updateProfile(fd);
     },
-    onSuccess: (res) => { toast.success('Profile updated'); updateUser(res.data.data); queryClient.invalidateQueries(['profile']); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: (res) => {
+      toast.success('Profile updated');
+      updateUser(res.data.data);
+      setAvatarFile(null);
+      queryClient.invalidateQueries(['profile']);
+    },
+    onError: (e) => toast.error(e.message || 'Update failed'),
   });
 
   const passwordMutation = useMutation({
     mutationFn: (d) => authService.updatePassword(d),
-    onSuccess: () => { toast.success('Password changed successfully'); setChangingPassword(false); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => {
+      toast.success('Password changed successfully');
+      setChangingPassword(false);
+      // The reset was destructured but never called, so the old and new passwords stayed in the
+      // form state and reappeared the next time the panel was opened.
+      resetPwd();
+    },
+    onError: (e) => toast.error(e.message || 'Password change failed'),
   });
 
-  const { register, handleSubmit, formState: { errors } } = useForm({ defaultValues: { firstName: user?.firstName, lastName: user?.lastName, contactNumber: user?.contactNumber } });
-  const { register: regPwd, handleSubmit: handlePwd, reset: resetPwd } = useForm();
+  const { register, handleSubmit, formState: { errors } } = useForm({
+    defaultValues: { firstName: user?.firstName, lastName: user?.lastName, contactNumber: user?.contactNumber },
+  });
+  const { register: regPwd, handleSubmit: handlePwd, reset: resetPwd, formState: { errors: pwdErrors } } = useForm();
+
+  const pickAvatar = (file) => {
+    if (!file) return;
+    const ext = `.${file.name.split('.').pop()?.toLowerCase()}`;
+    if (!AVATAR_ACCEPT.split(',').includes(ext)) {
+      return toast.error(`Choose a ${AVATAR_ACCEPT} image.`);
+    }
+    if (file.size > MAX_AVATAR_BYTES) {
+      return toast.error(`That image is ${formatFileSize(file.size)} — the limit is ${formatFileSize(MAX_AVATAR_BYTES)}.`);
+    }
+    setAvatarFile(file);
+  };
+
+  const onSubmitProfile = async (values) => {
+    const r = await confirm.save();
+    if (!r.isConfirmed) return;
+    updateMutation.mutate(avatarFile ? { ...values, avatar: avatarFile } : values);
+  };
 
   if (isLoading) return <PageLoader />;
 
+  // Shown immediately rather than after a round trip, so the choice is visibly taken.
+  const avatarPreview = avatarFile ? URL.createObjectURL(avatarFile) : profile?.avatar;
+
   return (
-    <div className="max-w-3xl mx-auto space-y-5">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">My Profile</h1>
+    <div className="mx-auto max-w-3xl space-y-5">
+      <h1 className="page-title">My Profile</h1>
 
-      <div className="grid md:grid-cols-3 gap-5">
-        {/* Avatar card */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-6 text-center">
-          <div className="relative inline-block mb-4">
-            <div className="w-24 h-24 rounded-full bg-navy-900 flex items-center justify-center mx-auto">
-              {profile?.avatar ? (
-                <img src={profile.avatar} alt="" className="w-24 h-24 rounded-full object-cover" />
+      <div className="grid gap-5 md:grid-cols-3">
+        <section className="rounded-xl border border-gray-200 bg-white p-6 text-center dark:border-gray-700 dark:bg-gray-800">
+          <div className="relative mx-auto mb-4 inline-block">
+            <span className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-navy-900">
+              {avatarPreview ? (
+                <img src={avatarPreview} alt="" className="h-24 w-24 rounded-full object-cover" />
               ) : (
-                <span className="text-gold-500 text-3xl font-black">{user?.firstName?.[0]}{user?.lastName?.[0]}</span>
+                <span aria-hidden="true" className="text-3xl font-black text-gold-500">
+                  {user?.firstName?.[0]}{user?.lastName?.[0]}
+                </span>
               )}
-            </div>
-          </div>
-          <p className="font-semibold text-gray-900 dark:text-white">{profile?.firstName} {profile?.lastName}</p>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{ROLE_LABELS[profile?.role]}</p>
-          {profile?.municipality && <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{profile.municipality.name}</p>}
-          <div className="mt-4 space-y-1 text-xs text-gray-400 dark:text-gray-500">
-            <p>Joined: {formatDate(profile?.createdAt)}</p>
-            <p>Last login: {formatDate(profile?.lastLogin)}</p>
-          </div>
-          <div className={`mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${profile?.isEmailVerified ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${profile?.isEmailVerified ? 'bg-green-500' : 'bg-yellow-500'}`} />
-            {profile?.isEmailVerified ? 'Email Verified' : 'Email Unverified'}
-          </div>
-        </div>
+            </span>
 
-        {/* Edit form */}
-        <div className="md:col-span-2 space-y-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-            <h2 className="font-semibold text-gray-900 dark:text-white mb-4">Personal Information</h2>
-            <form onSubmit={handleSubmit(async (d) => { const r = await confirm.save(); if (r.isConfirmed) updateMutation.mutate(d); })} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                {[['firstName', 'First Name'], ['lastName', 'Last Name']].map(([name, label]) => (
-                  <div key={name}>
-                    <label className="form-label">{label}</label>
-                    <input {...register(name)} className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-                  </div>
-                ))}
+            {/*
+              The backend has always accepted an avatar — routes/auth.js runs upload.single('avatar')
+              and updateProfile even deletes the previous image from Cloudinary — but nothing in the
+              UI ever sent a file, so the feature was unreachable. The Camera icon was imported and
+              never rendered, which is the leftover of that intent.
+            */}
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              aria-label="Change profile photo"
+              title="Change profile photo"
+              className="absolute bottom-0 right-0 rounded-full border-2 border-white bg-navy-800 p-1.5 text-white transition-colors hover:bg-navy-700 dark:border-gray-800"
+            >
+              <Camera size={14} aria-hidden="true" />
+            </button>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              hidden
+              accept={AVATAR_ACCEPT}
+              onChange={(e) => pickAvatar(e.target.files?.[0])}
+            />
+          </div>
+
+          {avatarFile && (
+            <p className="mb-3 flex items-center justify-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+              <span className="truncate">New photo selected</span>
+              <button
+                type="button"
+                onClick={() => setAvatarFile(null)}
+                aria-label="Discard selected photo"
+                className="rounded p-0.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+              >
+                <X size={12} aria-hidden="true" />
+              </button>
+            </p>
+          )}
+
+          <p className="font-semibold text-gray-900 dark:text-white">{profile?.firstName} {profile?.lastName}</p>
+          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{ROLE_LABELS[profile?.role]}</p>
+          {profile?.municipality && <p className="meta-text mt-1">{profile.municipality.name}</p>}
+
+          <dl className="mt-4 space-y-1">
+            <div>
+              <dt className="sr-only">Joined</dt>
+              <dd className="meta-text">Joined: {formatDate(profile?.createdAt)}</dd>
+            </div>
+            <div>
+              <dt className="sr-only">Last login</dt>
+              <dd className="meta-text">Last login: {formatDate(profile?.lastLogin)}</dd>
+            </div>
+          </dl>
+
+          <p className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+            profile?.isEmailVerified
+              ? 'bg-green-100 text-green-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+          }`}>
+            <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${profile?.isEmailVerified ? 'bg-green-500' : 'bg-amber-500'}`} />
+            {profile?.isEmailVerified ? 'Email Verified' : 'Email Unverified'}
+          </p>
+        </section>
+
+        <div className="space-y-4 md:col-span-2">
+          <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+            <h2 className="section-heading mb-4">Personal Information</h2>
+
+            <form onSubmit={handleSubmit(onSubmitProfile)} noValidate className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field id="firstName" label="First Name" error={errors.firstName}>
+                  <input {...register('firstName', { required: 'First name is required' })} className={control} />
+                </Field>
+                <Field id="lastName" label="Last Name" error={errors.lastName}>
+                  <input {...register('lastName', { required: 'Last name is required' })} className={control} />
+                </Field>
               </div>
-              <div>
-                <label className="form-label">Email Address</label>
-                <input value={profile?.email} disabled className="mt-1 w-full px-3 py-2.5 border border-gray-100 dark:border-gray-700 rounded-xl text-sm bg-gray-50 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed" />
-              </div>
-              <div>
-                <label className="form-label">Contact Number</label>
-                <input {...register('contactNumber', {
-                  validate: (v) => !v || /^(09|\+639)\d{9}$/.test(v) || 'Use PH format: 09XXXXXXXXX or +639XXXXXXXXX',
-                })} type="tel" placeholder="09XXXXXXXXX" className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-                {errors.contactNumber && <p className="mt-1 text-xs text-red-500">{errors.contactNumber.message}</p>}
-              </div>
-              <button type="submit" disabled={updateMutation.isPending}
-                className="flex items-center gap-2 px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 disabled:opacity-60 transition-colors">
-                <Save size={15} />{updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+
+              <Field id="email" label="Email Address" hint="Contact an administrator to change your email.">
+                <input
+                  value={profile?.email || ''}
+                  disabled
+                  readOnly
+                  className="mt-1 w-full cursor-not-allowed rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-400"
+                />
+              </Field>
+
+              <Field id="contactNumber" label="Contact Number" optional error={errors.contactNumber}>
+                <input
+                  {...register('contactNumber', {
+                    validate: (v) => !v || /^(09|\+639)\d{9}$/.test(v) || 'Use PH format: 09XXXXXXXXX or +639XXXXXXXXX',
+                  })}
+                  type="tel"
+                  placeholder="09XXXXXXXXX"
+                  className={control}
+                />
+              </Field>
+
+              <button
+                type="submit"
+                disabled={updateMutation.isPending}
+                className="flex items-center gap-2 rounded-xl bg-navy-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+              >
+                <Save size={15} aria-hidden="true" />
+                {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
               </button>
             </form>
-          </div>
+          </section>
 
-          {/* Change password */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-gray-900 dark:text-white">Change Password</h2>
-              <button onClick={() => setChangingPassword(!changingPassword)}
-                className="flex items-center gap-2 text-sm text-navy-700 font-medium hover:text-navy-900">
-                <Key size={14} />{changingPassword ? 'Cancel' : 'Change'}
+          <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="section-heading">Change Password</h2>
+              <button
+                type="button"
+                onClick={() => { setChangingPassword((v) => !v); resetPwd(); }}
+                aria-expanded={changingPassword}
+                className="flex items-center gap-2 text-sm font-medium text-navy-700 transition-colors hover:text-navy-900 dark:text-navy-300 dark:hover:text-navy-200"
+              >
+                <Key size={14} aria-hidden="true" />{changingPassword ? 'Cancel' : 'Change'}
               </button>
             </div>
+
             {changingPassword && (
-              <form onSubmit={handlePwd(async (d) => { const r = await confirm.password(); if (r.isConfirmed) passwordMutation.mutate(d); })} className="space-y-4">
-                {[['currentPassword', 'Current Password'], ['newPassword', 'New Password']].map(([name, label]) => (
-                  <div key={name}>
-                    <label className="form-label">{label}</label>
-                    <input {...regPwd(name)} type="password" required
-                      className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700" />
-                  </div>
-                ))}
-                <button type="submit" disabled={passwordMutation.isPending}
-                  className="px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 disabled:opacity-60 transition-colors">
+              <form
+                onSubmit={handlePwd(async (d) => { const r = await confirm.password(); if (r.isConfirmed) passwordMutation.mutate(d); })}
+                noValidate
+                className="space-y-4"
+              >
+                <Field id="currentPassword" label="Current Password" required error={pwdErrors.currentPassword}>
+                  <input
+                    {...regPwd('currentPassword', { required: 'Enter your current password' })}
+                    type="password"
+                    // Without these the browser cannot tell the two fields apart, so it offers to
+                    // save the old password and never prompts to update the stored one.
+                    autoComplete="current-password"
+                    className={control}
+                  />
+                </Field>
+
+                <Field id="newPassword" label="New Password" required hint={PASSWORD_RULE_TEXT} error={pwdErrors.newPassword}>
+                  <input
+                    {...regPwd('newPassword', {
+                      required: 'Enter a new password',
+                      minLength: { value: 8, message: 'Password must be at least 8 characters' },
+                      validate: (v) =>
+                        PASSWORD_PATTERN.test(v) ||
+                        'Include an uppercase letter, a number and a special character',
+                    })}
+                    type="password"
+                    autoComplete="new-password"
+                    className={control}
+                  />
+                </Field>
+
+                <button
+                  type="submit"
+                  disabled={passwordMutation.isPending}
+                  className="rounded-xl bg-navy-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+                >
                   {passwordMutation.isPending ? 'Updating...' : 'Update Password'}
                 </button>
               </form>
             )}
-          </div>
+          </section>
         </div>
       </div>
     </div>

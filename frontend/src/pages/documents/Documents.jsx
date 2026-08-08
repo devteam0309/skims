@@ -1,24 +1,39 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
-import { Upload, Search, FolderOpen, Download, Archive, ArchiveRestore, Trash2, File, FileText, Image, RefreshCw, History } from 'lucide-react';
+import {
+  Upload, Download, Archive, ArchiveRestore, Trash2,
+  File, FileText, Image as ImageIcon, RefreshCw, History,
+} from 'lucide-react';
 import { documentService } from '../../services/documentService';
 import DataTable from '../../components/shared/DataTable';
-import StatusBadge from '../../components/shared/StatusBadge';
 import Modal from '../../components/shared/Modal';
+import SearchInput from '../../components/shared/SearchInput';
+import SelectAllCheckbox from '../../components/shared/SelectAllCheckbox';
+import { Field, RequiredNote, control } from '../../components/shared/FormField';
 import { formatDate, formatFileSize } from '../../utils/formatters';
-import { DOCUMENT_CATEGORIES } from '../../utils/constants';
+import { toFormData } from '../../utils/formData';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
-import { DOC_UPLOADERS, DOC_EDITORS, ADMIN_ROLES } from '../../utils/constants';
+import { DOCUMENT_CATEGORIES, DOC_UPLOADERS, DOC_EDITORS, ADMIN_ROLES } from '../../utils/constants';
 
 const FILE_ICONS = {
   'application/pdf': FileText,
-  'image/jpeg': Image,
-  'image/png': Image,
+  'image/jpeg': ImageIcon,
+  'image/png': ImageIcon,
+  'image/gif': ImageIcon,
   default: File,
 };
+
+/*
+ * Kept in step with backend/src/middleware/fileUpload.js, which rejects anything else. The
+ * picker previously omitted .gif even though the server accepts it, and nothing checked the size
+ * before uploading — so an oversized file was transferred in full, only to be refused on arrival.
+ */
+const ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif';
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+const emptyUploadForm = () => ({ title: '', description: '', category: '', isPublic: false });
 
 export default function Documents() {
   const queryClient = useQueryClient();
@@ -26,16 +41,15 @@ export default function Documents() {
   const canUpload = DOC_UPLOADERS.includes(user?.role);
   const canEdit = DOC_EDITORS.includes(user?.role);
   const canDelete = ADMIN_ROLES.includes(user?.role);
+
   const [showModal, setShowModal] = useState(false);
   const [filters, setFilters] = useState({ page: 1, limit: 10, search: '', category: '', isArchived: false });
-  const [uploadForm, setUploadForm] = useState({ title: '', description: '', category: '', isPublic: false });
+  const [uploadForm, setUploadForm] = useState(emptyUploadForm());
   const [file, setFile] = useState(null);
   const [replaceTarget, setReplaceTarget] = useState(null);
   const [replaceFile, setReplaceFile] = useState(null);
   const [historyTarget, setHistoryTarget] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const fileRef = useRef();
-  const replaceFileRef = useRef();
 
   useEffect(() => { setSelectedIds(new Set()); }, [filters]);
 
@@ -44,28 +58,31 @@ export default function Documents() {
     queryFn: () => documentService.getAll(filters).then((r) => r.data),
   });
 
+  const closeUpload = () => { setShowModal(false); setFile(null); setUploadForm(emptyUploadForm()); };
+  const closeReplace = () => { setReplaceTarget(null); setReplaceFile(null); };
+
   const uploadMutation = useMutation({
     mutationFn: (fd) => documentService.upload(fd),
-    onSuccess: () => { toast.success('Document uploaded'); queryClient.invalidateQueries(['documents']); setShowModal(false); setFile(null); setUploadForm({ title: '', description: '', category: '', isPublic: false }); },
+    onSuccess: () => { toast.success('Document uploaded'); queryClient.invalidateQueries(['documents']); closeUpload(); },
     onError: (e) => toast.error(e.message || 'Upload failed'),
   });
 
   const archiveMutation = useMutation({
     mutationFn: (id) => documentService.archive(id),
     onSuccess: () => { toast.success('Document archived'); queryClient.invalidateQueries(['documents']); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Archive failed'),
   });
 
   const unarchiveMutation = useMutation({
     mutationFn: (id) => documentService.unarchive(id),
     onSuccess: () => { toast.success('Document restored from archive'); queryClient.invalidateQueries(['documents']); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Restore failed'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id) => documentService.delete(id),
     onSuccess: () => { toast.success('Document deleted'); queryClient.invalidateQueries(['documents']); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Delete failed'),
   });
 
   const bulkArchiveMutation = useMutation({
@@ -76,28 +93,37 @@ export default function Documents() {
       setSelectedIds(new Set());
       queryClient.invalidateQueries(['documents']);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(e.message || 'Bulk archive failed'),
   });
 
   const replaceMutation = useMutation({
     mutationFn: ({ id, fd }) => documentService.replaceFile(id, fd),
-    onSuccess: () => {
-      toast.success('Document file replaced');
-      queryClient.invalidateQueries(['documents']);
-      setReplaceTarget(null);
-      setReplaceFile(null);
-    },
+    onSuccess: () => { toast.success('Document file replaced'); queryClient.invalidateQueries(['documents']); closeReplace(); },
     onError: (e) => toast.error(e.message || 'Replace failed'),
   });
 
   const handleUpload = async () => {
-    if (!file || !uploadForm.category) return toast.error('File and category are required');
+    if (!file) return toast.error('Please select a file to upload');
+    if (!uploadForm.category) return toast.error('Please choose a category');
+
     const result = await confirm.upload({ text: `Upload "${file.name}" to the document repository?` });
     if (!result.isConfirmed) return;
-    const fd = new FormData();
+
+    // Fields were previously appended unfiltered, so blank inputs went up as empty strings and
+    // the checkbox as the literal "false". The server absorbs both, but there is no reason to
+    // send them.
+    const fd = toFormData(uploadForm);
     fd.append('file', file);
-    Object.entries(uploadForm).forEach(([k, v]) => fd.append(k, v));
     uploadMutation.mutate(fd);
+  };
+
+  const handleReplaceFile = async () => {
+    if (!replaceFile) return toast.error('Please select a replacement file');
+    const result = await confirm.upload({ text: `Replace the file for "${replaceTarget.title}"? The current file will be saved to version history.` });
+    if (!result.isConfirmed) return;
+    const fd = new FormData();
+    fd.append('file', replaceFile);
+    replaceMutation.mutate({ id: replaceTarget._id, fd });
   };
 
   const handleArchive = async (id, title) => {
@@ -115,32 +141,27 @@ export default function Documents() {
     if (result.isConfirmed) deleteMutation.mutate(id);
   };
 
-  const handleReplaceFile = async () => {
-    if (!replaceFile) return toast.error('Please select a replacement file');
-    const result = await confirm.upload({ text: `Replace the file for "${replaceTarget.title}"? The current file will be saved to version history.` });
-    if (!result.isConfirmed) return;
-    const fd = new FormData();
-    fd.append('file', replaceFile);
-    replaceMutation.mutate({ id: replaceTarget._id, fd });
-  };
-
   const handleBulkArchive = async () => {
     const count = selectedIds.size;
     const result = await confirm.archive({ text: `${count} document${count !== 1 ? 's' : ''} will be archived and removed from the active list.` });
     if (result.isConfirmed) bulkArchiveMutation.mutate([...selectedIds]);
   };
 
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleDownload = async (doc) => {
     try {
       const res = await documentService.serve(doc._id);
-      const url = URL.createObjectURL(res.data);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = doc.originalName || doc.fileName || doc.title;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadBlob(res.data, doc.originalName || doc.fileName || doc.title);
     } catch {
       toast.error('Failed to download document');
     }
@@ -149,280 +170,511 @@ export default function Documents() {
   const handleDownloadVersion = async (pv, doc) => {
     try {
       const res = await documentService.serveVersion(doc._id, pv.version);
-      const url = URL.createObjectURL(res.data);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = pv.fileName?.split('/').pop() || `${doc.title}_v${pv.version}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadBlob(res.data, pv.fileName?.split('/').pop() || `${doc.title}_v${pv.version}`);
     } catch {
       toast.error('Failed to download version');
     }
   };
 
-  const allPageIds = (data?.data || []).map((r) => r._id);
-  const allPageSelected = allPageIds.length > 0 && allPageIds.every((id) => selectedIds.has(id));
+  const rows = data?.data || [];
+  const allPageIds = rows.map((r) => r._id);
+  const selectedOnPage = allPageIds.filter((id) => selectedIds.has(id)).length;
+  const allPageSelected = allPageIds.length > 0 && selectedOnPage === allPageIds.length;
+  const showSelection = canEdit && !filters.isArchived;
+
+  const toggleAll = () => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (allPageSelected) allPageIds.forEach((id) => next.delete(id));
+    else allPageIds.forEach((id) => next.add(id));
+    return next;
+  });
+
+  const toggleOne = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const hasFilters = Boolean(filters.search || filters.category);
 
   const columns = [
-    ...(canEdit && !filters.isArchived ? [{
+    ...(showSelection ? [{
       key: '__select',
       width: '40px',
       header: (
-        <input type="checkbox" checked={allPageSelected}
-          onChange={() => setSelectedIds((prev) => {
-            const next = new Set(prev);
-            if (allPageSelected) allPageIds.forEach((id) => next.delete(id));
-            else allPageIds.forEach((id) => next.add(id));
-            return next;
-          })}
-          className="w-4 h-4 accent-navy-700 rounded border-gray-300" />
+        <SelectAllCheckbox
+          checked={allPageSelected}
+          indeterminate={selectedOnPage > 0 && !allPageSelected}
+          onChange={toggleAll}
+          disabled={allPageIds.length === 0}
+          label="Select all documents on this page"
+        />
       ),
       render: (_, row) => (
-        <input type="checkbox" checked={selectedIds.has(row._id)}
-          onChange={() => setSelectedIds((prev) => {
-            const next = new Set(prev);
-            next.has(row._id) ? next.delete(row._id) : next.add(row._id);
-            return next;
-          })}
-          className="w-4 h-4 accent-navy-700 rounded border-gray-300" />
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row._id)}
+          onChange={() => toggleOne(row._id)}
+          aria-label={`Select ${row.title}`}
+          className="h-4 w-4 rounded border-gray-300 accent-navy-700"
+        />
       ),
     }] : []),
     {
-      key: 'title', header: 'Document', render: (v, row) => {
+      key: 'title',
+      header: 'Document',
+      render: (v, row) => {
         const Icon = FILE_ICONS[row.fileType] || FILE_ICONS.default;
         return (
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-navy-50 dark:bg-navy-900/30 rounded-lg flex items-center justify-center flex-shrink-0">
-              <Icon size={16} className="text-navy-700" />
-            </div>
-            <div>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-navy-50 dark:bg-navy-900/30">
+              <Icon size={16} className="text-navy-700 dark:text-navy-300" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <p className="font-medium text-sm text-gray-900 dark:text-white">{v}</p>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">{v}</p>
                 {row.version > 1 && (
-                  <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 rounded font-medium">v{row.version}</span>
+                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
+                    v{row.version}
+                  </span>
                 )}
               </div>
-              <p className="text-xs text-gray-400 dark:text-gray-500">{formatFileSize(row.fileSize)}</p>
+              <p className="meta-text">{formatFileSize(row.fileSize)}</p>
             </div>
           </div>
         );
-      }
+      },
     },
     { key: 'category', header: 'Category', render: (v) => <span className="text-xs capitalize">{v?.replace(/_/g, ' ')}</span> },
     { key: 'municipality', header: 'Municipality', render: (v) => v?.name || 'All' },
-    { key: 'uploadedBy', header: 'Uploaded By', render: (v) => `${v?.firstName} ${v?.lastName}` },
-    { key: 'createdAt', header: 'Date', render: (v) => formatDate(v) },
-    { key: 'downloadCount', header: 'Downloads', render: (v) => <span className="text-xs font-medium">{v || 0}</span> },
     {
-      key: '_id', header: 'Actions', render: (id, row) => (
+      key: 'uploadedBy',
+      header: 'Uploaded By',
+      render: (v) => (v ? `${v.firstName} ${v.lastName}` : 'Unknown'),
+    },
+    { key: 'createdAt', header: 'Date', render: (v) => formatDate(v) },
+    {
+      key: 'downloadCount',
+      header: 'Downloads',
+      className: 'cell-numeric',
+      render: (v) => <span className="text-xs font-medium">{v || 0}</span>,
+    },
+    {
+      key: '_id',
+      header: 'Actions',
+      render: (id, row) => (
         <div className="flex items-center gap-1">
-          <button onClick={() => handleDownload(row)} className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-navy-700 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors" title="Download">
-            <Download size={14} />
-          </button>
+          {/* These carried a `title` tooltip but no accessible name, so each announced as a bare
+              "button" — seven identical ones per row. */}
+          <IconButton onClick={() => handleDownload(row)} label={`Download ${row.title}`} hover="hover:text-navy-700 dark:hover:text-navy-300">
+            <Download size={14} aria-hidden="true" />
+          </IconButton>
           {row.previousVersions?.length > 0 && (
-            <button onClick={() => setHistoryTarget(row)} className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Version history">
-              <History size={14} />
-            </button>
+            <IconButton onClick={() => setHistoryTarget(row)} label={`Version history for ${row.title}`} hover="hover:text-blue-600 dark:hover:text-blue-400">
+              <History size={14} aria-hidden="true" />
+            </IconButton>
           )}
           {canEdit && !row.isArchived && (
-            <button onClick={() => { setReplaceTarget(row); setReplaceFile(null); }} className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Replace file">
-              <RefreshCw size={14} />
-            </button>
+            <IconButton onClick={() => { setReplaceTarget(row); setReplaceFile(null); }} label={`Replace file for ${row.title}`} hover="hover:text-blue-600 dark:hover:text-blue-400">
+              <RefreshCw size={14} aria-hidden="true" />
+            </IconButton>
           )}
           {canEdit && !row.isArchived && (
-            <button onClick={() => handleArchive(id, row.title)} className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-yellow-600 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 rounded transition-colors" title="Archive">
-              <Archive size={14} />
-            </button>
+            <IconButton onClick={() => handleArchive(id, row.title)} label={`Archive ${row.title}`} hover="hover:text-amber-600 dark:hover:text-amber-400">
+              <Archive size={14} aria-hidden="true" />
+            </IconButton>
           )}
           {canEdit && row.isArchived && (
-            <button onClick={() => handleUnarchive(id, row.title)} className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors" title="Restore from archive">
-              <ArchiveRestore size={14} />
-            </button>
+            <IconButton onClick={() => handleUnarchive(id, row.title)} label={`Restore ${row.title} from archive`} hover="hover:text-green-600 dark:hover:text-emerald-400">
+              <ArchiveRestore size={14} aria-hidden="true" />
+            </IconButton>
           )}
           {canDelete && (
-            <button onClick={() => handleDelete(id, row.title)} className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
-              <Trash2 size={14} />
-            </button>
+            <IconButton onClick={() => handleDelete(id, row.title)} label={`Delete ${row.title}`} hover="hover:text-red-600 dark:hover:text-red-400">
+              <Trash2 size={14} aria-hidden="true" />
+            </IconButton>
           )}
         </div>
-      )
+      ),
     },
   ];
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Document Management</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Central repository for all SK documents</p>
+          <h1 className="page-title">Document Management</h1>
+          <p className="page-subtitle">Central repository for all SK documents</p>
         </div>
         {canUpload && (
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-navy-900 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors">
-            <Upload size={16} />Upload Document
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
+          >
+            <Upload size={16} aria-hidden="true" />Upload Document
           </button>
         )}
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4">
-        <div className="flex items-center gap-2 flex-1 min-w-48 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2">
-          <Search size={14} className="text-gray-400 dark:text-gray-500" />
-          <input type="text" placeholder="Search documents..." value={filters.search}
-            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-            className="bg-transparent text-sm outline-none flex-1 text-gray-600 dark:text-gray-300" />
-        </div>
-        <select value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })}
-          className="px-3 py-2 border border-gray-200 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 outline-none focus:ring-2 focus:ring-navy-700">
-          <option value="">All Categories</option>
-          {DOCUMENT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-        </select>
-        <button
-          onClick={() => setFilters({ ...filters, isArchived: !filters.isArchived })}
-          className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${filters.isArchived ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'}`}>
-          {filters.isArchived ? 'Showing Archived' : 'Show Archived'}
-        </button>
-      </div>
+      <section aria-label="Filter documents" className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex flex-wrap gap-3">
+          <SearchInput
+            id="document-search"
+            label="Search documents"
+            placeholder="Search documents..."
+            value={filters.search}
+            // Every filter here now resets to page 1. Changing one while on page 5 previously
+            // kept you on page 5 of a shorter result set, which usually renders as empty.
+            onSearch={(search) => setFilters((f) => ({ ...f, search, page: 1 }))}
+          />
 
-      {canEdit && !filters.isArchived && selectedIds.size > 0 && (
-        <div className="flex items-center justify-between bg-navy-50 dark:bg-navy-900/20 border border-navy-200 dark:border-navy-800 rounded-xl px-4 py-3">
-          <span className="text-sm font-medium text-navy-700 dark:text-navy-300">{selectedIds.size} document{selectedIds.size !== 1 ? 's' : ''} selected</span>
+          <div>
+            <label htmlFor="filter-category" className="sr-only">Filter by category</label>
+            <select
+              id="filter-category"
+              value={filters.category}
+              onChange={(e) => setFilters({ ...filters, category: e.target.value, page: 1 })}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+            >
+              <option value="">All Categories</option>
+              {DOCUMENT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            aria-pressed={filters.isArchived}
+            onClick={() => setFilters({ ...filters, isArchived: !filters.isArchived, page: 1 })}
+            className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+              filters.isArchived
+                ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+            }`}
+          >
+            {filters.isArchived ? 'Showing Archived' : 'Show Archived'}
+          </button>
+        </div>
+      </section>
+
+      {showSelection && selectedIds.size > 0 && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-navy-200 bg-navy-50 px-4 py-3 dark:border-navy-800 dark:bg-navy-900/20">
+          <span className="text-sm font-medium text-navy-700 dark:text-navy-300">
+            <span className="numeric">{selectedIds.size}</span> document{selectedIds.size !== 1 ? 's' : ''} selected
+          </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelectedIds(new Set())}
-              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-white dark:hover:bg-gray-700 transition-colors">
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 transition-colors hover:bg-white hover:text-gray-700 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+            >
               Clear
             </button>
-            <button onClick={handleBulkArchive} disabled={bulkArchiveMutation.isPending}
-              className="text-xs px-3 py-1.5 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-60 font-semibold transition-colors flex items-center gap-1.5">
-              <Archive size={13} />
+            <button
+              type="button"
+              onClick={handleBulkArchive}
+              disabled={bulkArchiveMutation.isPending}
+              className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-60"
+            >
+              <Archive size={13} aria-hidden="true" />
               {bulkArchiveMutation.isPending ? 'Archiving...' : `Archive ${selectedIds.size}`}
             </button>
           </div>
         </div>
       )}
 
-      <DataTable columns={columns} data={data?.data} loading={isLoading}
-        pagination={data?.meta} onPageChange={(p) => setFilters({ ...filters, page: p })} />
+      <DataTable
+        columns={columns}
+        data={rows}
+        loading={isLoading}
+        pagination={data?.meta}
+        onPageChange={(p) => setFilters({ ...filters, page: p })}
+        emptyMessage={
+          hasFilters
+            ? 'No documents match these filters'
+            : filters.isArchived ? 'No archived documents' : 'No documents uploaded yet'
+        }
+        emptyAction={hasFilters ? (
+          <button
+            type="button"
+            onClick={() => setFilters((f) => ({ ...f, search: '', category: '', page: 1 }))}
+            className="text-sm font-medium text-navy-700 hover:underline dark:text-navy-300"
+          >
+            Clear filters
+          </button>
+        ) : null}
+      />
 
-      {/* Version History Modal */}
-      <Modal isOpen={!!historyTarget} onClose={() => setHistoryTarget(null)} title="Version History" size="md"
-        footer={<div className="flex justify-end"><button onClick={() => setHistoryTarget(null)} className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Close</button></div>}>
-        {historyTarget && (
-          <div className="space-y-3">
-            {/* Current version */}
-            <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-xl">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold bg-blue-600 text-white px-2 py-0.5 rounded">v{historyTarget.version} — Current</span>
-                </div>
-                <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mt-1">{historyTarget.originalName || historyTarget.fileName}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">{formatDate(historyTarget.updatedAt)}</p>
-              </div>
-              <button onClick={() => handleDownload(historyTarget)} className="flex items-center gap-1.5 text-xs text-navy-700 hover:text-navy-900 font-medium px-3 py-1.5 border border-navy-200 dark:border-navy-700 rounded-lg hover:bg-navy-50 dark:hover:bg-navy-900/20 transition-colors">
-                <Download size={13} /> Download
-              </button>
-            </div>
-            {/* Previous versions (newest first) */}
-            {[...historyTarget.previousVersions].reverse().map((pv) => (
-              <div key={pv.version} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 border border-gray-100 dark:border-gray-700 rounded-xl">
-                <div>
-                  <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 bg-gray-200 dark:bg-gray-600 px-2 py-0.5 rounded">v{pv.version}</span>
-                  <p className="text-sm text-gray-700 dark:text-gray-300 mt-1">{pv.fileName?.split('/').pop() || `Version ${pv.version}`}</p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500">{formatDate(pv.uploadedAt)}</p>
-                </div>
-                <button onClick={() => handleDownloadVersion(pv, historyTarget)}
-                  className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 hover:text-navy-700 font-medium px-3 py-1.5 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                  <Download size={13} /> Download
-                </button>
-              </div>
-            ))}
+      <Modal
+        isOpen={!!historyTarget}
+        onClose={() => setHistoryTarget(null)}
+        title="Version History"
+        size="md"
+        footer={
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setHistoryTarget(null)}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Close
+            </button>
           </div>
+        }
+      >
+        {historyTarget && (
+          <ol className="space-y-3">
+            <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 dark:border-blue-900/40 dark:bg-blue-900/20">
+              <div className="min-w-0">
+                <span className="rounded bg-blue-600 px-2 py-0.5 text-xs font-bold text-white">
+                  v{historyTarget.version} — Current
+                </span>
+                <p className="mt-1 text-sm font-medium text-gray-800 dark:text-gray-200">
+                  {historyTarget.originalName || historyTarget.fileName}
+                </p>
+                <p className="meta-text">{formatDate(historyTarget.updatedAt)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDownload(historyTarget)}
+                className="flex items-center gap-1.5 rounded-lg border border-navy-200 px-3 py-1.5 text-xs font-medium text-navy-700 transition-colors hover:bg-navy-50 dark:border-navy-700 dark:text-navy-300 dark:hover:bg-navy-900/20"
+              >
+                <Download size={13} aria-hidden="true" /> Download
+              </button>
+            </li>
+
+            {[...historyTarget.previousVersions].reverse().map((pv) => (
+              <li key={pv.version} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-700/50">
+                <div className="min-w-0">
+                  <span className="rounded bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:bg-gray-600 dark:text-gray-300">
+                    v{pv.version}
+                  </span>
+                  <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">
+                    {pv.fileName?.split('/').pop() || `Version ${pv.version}`}
+                  </p>
+                  <p className="meta-text">{formatDate(pv.uploadedAt)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadVersion(pv, historyTarget)}
+                  aria-label={`Download version ${pv.version}`}
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-navy-700 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+                >
+                  <Download size={13} aria-hidden="true" /> Download
+                </button>
+              </li>
+            ))}
+          </ol>
         )}
       </Modal>
 
-      {/* Replace File Modal */}
-      <Modal isOpen={!!replaceTarget} onClose={() => { setReplaceTarget(null); setReplaceFile(null); }} title="Replace Document File" size="sm"
+      <Modal
+        isOpen={!!replaceTarget}
+        onClose={closeReplace}
+        title="Replace Document File"
+        size="sm"
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={() => { setReplaceTarget(null); setReplaceFile(null); }} className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button onClick={handleReplaceFile} disabled={replaceMutation.isPending}
-              className="px-5 py-2 bg-navy-900 text-white text-sm rounded-xl font-semibold hover:bg-navy-800 disabled:opacity-60">
+            <button
+              type="button"
+              onClick={closeReplace}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleReplaceFile}
+              disabled={replaceMutation.isPending}
+              className="rounded-xl bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+            >
               {replaceMutation.isPending ? 'Replacing...' : 'Replace File'}
             </button>
           </div>
-        }>
+        }
+      >
         <div className="space-y-4">
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Current: <span className="font-medium text-gray-700 dark:text-gray-200">{replaceTarget?.originalName || replaceTarget?.title}</span>
-            <span className="ml-2 text-xs bg-gray-100 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded">v{replaceTarget?.version || 1}</span>
+            <span className="ml-2 rounded bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-700 dark:text-gray-300">v{replaceTarget?.version || 1}</span>
           </p>
-          <div onClick={() => replaceFileRef.current?.click()}
-            className="border-2 border-dashed border-gray-200 dark:border-gray-600 rounded-xl p-6 text-center cursor-pointer hover:border-navy-400 hover:bg-navy-50 dark:hover:bg-navy-900/20 transition-colors">
-            <RefreshCw size={24} className="mx-auto text-gray-400 dark:text-gray-500 mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">{replaceFile ? replaceFile.name : 'Click to select replacement file'}</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">The old file will be saved to version history</p>
-            <input ref={replaceFileRef} type="file" hidden accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-              onChange={(e) => setReplaceFile(e.target.files[0])} />
-          </div>
+          <FileDropzone
+            id="replace-file"
+            file={replaceFile}
+            onSelect={setReplaceFile}
+            icon={RefreshCw}
+            label="Select replacement file"
+            hint="The old file will be saved to version history"
+          />
         </div>
       </Modal>
 
-      {/* Upload Modal */}
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Upload Document" size="md"
+      <Modal
+        isOpen={showModal}
+        onClose={closeUpload}
+        title="Upload Document"
+        size="md"
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-xl text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button onClick={handleUpload} disabled={uploadMutation.isPending}
-              className="px-5 py-2 bg-navy-900 text-white text-sm rounded-xl font-semibold hover:bg-navy-800 disabled:opacity-60">
+            <button
+              type="button"
+              onClick={closeUpload}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleUpload}
+              disabled={uploadMutation.isPending}
+              className="rounded-xl bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+            >
               {uploadMutation.isPending ? 'Uploading...' : 'Upload'}
             </button>
           </div>
-        }>
+        }
+      >
         <div className="space-y-4">
-          {/* Drop zone */}
-          <div
-            onClick={() => fileRef.current?.click()}
-            className="border-2 border-dashed border-gray-200 dark:border-gray-600 rounded-xl p-8 text-center cursor-pointer hover:border-navy-400 hover:bg-navy-50 dark:hover:bg-navy-900/20 transition-colors"
-          >
-            <Upload size={28} className="mx-auto text-gray-400 dark:text-gray-500 mb-2" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">{file ? file.name : 'Click to select or drag & drop'}</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">PDF, DOCX, XLSX, Images (max 10MB)</p>
-            <input ref={fileRef} type="file" hidden accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-              onChange={(e) => setFile(e.target.files[0])} />
-          </div>
+          <RequiredNote />
 
-          {[['title', 'Document Title', 'text'], ['description', 'Description', 'textarea']].map(([key, label, type]) => (
-            <div key={key}>
-              <label className="form-label">{label}</label>
-              {type === 'textarea' ? (
-                <textarea value={uploadForm[key]} onChange={(e) => setUploadForm({ ...uploadForm, [key]: e.target.value })} rows={2}
-                  className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 resize-none" />
-              ) : (
-                <input type={type} value={uploadForm[key]} onChange={(e) => setUploadForm({ ...uploadForm, [key]: e.target.value })}
-                  className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-navy-700" />
-              )}
-            </div>
-          ))}
+          <FileDropzone
+            id="upload-file"
+            file={file}
+            onSelect={setFile}
+            label="Select a document to upload"
+            hint="PDF, DOCX, XLSX, images — max 10MB"
+          />
 
-          <div>
-            <label className="form-label">Category *</label>
-            <select value={uploadForm.category} onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
-              className="mt-1 w-full px-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-navy-700 bg-white">
+          <Field id="doc-title" label="Document Title" optional hint="Defaults to the file name if left blank.">
+            <input
+              type="text"
+              value={uploadForm.title}
+              onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+              className={control}
+            />
+          </Field>
+
+          <Field id="doc-description" label="Description" optional>
+            <textarea
+              value={uploadForm.description}
+              onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })}
+              rows={2}
+              className={`${control} resize-y`}
+            />
+          </Field>
+
+          <Field id="doc-category" label="Category" required>
+            <select
+              value={uploadForm.category}
+              onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
+              className={control}
+            >
               <option value="">Select category...</option>
               {DOCUMENT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
-          </div>
+          </Field>
 
-          <div className="flex items-center gap-3">
-            <input type="checkbox" id="isPublic" checked={uploadForm.isPublic}
+          <div className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="isPublic"
+              checked={uploadForm.isPublic}
               onChange={(e) => setUploadForm({ ...uploadForm, isPublic: e.target.checked })}
-              className="w-4 h-4 text-navy-700 rounded" />
-            <label htmlFor="isPublic" className="text-sm text-gray-700 dark:text-gray-300">Make publicly accessible</label>
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-700"
+            />
+            <div>
+              <label htmlFor="isPublic" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Make publicly accessible
+              </label>
+              {/* This publishes the file itself to a portal anyone can read without signing in —
+                  a consequence the bare checkbox label never stated. */}
+              <p className="field-hint">Downloadable from the public portal without signing in.</p>
+            </div>
           </div>
         </div>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * File picker with a real drop target.
+ *
+ * The old zone was a plain <div onClick>: unreachable by keyboard, announced as nothing in
+ * particular, and — despite the words "drag & drop" printed inside it — carried no drag handlers
+ * at all, so dropping a file onto it made the browser navigate away to that file and lose the
+ * half-filled form. It now handles drops, takes focus, and responds to Enter/Space.
+ *
+ * Size and type are checked here rather than only on the server, which had let a user wait out
+ * the upload of an oversized file before being told.
+ */
+function FileDropzone({ id, file, onSelect, icon: Icon = Upload, label, hint }) {
+  const inputRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+
+  const accept = (candidate) => {
+    if (!candidate) return;
+    const ext = `.${candidate.name.split('.').pop()?.toLowerCase()}`;
+    if (!ACCEPT.split(',').includes(ext)) {
+      return toast.error(`${ext} files are not accepted. Allowed: ${ACCEPT}`);
+    }
+    if (candidate.size > MAX_FILE_BYTES) {
+      return toast.error(`"${candidate.name}" is ${formatFileSize(candidate.size)} — the limit is ${formatFileSize(MAX_FILE_BYTES)}.`);
+    }
+    onSelect(candidate);
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); accept(e.dataTransfer.files?.[0]); }}
+        aria-label={label}
+        className={`w-full rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
+          dragging
+            ? 'border-navy-500 bg-navy-50 dark:bg-navy-900/30'
+            : 'border-gray-200 hover:border-navy-400 hover:bg-navy-50 dark:border-gray-600 dark:hover:bg-navy-900/20'
+        }`}
+      >
+        {/* Spans rather than paragraphs: a <button> may only contain phrasing content. */}
+        <Icon size={24} className="mx-auto mb-2 text-gray-400 dark:text-gray-500" aria-hidden="true" />
+        <span className="block text-sm text-gray-600 dark:text-gray-300">
+          {file ? file.name : 'Click to select, or drag a file here'}
+        </span>
+        {file
+          ? <span className="meta-text mt-1 block">{formatFileSize(file.size)} — click to choose a different file</span>
+          : hint && <span className="meta-text mt-1 block">{hint}</span>}
+      </button>
+      {/*
+        `hidden` rather than `sr-only`: the button above is the labelled control, and the input is
+        only ever opened through it. Left visible to assistive tech it would surface as a second,
+        unnamed file control sitting next to the named one.
+      */}
+      <input
+        id={id}
+        ref={inputRef}
+        type="file"
+        hidden
+        accept={ACCEPT}
+        onChange={(e) => accept(e.target.files?.[0])}
+      />
+    </div>
+  );
+}
+
+function IconButton({ onClick, label, hover, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={`rounded p-1.5 text-gray-400 transition-colors hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-gray-700 ${hover}`}
+    >
+      {children}
+    </button>
   );
 }
