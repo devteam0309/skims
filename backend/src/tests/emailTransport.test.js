@@ -180,6 +180,38 @@ describe('emailService transport selection', () => {
     warn.mockRestore();
   });
 
+  /*
+   * The SMTP counterpart of the Resend sender checks above. Gmail accepts a foreign From and
+   * silently rewrites it to the authenticated account, so the send succeeds, the log says "sent",
+   * and the sender the app thinks it is using is not the one recipients see.
+   */
+  it('logConfig warns when FROM_EMAIL is not the SMTP account it authenticates as', () => {
+    delete process.env.RESEND_API_KEY;
+    process.env.SMTP_EMAIL = 'devteam@gmail.com';
+    process.env.FROM_EMAIL = 'noreply@skims.gov.ph';
+    const logger = require('../utils/logger');
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    require('../services/emailService').logConfig();
+
+    const messages = warn.mock.calls.map(([m]) => m);
+    expect(messages.some((m) => m.includes('devteam@gmail.com') && m.includes('noreply@skims.gov.ph'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('logConfig does not raise the sender warning when FROM_EMAIL matches the SMTP account', () => {
+    delete process.env.RESEND_API_KEY;
+    process.env.SMTP_EMAIL = 'devteam@gmail.com';
+    process.env.FROM_EMAIL = 'devteam@gmail.com';
+    const logger = require('../utils/logger');
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    require('../services/emailService').logConfig();
+
+    expect(warn.mock.calls.map(([m]) => m).some((m) => m.includes('authenticates as'))).toBe(false);
+    warn.mockRestore();
+  });
+
   it('routes password reset through Resend too', async () => {
     process.env.RESEND_API_KEY = 're_test_key';
     global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 'abc' }) });

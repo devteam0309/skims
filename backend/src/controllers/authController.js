@@ -7,6 +7,25 @@ const AuditLog = require('../models/AuditLog');
 const emailService = require('../services/emailService');
 const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
+const logger = require('../utils/logger');
+
+/**
+ * Send a verification link without blocking the response, but never silently.
+ *
+ * The send must stay off the request path: a host that blocks outbound SMTP leaves the socket
+ * open until nodemailer's timeout, which reaches the client as a 504 even though the account was
+ * created. The failure still has to be attributable, though — login is gated on isEmailVerified,
+ * so a swallowed error leaves an account that can never be used and a user who was told to go
+ * check their inbox. emailService logs the transport error; this adds what that cannot know,
+ * which is the consequence and the account it applies to.
+ */
+const sendVerificationInBackground = (user, token) =>
+  emailService.sendEmailVerification(user, token).catch(() => {
+    logger.warn(
+      `Verification email was NOT delivered to ${user.email} — that account cannot log in until it is verified. ` +
+      'Check the transport error logged above, then use POST /api/auth/resend-verification.'
+    );
+  });
 
 const ACCESS_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -69,10 +88,7 @@ exports.register = asyncHandler(async (req, res) => {
   const verificationToken = user.getEmailVerificationToken();
   await user.save({ validateBeforeSave: false });
 
-  // Fire-and-forget: never block the HTTP response on SMTP. A blocked or slow mail host would
-  // otherwise hang registration until nodemailer's connection timeout (~2 min by default), which
-  // reads to the client as a 504 even though the account was created successfully.
-  emailService.sendEmailVerification(user, verificationToken).catch(() => {});
+  sendVerificationInBackground(user, verificationToken);
 
   // Notify admins when a non-public_user registers and requires approval
   if (assignedRole !== 'public_user') {
@@ -80,7 +96,9 @@ exports.register = asyncHandler(async (req, res) => {
     if (user.municipality) adminFilter.$or = [{ municipality: user.municipality }, { role: { $in: ['super_admin', 'provincial_admin'] } }];
     const admins = await User.find(adminFilter).select('_id').lean();
     if (admins.length > 0) {
-      await Notification.insertMany(admins.map((a) => ({
+      // createWithExpiry, not insertMany: insertMany bypasses the pre-save hook that sets
+      // expiresAt, so these would sit in the collection forever despite the TTL index.
+      await Notification.createWithExpiry(admins.map((a) => ({
         recipient: a._id,
         type: 'approval_request',
         title: 'New Account Pending Approval',
@@ -243,8 +261,7 @@ exports.resendVerification = asyncHandler(async (req, res) => {
   if (!user) return successResponse(res, 200, 'If your email is pending verification, a new link has been sent');
   const verificationToken = user.getEmailVerificationToken();
   await user.save({ validateBeforeSave: false });
-  // Fire-and-forget for the same reason as register() above.
-  emailService.sendEmailVerification(user, verificationToken).catch(() => {});
+  sendVerificationInBackground(user, verificationToken);
   successResponse(res, 200, 'If your email is pending verification, a new link has been sent');
 });
 
