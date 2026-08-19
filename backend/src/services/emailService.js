@@ -89,6 +89,20 @@ exports.logConfig = () => {
   if (!useResend()) {
     logger.info(`Email transport: SMTP via ${process.env.SMTP_HOST || '(unset)'} as ${from}`);
     logger.warn('Email transport is SMTP — this does NOT work on hosts that block outbound SMTP (e.g. Render free). Set RESEND_API_KEY to use Resend.');
+
+    // The SMTP counterpart of the unverified-sender check below. A relay will only put its own
+    // authenticated identity in the From header: Gmail silently REWRITES a foreign From to the
+    // authenticated account (measured — mail sent as noreply@skims.gov.ph arrives as the SMTP
+    // account), while stricter relays reject it or the recipient spam-files it for failing SPF.
+    // Either way the configured sender is not the sender recipients see, so say so at boot.
+    const account = process.env.SMTP_EMAIL;
+    if (account && from !== account) {
+      logger.warn(
+        `FROM_EMAIL is "${from}" but SMTP authenticates as "${account}" — the relay owns the From header, ` +
+        `so recipients will see ${account} (Gmail rewrites it; stricter relays reject or spam-file it). ` +
+        'Set FROM_EMAIL to the SMTP account, or add it as a verified alias.'
+      );
+    }
     return;
   }
 
