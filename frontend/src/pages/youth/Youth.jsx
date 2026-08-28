@@ -561,16 +561,20 @@ export default function Youth() {
             {filterBarangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
           </select>
 
-          <label htmlFor="filter-education" className="sr-only">Filter by educational attainment</label>
-          <select
-            id="filter-education"
-            value={filters.educationalAttainment}
-            onChange={(e) => setFilters({ ...filters, educationalAttainment: e.target.value, page: 1 })}
-            className={selectClass}
-          >
-            <option value="">All Education</option>
-            {EDUCATION_OPTIONS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-          </select>
+          {/* Type-or-pick, matching the registration form and the gender filter beside it. A level
+              typed into the form has to be reachable from the filter, or the custom entry is
+              write-only. */}
+          <div className="w-44">
+            <label htmlFor="filter-education" className="sr-only">Filter by educational attainment</label>
+            <ComboInput
+              id="filter-education"
+              options={EDUCATION_OPTIONS.map(([, label]) => label)}
+              value={filters.educationalAttainment}
+              onChange={(e) => setFilters({ ...filters, educationalAttainment: e.target.value, page: 1 })}
+              placeholder="All education"
+              className="!mt-0 !py-1.5 !text-xs"
+            />
+          </div>
 
           <label htmlFor="filter-active" className="sr-only">Filter by membership status</label>
           <select

@@ -330,17 +330,20 @@ export default function Documents() {
             onSearch={(search) => setFilters((f) => ({ ...f, search, page: 1 }))}
           />
 
-          <div>
+          <div className="w-52">
             <label htmlFor="filter-category" className="sr-only">Filter by category</label>
-            <select
+            {/* Type-or-pick, matching the upload form. A fixed list here would let an office file a
+                custom category and then never be able to filter for it — the server canonicalises
+                whatever is typed, so "Barangay Assembly" finds records stored as
+                `barangay_assembly`. */}
+            <ComboInput
               id="filter-category"
+              options={DOCUMENT_CATEGORIES}
               value={filters.category}
               onChange={(e) => setFilters({ ...filters, category: e.target.value, page: 1 })}
-              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
-            >
-              <option value="">All Categories</option>
-              {DOCUMENT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
+              placeholder="All categories"
+              className="!mt-0 !py-2"
+            />
           </div>
 
           <button

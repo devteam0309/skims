@@ -53,6 +53,15 @@ export default function Announcements() {
     queryFn: () => announcementService.getAll(filters).then((r) => r.data),
   });
 
+  /*
+   * Chips are the five usual types plus anything actually in use.
+   *
+   * Type is free text now, so a fixed list would let someone publish a "Barangay Assembly" and then
+   * offer no way to filter for it — the custom entry would be write-only. The union keeps the five
+   * standard chips always present, in their usual order, and adds real values as they appear.
+   */
+  const chipTypes = [...new Set([...TYPES, ...(data?.data || []).map((a) => a.type).filter(Boolean)])];
+
   const closeModal = () => { setShowModal(false); setEditTarget(null); setForm(EMPTY_FORM); };
 
   const createMutation = useMutation({
@@ -222,7 +231,7 @@ export default function Announcements() {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {['', ...TYPES].map((t) => (
+        {['', ...chipTypes].map((t) => (
           <button
             key={t || 'all'}
             type="button"

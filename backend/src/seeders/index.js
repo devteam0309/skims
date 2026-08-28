@@ -486,7 +486,16 @@ const seed = async () => {
      * The dedup index is {firstName, lastName, birthDate, municipality}; pairing the two name
      * arrays with different strides keeps all 40 combinations unique.
      */
-    const EDUCATION_LEVELS = ['elementary', 'high_school', 'college', 'vocational', 'graduate', 'out_of_school'];
+    /*
+     * The six suggested levels, plus two a registrar would realistically type themselves. Seeding a
+     * couple of custom values is the only way the registry demonstrates that the field accepts one —
+     * with the standard six alone, the free-text capability is invisible in demo data and reads as
+     * though the dropdown is still closed.
+     */
+    const EDUCATION_LEVELS = [
+      'elementary', 'high_school', 'college', 'vocational', 'graduate', 'out_of_school',
+      'als_completer', 'senior_high',
+    ];
 
     const youthData = Array.from({ length: 40 }, (_, i) => {
       const mun = municipalities[i % municipalities.length];
@@ -613,7 +622,7 @@ const seed = async () => {
       {
         title: 'DILG Compliance Deadline Reminder',
         content: 'Reminder: Submit your ABYIP and Compliance Documents to DILG by July 31, 2026.',
-        type: 'deadline',
+        type: 'barangay_assembly',
         author: users.find((u) => u.role === 'dilg_representative')._id,
         isPublic: true,
         publishedAt: new Date(),
@@ -747,7 +756,7 @@ const seed = async () => {
       {
         title: 'Q1 2026 DILG Compliance Report',
         description: 'First-quarter compliance report submitted to DILG.',
-        category: 'compliance_report',
+        category: 'barangay_assembly_minutes',
         fileName: 'skims/documents/seed-compliance-q1',
         originalName: 'DILG-Compliance-Q1-2026.pdf',
         fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-compliance-q1.pdf',
