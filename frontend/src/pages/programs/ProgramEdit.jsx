@@ -7,6 +7,7 @@ import { useEffect } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { programService } from '../../services/programService';
 import { budgetService } from '../../services/budgetService';
+import ComboInput from '../../components/shared/ComboInput';
 import { PROGRAM_CATEGORIES } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 import { PageLoader } from '../../components/shared/LoadingSpinner';

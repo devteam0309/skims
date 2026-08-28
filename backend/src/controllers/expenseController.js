@@ -190,6 +190,25 @@ exports.updateExpense = asyncHandler(async (req, res) => {
   successResponse(res, 200, 'Expense updated', updated);
 });
 
+
+/*
+ * Spending against an approved program converts an encumbrance into an actual disbursement, so
+ * the commitment has to shrink by the same amount — otherwise the money is reserved twice and
+ * availableBalance under-reports what the municipality can still use for the rest of the year.
+ * Releases at most what is still committed, so an overspend cannot drive the figure negative.
+ */
+const releaseCommitment = async (programId, amount) => {
+  if (!programId || !amount) return;
+  const prog = await Program.findById(programId).select('committedAmount budgetRef');
+  if (!prog?.committedAmount) return;
+  const release = Math.min(prog.committedAmount, amount);
+  if (release <= 0) return;
+  await Program.updateOne({ _id: prog._id }, { $inc: { committedAmount: -release } });
+  if (prog.budgetRef) {
+    await Budget.updateOne({ _id: prog.budgetRef }, { $inc: { committedAmount: -release } });
+  }
+};
+
 exports.approveExpense = asyncHandler(async (req, res) => {
   const expense = await Expense.findOne({ _id: req.params.id, deletedAt: null });
   if (!expense) return errorResponse(res, 404, 'Expense not found');
@@ -232,6 +251,7 @@ exports.approveExpense = asyncHandler(async (req, res) => {
 
   if (approved.program) {
     await Program.findByIdAndUpdate(approved.program, { $inc: { actualExpenses: approved.amount } });
+    await releaseCommitment(approved.program, approved.amount);
   }
 
   await AuditLog.create({ user: req.user._id, action: 'APPROVE', resource: 'expense', resourceId: approved._id, details: { amount: approved.amount, referenceNumber: approved.referenceNumber }, ipAddress: req.ip });
@@ -306,6 +326,12 @@ exports.bulkApproveExpenses = asyncHandler(async (req, res) => {
       Program.findByIdAndUpdate(programId, { $inc: { actualExpenses: amount } })
     ),
   ]);
+
+  // Mirrors the single-approve path: bulk approval must release encumbrances too, or the same
+  // pesos stay both committed and disbursed.
+  for (const [programId, amount] of Object.entries(programIncrements)) {
+    await releaseCommitment(programId, amount);
+  }
 
   await AuditLog.create({
     user: req.user._id, action: 'BULK_APPROVE', resource: 'expense',

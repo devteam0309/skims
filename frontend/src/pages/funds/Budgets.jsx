@@ -293,6 +293,17 @@ export default function Budgets() {
     },
     { key: 'disbursedAmount', header: 'Disbursed', className: 'cell-numeric', render: (v) => formatCurrency(v) },
     {
+      // Money promised to approved programs but not yet spent. Shown next to Disbursed because
+      // the two together are what has actually been claimed against the budget — Remaining alone
+      // overstates what a municipality can still commit.
+      key: 'committedAmount',
+      header: 'Committed',
+      className: 'cell-numeric',
+      render: (v) => (v > 0
+        ? formatCurrency(v)
+        : <span className="text-gray-400 dark:text-gray-500">—</span>),
+    },
+    {
       key: 'remainingBalance',
       header: 'Remaining',
       className: 'cell-numeric',
