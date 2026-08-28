@@ -32,13 +32,20 @@ const youthValidation = validate([
   body('firstName').trim().notEmpty().withMessage('First name is required'),
   body('lastName').trim().notEmpty().withMessage('Last name is required'),
   body('birthDate').isISO8601().withMessage('Valid birth date is required'),
-  body('gender').isIn(['male', 'female', 'other']).withMessage('Gender must be male, female, or other'),
+  // Free text: the form offers male / female as quick picks and lets anything else be typed,
+  // so an entry such as "LGBTQIA+" is recorded as written instead of flattened to "other".
+  body('gender').trim().notEmpty().withMessage('Gender is required').isLength({ max: 40 })
+    .withMessage('Gender must be 40 characters or fewer'),
   body('contactNumber').optional({ checkFalsy: true })
     .matches(/^(09|\+639)\d{9}$/).withMessage('Use PH format: 09XXXXXXXXX or +639XXXXXXXXX'),
   body('email').optional({ checkFalsy: true }).isEmail().withMessage('Invalid email format'),
 ]);
 
 const MAX_LIMIT = 100;
+
+// The Sangguniang Kabataan age band. Mirrors YouthMember.isSkEligible.
+const SK_MIN_AGE = 15;
+const SK_MAX_AGE = 30;
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const ALLOWED_CREATE_FIELDS = [
@@ -64,20 +71,40 @@ router.get('/duplicate-check', asyncHandler(async (req, res) => {
     deletedAt: null,
   };
   if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
-    filter.municipality = req.user.municipality?._id || req.user.municipality;
+    const munId = req.user.municipality?._id || req.user.municipality;
+    // Fail closed. An undefined value is dropped from the query by Mongoose, which would have
+    // turned a municipality-less account's duplicate check into a province-wide name lookup.
+    if (!munId) return successResponse(res, 200, 'Duplicate check', { exists: false, member: null });
+    filter.municipality = munId;
   }
   const member = await YouthMember.findOne(filter).select('_id firstName lastName');
   successResponse(res, 200, 'Duplicate check', { exists: !!member, member: member || null });
 }));
 
 router.get('/', asyncHandler(async (req, res) => {
-  const { page = 1, limit = 20, municipality, barangay, search, gender, educationalAttainment, isActive } = req.query;
+  const { page = 1, limit = 20, municipality, barangay, search, gender, educationalAttainment, isActive, skEligible } = req.query;
   const filter = { deletedAt: null };
   if (municipality) filter.municipality = municipality;
   if (barangay) filter.barangay = barangay;
-  if (gender) filter.gender = gender;
+  // Free-text values are stored as typed, so the filter matches the whole value case-insensitively
+  // rather than requiring the caller to reproduce the original casing exactly.
+  if (gender) filter.gender = { $regex: `^${escapeRegex(gender)}$`, $options: 'i' };
   if (educationalAttainment) filter.educationalAttainment = educationalAttainment;
   if (isActive !== undefined && isActive !== '') filter.isActive = isActive === 'true';
+
+  /*
+   * SK membership is an age band (15–30), not a stored flag, so it is expressed as a birthDate
+   * range. Someone aged exactly 30 is still covered, which is why the lower bound subtracts
+   * MAX_AGE + 1 years and then steps forward a day rather than subtracting MAX_AGE outright.
+   */
+  if (skEligible === 'true' || skEligible === 'false') {
+    const now = new Date();
+    const youngest = new Date(now.getFullYear() - SK_MIN_AGE, now.getMonth(), now.getDate());
+    const oldest = new Date(now.getFullYear() - SK_MAX_AGE - 1, now.getMonth(), now.getDate() + 1);
+    filter.birthDate = skEligible === 'true'
+      ? { $gte: oldest, $lte: youngest }
+      : { $not: { $gte: oldest, $lte: youngest } };
+  }
   if (search) filter.$or = [
     { firstName: { $regex: escapeRegex(search), $options: 'i' } },
     { lastName: { $regex: escapeRegex(search), $options: 'i' } },
