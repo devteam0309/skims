@@ -20,10 +20,10 @@ const youthMemberSchema = new mongoose.Schema(
     address: String,
     municipality: { type: mongoose.Schema.Types.ObjectId, ref: 'Municipality', required: true },
     barangay: { type: mongoose.Schema.Types.ObjectId, ref: 'Barangay' },
-    educationalAttainment: {
-      type: String,
-      enum: ['elementary', 'high_school', 'college', 'vocational', 'graduate', 'out_of_school'],
-    },
+    // Free text, like gender and program category. The six suggested levels cover most members,
+    // but a registrar recording e.g. "als" or "senior_high" should not have to pick a wrong one.
+    // Normalised on write so typed values group with the seeded ones in filters and reports.
+    educationalAttainment: { type: String, trim: true, maxlength: 60 },
     occupation: String,
     isRegisteredVoter: { type: Boolean, default: false },
     registeredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

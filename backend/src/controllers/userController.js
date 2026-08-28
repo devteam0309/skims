@@ -57,8 +57,14 @@ exports.getUser = asyncHandler(async (req, res) => {
     .select('-loginAttempts -lockUntil -emailVerificationToken -emailVerificationExpire -resetPasswordToken -resetPasswordExpire');
   if (!user || user.deletedAt) return errorResponse(res, 404, 'User not found');
 
-  // Non-admin users can only view their own profile or profiles within their municipality
-  if (!['super_admin', 'provincial_admin', 'municipal_admin'].includes(req.user.role)) {
+  /*
+   * Scoped to the caller's own municipality, or their own profile.
+   *
+   * municipal_admin was exempt here while getUsers directly above scopes it correctly — so another
+   * municipality's staff were hidden from the list and readable by id. Reachable-by-id is exactly
+   * the gap a list-level filter cannot close.
+   */
+  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     const targetMunId = (user.municipality?._id || user.municipality)?.toString();
     if (user._id.toString() !== req.user._id.toString() && targetMunId !== userMunId) {

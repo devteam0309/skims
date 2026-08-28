@@ -6,7 +6,11 @@ const announcementSchema = new mongoose.Schema(
     content: { type: String, required: true },
     type: {
       type: String,
-      enum: ['announcement', 'event', 'news', 'deadline', 'alert'],
+      // Free text, normalised on write. Normalisation matters here beyond grouping: the event
+      // date and location fields are revealed by `type === 'event'`, so a value typed as "Event"
+      // has to canonicalise to the same string or those fields silently disappear.
+      trim: true,
+      maxlength: 60,
       default: 'announcement',
     },
     municipality: { type: mongoose.Schema.Types.ObjectId, ref: 'Municipality' },

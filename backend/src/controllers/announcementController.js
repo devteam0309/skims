@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const Announcement = require('../models/Announcement');
 const AuditLog = require('../models/AuditLog');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { normalizeLabel } = require('../utils/labels');
 
 const MAX_LIMIT = 100;
 
@@ -11,7 +12,8 @@ const ALLOWED_UPDATE_FIELDS = ['title', 'content', 'type', 'isPublic', 'publishe
 exports.getAnnouncements = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, municipality, type, isPublic } = req.query;
   const filter = { deletedAt: null };
-  if (type) filter.type = type;
+  // Free text now; canonicalise so a typed "Event" finds records stored as `event`.
+  if (type) filter.type = normalizeLabel(type);
   if (isPublic !== undefined) filter.isPublic = isPublic === 'true';
 
   if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
@@ -50,6 +52,7 @@ exports.getAnnouncement = asyncHandler(async (req, res) => {
 
 exports.createAnnouncement = asyncHandler(async (req, res) => {
   const data = Object.fromEntries(Object.entries(req.body).filter(([k]) => ALLOWED_CREATE_FIELDS.includes(k)));
+  if (data.type) data.type = normalizeLabel(data.type);
   data.author = req.user._id;
   const isAdmin = ['super_admin', 'provincial_admin'].includes(req.user.role);
   data.municipality = isAdmin ? (data.municipality || req.user.municipality?._id || req.user.municipality || null) : (req.user.municipality?._id || req.user.municipality || null);
@@ -70,6 +73,7 @@ exports.updateAnnouncement = asyncHandler(async (req, res) => {
     }
   }
   const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => ALLOWED_UPDATE_FIELDS.includes(k)));
+  if (updates.type) updates.type = normalizeLabel(updates.type);
   const updated = await Announcement.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
   successResponse(res, 200, 'Announcement updated', updated);
 });

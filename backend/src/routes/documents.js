@@ -12,13 +12,16 @@ const idParam = validate([param('id').isMongoId().withMessage('Invalid document 
 
 // Runs after multer parses the multipart body, so req.body fields are populated.
 const uploadValidation = validate([
-  body('category').isIn(DOCUMENT_CATEGORIES).withMessage('A valid document category is required'),
+  // Free text, not a fixed list — see models/Document.js. Length-capped so it stays a label.
+  body('category').trim().notEmpty().withMessage('A document category is required')
+    .isLength({ max: 60 }).withMessage('Category must be 60 characters or fewer'),
   body('title').optional({ checkFalsy: true }).trim().isLength({ max: 200 }).withMessage('Title too long'),
   body('fiscalYear').optional({ checkFalsy: true }).isInt({ min: 2000, max: 2100 }).withMessage('Invalid fiscal year'),
 ]);
 
 const updateValidation = validate([
-  body('category').optional({ checkFalsy: true }).isIn(DOCUMENT_CATEGORIES).withMessage('Invalid document category'),
+  body('category').optional({ checkFalsy: true }).trim()
+    .isLength({ max: 60 }).withMessage('Category must be 60 characters or fewer'),
   body('title').optional({ checkFalsy: true }).trim().isLength({ max: 200 }).withMessage('Title too long'),
   body('fiscalYear').optional({ checkFalsy: true }).isInt({ min: 2000, max: 2100 }).withMessage('Invalid fiscal year'),
 ]);

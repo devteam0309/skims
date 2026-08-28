@@ -5,6 +5,7 @@ import { announcementService } from '../../services/announcementService';
 import { ADMIN_ROLES, EDITOR_ROLES } from '../../utils/constants';
 import DataTable from '../../components/shared/DataTable';
 import Modal from '../../components/shared/Modal';
+import ComboInput from '../../components/shared/ComboInput';
 import { Field, RequiredNote, control } from '../../components/shared/FormField';
 import { formatDate } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
@@ -301,9 +302,14 @@ export default function Announcements() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field id="ann-type" label="Type">
-              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className={control}>
-                {TYPES.map((t) => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
-              </select>
+              {/* Free text with suggestions. Normalised server-side, so a value typed as "Event"
+                  still reveals the event date and location fields below. */}
+              <ComboInput
+                options={TYPES.map((t) => t.charAt(0).toUpperCase() + t.slice(1))}
+                value={form.type}
+                onChange={(e) => setForm({ ...form, type: e.target.value })}
+                placeholder="Select or type..."
+              />
             </Field>
             <Field id="ann-expires" label="Expires" optional hint="Leave blank to keep it up indefinitely.">
               <input

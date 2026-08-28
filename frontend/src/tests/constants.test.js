@@ -4,7 +4,8 @@ import { MUNICIPALITIES, ADMIN_ROLES, FINANCE_STAFF, YOUTH_EDITORS, ROLE_LABELS 
 describe('MUNICIPALITIES', () => {
   it('lists all four Marinduque municipalities', () => {
     expect(MUNICIPALITIES).toHaveLength(4);
-    ['Boac', 'Gasan', 'Mogpog', 'Sta. Cruz'].forEach((m) => {
+    // Must match the `name` values the API returns, not a display abbreviation.
+    ['Boac', 'Gasan', 'Mogpog', 'Santa Cruz'].forEach((m) => {
       expect(MUNICIPALITIES).toContain(m);
     });
   });

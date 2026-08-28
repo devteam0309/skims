@@ -2,28 +2,14 @@ const asyncHandler = require('express-async-handler');
 const Program = require('../models/Program');
 const Budget = require('../models/Budget');
 const YouthMember = require('../models/YouthMember');
+// Shared with document category, announcement type and youth educational attainment.
+const { normalizeLabel: normalizeCategory } = require('../utils/labels');
 const Notification = require('../models/Notification');
 const AuditLog = require('../models/AuditLog');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 
 const MAX_LIMIT = 100;
 
-/*
- * Categories are free text now, so two people can type "Peace & Order", "peace and order" and
- * "Peace and Order" for one thing and the category filter would treat them as three. Normalising
- * on write collapses them onto the same canonical slug the seeded data already uses, so a typed
- * category groups with an existing one instead of splintering the list. Display prettifies it
- * back; nothing user-facing shows the underscore form.
- */
-const normalizeCategory = (value) => {
-  if (typeof value !== 'string') return value;
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-};
 
 exports.getPrograms = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, status, approvalStatus, category, municipality, barangay, search, startDate, endDate } = req.query;

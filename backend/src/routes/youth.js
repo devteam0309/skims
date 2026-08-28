@@ -10,6 +10,7 @@ const AuditLog = require('../models/AuditLog');
 const validate = require('../middleware/validate');
 const { successResponse, errorResponse, paginatedResponse } = require('../utils/apiResponse');
 const { calculateAge, isYouthEligibleAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } = require('../utils/age');
+const { normalizeLabel } = require('../utils/labels');
 
 const mongoose = require('mongoose');
 
@@ -89,7 +90,7 @@ router.put('/me', authorize('youth'), asyncHandler(async (req, res) => {
     if (!(key in req.body)) continue;
     const value = req.body[key];
     if (value === '' || value === null || value === undefined) $unset[key] = '';
-    else $set[key] = value;
+    else $set[key] = key === 'educationalAttainment' ? normalizeLabel(value) : value;
   }
 
   if ($set.barangay) {
@@ -137,7 +138,9 @@ router.get('/', asyncHandler(async (req, res) => {
   // Free-text values are stored as typed, so the filter matches the whole value case-insensitively
   // rather than requiring the caller to reproduce the original casing exactly.
   if (gender) filter.gender = { $regex: `^${escapeRegex(gender)}$`, $options: 'i' };
-  if (educationalAttainment) filter.educationalAttainment = educationalAttainment;
+  // Free text now, so match the canonical form of whatever was typed rather than requiring the
+  // caller to reproduce the stored spelling exactly.
+  if (educationalAttainment) filter.educationalAttainment = normalizeLabel(educationalAttainment);
   if (isActive !== undefined && isActive !== '') filter.isActive = isActive === 'true';
 
   /*
@@ -194,9 +197,15 @@ router.get('/:id', asyncHandler(async (req, res) => {
  * the roster incomplete for exactly the households least likely to be reached otherwise.
  */
 router.post('/', authorize(...ADMINS), youthValidation, asyncHandler(async (req, res) => {
-  const isAdmin = ['super_admin', 'provincial_admin', 'municipal_admin'].includes(req.user.role);
+  /*
+   * Only the two genuinely province-wide roles may file a record against another municipality.
+   * municipal_admin used to be listed here, which let a Mogpog administrator post a youth record
+   * with a Sta. Cruz id in the body and have it stored there — a write across the boundary every
+   * other check in the system holds. It is scoped everywhere else; it is scoped here now.
+   */
+  const isCrossMunicipality = ['super_admin', 'provincial_admin'].includes(req.user.role);
   const userMunId = req.user.municipality?._id || req.user.municipality;
-  const targetMunId = isAdmin ? (req.body.municipality || userMunId) : userMunId;
+  const targetMunId = isCrossMunicipality ? (req.body.municipality || userMunId) : userMunId;
   if (!targetMunId) return errorResponse(res, 400, 'Municipality is required');
   const data = Object.fromEntries(
     Object.entries(req.body)
@@ -209,6 +218,7 @@ router.post('/', authorize(...ADMINS), youthValidation, asyncHandler(async (req,
       return errorResponse(res, 400, `Youth member must be between ${YOUTH_MIN_AGE} and ${YOUTH_MAX_AGE} years old`);
     }
   }
+  if (data.educationalAttainment) data.educationalAttainment = normalizeLabel(data.educationalAttainment);
   data.registeredBy = req.user._id;
   data.municipality = targetMunId;
   // A barangay, if provided, must belong to the target municipality
@@ -241,7 +251,7 @@ router.put('/:id', authorize(...YOUTH_EDITORS), asyncHandler(async (req, res) =>
   for (const [k, v] of Object.entries(req.body)) {
     if (!ALLOWED_UPDATE_FIELDS.includes(k)) continue;
     if (v === '' || v === null || v === undefined) $unset[k] = '';
-    else $set[k] = v;
+    else $set[k] = k === 'educationalAttainment' ? normalizeLabel(v) : v;
   }
   // A barangay, if being set, must belong to the member's municipality (municipality itself is immutable here)
   if ($set.barangay) {

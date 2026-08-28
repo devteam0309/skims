@@ -179,10 +179,27 @@ exports.generateYouthReport = asyncHandler(async (req, res) => {
     .populate('barangay', 'name')
     .limit(REPORT_LIMIT);
 
-  const genderBreakdown = { male: 0, female: 0, other: 0 };
+  /*
+   * Built from the data alone, with no seeded keys.
+   *
+   * This started as `{ male: 0, female: 0, other: 0 }` — the three values gender used to be an enum
+   * of. Gender is free text now and stored as typed, so real counts landed in new capitalised keys
+   * while those three sat permanently at zero, and a report on a registry full of members read as
+   * though it contained no male or female ones.
+   *
+   * Grouping folds case so "Male" and "male" are one line, while the first spelling seen is kept
+   * for display — matching the youth list filter, which already compares case-insensitively.
+   */
+  const genderBreakdown = {};
+  const genderKeyFor = new Map();
   const educationBreakdown = {};
   members.forEach((m) => {
-    genderBreakdown[m.gender] = (genderBreakdown[m.gender] || 0) + 1;
+    if (m.gender) {
+      const fold = String(m.gender).trim().toLowerCase();
+      if (!genderKeyFor.has(fold)) genderKeyFor.set(fold, String(m.gender).trim());
+      const key = genderKeyFor.get(fold);
+      genderBreakdown[key] = (genderBreakdown[key] || 0) + 1;
+    }
     if (m.educationalAttainment) {
       educationBreakdown[m.educationalAttainment] = (educationBreakdown[m.educationalAttainment] || 0) + 1;
     }

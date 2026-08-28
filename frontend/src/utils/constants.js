@@ -62,7 +62,13 @@ export const DOCUMENT_CATEGORIES = [
   { value: 'other', label: 'Other' },
 ];
 
-export const MUNICIPALITIES = ['Boac', 'Gasan', 'Mogpog', 'Sta. Cruz'];
+/*
+ * Display names only. These MUST match the `name` values the API returns, or any code that maps or
+ * compares against this list silently drops a municipality — the entry read 'Sta. Cruz' while the
+ * database stores 'Santa Cruz'. Nothing but a unit test reads this today; it is kept in step so it
+ * is safe for something to start reading it.
+ */
+export const MUNICIPALITIES = ['Boac', 'Gasan', 'Mogpog', 'Santa Cruz'];
 
 export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

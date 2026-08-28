@@ -21,7 +21,9 @@ const documentSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
     description: String,
-    category: { type: String, enum: DOCUMENT_CATEGORIES, required: true },
+    // Free text. DOCUMENT_CATEGORIES remains the suggested list the UI offers, but an office
+    // filing something the list does not name should record what it is, not pick 'other'.
+    category: { type: String, required: true, trim: true, maxlength: 60 },
     fileName: { type: String, required: true },
     originalName: { type: String, required: true },
     fileUrl: { type: String, required: true },

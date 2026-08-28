@@ -4,6 +4,7 @@ const Document = require('../models/Document');
 const AuditLog = require('../models/AuditLog');
 const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { normalizeLabel } = require('../utils/labels');
 
 const MAX_LIMIT = 100;
 
@@ -11,7 +12,8 @@ exports.getDocuments = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, municipality, category, search, isArchived, isPublic } = req.query;
   const filter = { deletedAt: null };
   if (municipality) filter.municipality = municipality;
-  if (category) filter.category = category;
+  // Free text now — match the canonical form of what was typed, not the caller's spelling.
+  if (category) filter.category = normalizeLabel(category);
   if (isArchived !== undefined) filter.isArchived = isArchived === 'true';
   if (isPublic !== undefined) filter.isPublic = isPublic === 'true';
   if (search) filter.$text = { $search: search };
@@ -65,7 +67,7 @@ exports.uploadDocument = asyncHandler(async (req, res) => {
   const doc = await Document.create({
     title: body.title || req.file.originalname,
     description: body.description,
-    category: body.category,
+    category: normalizeLabel(body.category),
     fileName: result.public_id,
     originalName: req.file.originalname,
     fileUrl: result.secure_url,
@@ -93,6 +95,7 @@ exports.updateDocument = asyncHandler(async (req, res) => {
   }
 
   const allowed = ['title', 'description', 'category', 'tags', 'isPublic', 'fiscalYear'];
+  if (req.body.category) req.body.category = normalizeLabel(req.body.category);
   const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
 
   const updated = await Document.findByIdAndUpdate(req.params.id, updates, { new: true });

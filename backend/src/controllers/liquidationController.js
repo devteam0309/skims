@@ -8,6 +8,7 @@ const User = require('../models/User');
 const emailService = require('../services/emailService');
 const { uploadToCloudinary } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { normalizeLabel } = require('../utils/labels');
 
 const MAX_LIMIT = 100;
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -71,7 +72,12 @@ exports.createLiquidation = asyncHandler(async (req, res) => {
       req.files.map((f, i) =>
         uploadToCloudinary(f.buffer, { folder: 'skims/documents', resource_type: 'raw', public_id: randomUUID() })
           .then((r) => ({
-            type: req.body.documentTypes?.[i] || 'other',
+            /*
+             * Left unset when the client sends no type, rather than silently labelled 'other'.
+             * The old default recorded every unrecognised attachment as the same thing and threw
+             * away what it actually was — the caller's word for it is the only record there is.
+             */
+            type: req.body.documentTypes?.[i] ? normalizeLabel(req.body.documentTypes[i]) : undefined,
             fileName: f.originalname,
             fileUrl: r.secure_url,
           }))

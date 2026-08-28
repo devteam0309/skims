@@ -248,6 +248,13 @@ function BarangaySelect({ id, barangays, value, onChange, disabled, disabledHint
 export default function Youth() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+  /*
+   * Whether this account genuinely spans municipalities. municipal_admin is in ADMIN_ROLES but is
+   * scoped to its own municipality by the server, so offering it a municipality filter produced a
+   * control that could only ever return an empty table — the same "the filter is broken" reading
+   * the barangay picker once caused. Programs gates its equivalent filter the same way.
+   */
+  const isCrossMunicipality = ['super_admin', 'provincial_admin'].includes(user?.role);
   const isAdmin = ADMIN_ROLES.includes(user?.role);
   /*
    * Youth register themselves now, so this is the fallback rather than the normal way in — kept
@@ -527,7 +534,7 @@ export default function Youth() {
             />
           </div>
 
-          {isAdmin && (
+          {isCrossMunicipality && (
             <>
               <label htmlFor="filter-municipality" className="sr-only">Filter by municipality</label>
               <select
@@ -691,11 +698,20 @@ export default function Youth() {
             </Field>
           </div>
 
-          <Field id="youth-education" label="Educational Attainment" optional>
-            <select value={form.educationalAttainment} onChange={(e) => set('educationalAttainment', e.target.value)} className={control}>
-              <option value="">Select...</option>
-              {EDUCATION_OPTIONS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-            </select>
+          <Field
+            id="youth-education"
+            label="Educational Attainment"
+            optional
+            hint="Choose a suggestion or type the level that applies."
+          >
+            {/* Free text, like gender: a level the six suggestions do not name — ALS, senior high —
+                is recorded as such rather than forced onto the nearest wrong one. */}
+            <ComboInput
+              options={EDUCATION_OPTIONS.map(([, label]) => label)}
+              value={form.educationalAttainment}
+              onChange={(e) => set('educationalAttainment', e.target.value)}
+              placeholder="Select or type..."
+            />
           </Field>
 
           <div className="grid gap-4 sm:grid-cols-2">

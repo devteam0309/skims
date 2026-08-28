@@ -35,19 +35,10 @@ const liquidationSchema = new mongoose.Schema(
     rejectionReason: String,
     documents: [
       {
-        type: {
-          type: String,
-          enum: [
-            'purchase_request',
-            'purchase_order',
-            'delivery_receipt',
-            'inspection_report',
-            'sales_invoice',
-            'disbursement_voucher',
-            'official_receipt',
-            'other',
-          ],
-        },
+        // Free text: the seven document types below are the usual liquidation chain, but an
+        // office attaching something outside it should record what it is. Optional rather than
+        // defaulted — see the upload path in liquidationController.
+        type: { type: String, trim: true, maxlength: 60 },
         fileName: String,
         fileUrl: String,
         uploadedAt: { type: Date, default: Date.now },

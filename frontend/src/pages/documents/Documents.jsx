@@ -15,6 +15,7 @@ import { toFormData } from '../../utils/formData';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
+import ComboInput from '../../components/shared/ComboInput';
 import { DOCUMENT_CATEGORIES, DOC_UPLOADERS, DOC_EDITORS, ADMIN_ROLES } from '../../utils/constants';
 
 const FILE_ICONS = {
@@ -564,14 +565,14 @@ export default function Documents() {
           </Field>
 
           <Field id="doc-category" label="Category" required>
-            <select
+            {/* Free text with suggestions — an office filing something the list does not name
+                records what it is rather than choosing "Other". */}
+            <ComboInput
+              options={DOCUMENT_CATEGORIES}
               value={uploadForm.category}
               onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
-              className={control}
-            >
-              <option value="">Select category...</option>
-              {DOCUMENT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
+              placeholder="Select or type a category..."
+            />
           </Field>
 
           <div className="flex items-start gap-3">
