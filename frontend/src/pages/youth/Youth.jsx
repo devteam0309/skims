@@ -249,7 +249,12 @@ export default function Youth() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
   const isAdmin = ADMIN_ROLES.includes(user?.role);
-  const canRegister = [...ADMIN_ROLES, 'sk_chairperson'].includes(user?.role);
+  /*
+   * Youth register themselves now, so this is the fallback rather than the normal way in — kept
+   * for members with no email address, who cannot sign up and would otherwise be missing from the
+   * roster entirely. Narrowed from chairpersons to admins to match the route, which enforces it.
+   */
+  const canRegister = ADMIN_ROLES.includes(user?.role);
   const canEdit = YOUTH_EDITORS.includes(user?.role);
 
   const [filters, setFilters] = useState({
@@ -482,7 +487,9 @@ export default function Youth() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="page-title">Youth Registry</h1>
-          <p className="page-subtitle">Track and manage youth member records</p>
+          <p className="page-subtitle">
+          Track and manage youth member records · members register themselves
+        </p>
         </div>
         {canRegister && (
           <button
@@ -490,7 +497,7 @@ export default function Youth() {
             onClick={openCreate}
             className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
           >
-            <Plus size={16} aria-hidden="true" />Register Youth
+            <Plus size={16} aria-hidden="true" />Register on behalf
           </button>
         )}
       </div>

@@ -34,6 +34,13 @@ const QA_ACCOUNTS = SHOW_QA_CREDS ? [
   { role: 'SK Secretary · Gasan', email: 'ana@gasan.gov.ph' },
   { role: 'DILG Representative', email: 'dilg@marinduque.gov.ph' },
   { role: 'Public User', email: 'youth@example.com' },
+  /*
+   * One sample youth, not all forty. Every seeded member has their own login on the same
+   * password, but listing them would bury the staff accounts this panel exists to show — and it
+   * is currently switched on for the public production site. The rest follow the same pattern:
+   * firstname.lastname@example.com, as shown in the youth registry.
+   */
+  { role: 'Youth Member · Boac', email: 'jose.santos@example.com' },
 ] : [];
 
 const FEATURES = [

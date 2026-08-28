@@ -19,6 +19,7 @@ export const ROLE_LABELS = {
   sk_secretary: 'SK Secretary',
   sk_kagawad: 'SK Kagawad',
   dilg_representative: 'DILG Representative',
+  youth: 'Youth Member',
   public_user: 'Public User',
 };
 
@@ -81,6 +82,9 @@ export const SELF_ASSIGNABLE_ROLES = [
   'sk_secretary',
   'sk_kagawad',
   'dilg_representative',
+  // Registering as a youth also creates the registry record, so the form asks for a birth date
+  // and gender when this is chosen. Listed first in the UI because it is now the common case.
+  'youth',
   'public_user',
 ];
 

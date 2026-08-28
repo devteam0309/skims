@@ -8,6 +8,11 @@ import { Eye, EyeOff, UserPlus, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { authService } from '../../services/authService';
 import { municipalityService } from '../../services/documentService';
+import ComboInput from '../../components/shared/ComboInput';
+import { calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } from '../../utils/formatters';
+
+// Mirrors the suggestions offered in the youth registry itself.
+const GENDER_SUGGESTIONS = ['Male', 'Female', 'LGBTQIA+'];
 import { ROLE_LABELS, SELF_ASSIGNABLE_ROLES, PASSWORD_PATTERN, PASSWORD_RULE_TEXT } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 
@@ -31,6 +36,9 @@ const schema = z.object({
   confirmPassword: z.string(),
   role: z.string().min(1, 'Please select a role'),
   municipality: z.string().optional(),
+  // Only asked for, and only required, when registering as a youth member.
+  birthDate: z.string().optional(),
+  gender: z.string().optional(),
   contactNumber: z.string().optional().refine((v) => !v || /^(09|\+639)\d{9}$/.test(v), {
     message: 'Use PH format: 09XXXXXXXXX or +639XXXXXXXXX',
   }),
@@ -45,6 +53,27 @@ const schema = z.object({
   .refine((d) => MUNICIPALITY_FREE_ROLES.includes(d.role) || !!d.municipality, {
     message: 'Select your municipality',
     path: ['municipality'],
+  })
+  /*
+   * A youth sign-up also creates their entry in the Katipunan ng Kabataan registry, which needs a
+   * birth date and gender. Checked here so the two fields are flagged inline rather than coming
+   * back as a server error after the account has already been attempted.
+   */
+  .refine((d) => d.role !== 'youth' || !!d.birthDate, {
+    message: 'Enter your birth date',
+    path: ['birthDate'],
+  })
+  .refine((d) => d.role !== 'youth' || !!d.gender, {
+    message: 'Enter your gender',
+    path: ['gender'],
+  })
+  .refine((d) => {
+    if (d.role !== 'youth' || !d.birthDate) return true;
+    const age = calculateAge(d.birthDate);
+    return age !== null && age >= YOUTH_MIN_AGE && age <= YOUTH_MAX_AGE;
+  }, {
+    message: `Youth membership is for ages ${YOUTH_MIN_AGE} to ${YOUTH_MAX_AGE}`,
+    path: ['birthDate'],
   });
 
 /*
@@ -71,6 +100,7 @@ export default function Register() {
   const { register, handleSubmit, watch, formState: { errors } } = useForm({ resolver: zodResolver(schema) });
   const role = watch('role');
   const needsMunicipality = role && !MUNICIPALITY_FREE_ROLES.includes(role);
+  const isYouth = role === 'youth';
 
   const onSubmit = async (data) => {
     const { confirmPassword, ...payload } = data;
@@ -158,6 +188,32 @@ export default function Register() {
             <p id="role-hint" className="field-hint">Administrator roles are assigned by an existing admin after your account is approved.</p>
             <Error name="role" />
           </div>
+
+          {isYouth && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="birthDate" className="form-label">Birth Date</label>
+                <input {...register('birthDate')} {...a11y('birthDate', 'birthDate-hint')} type="date" className={inputClass} />
+                <p id="birthDate-hint" className="field-hint">
+                  SK membership is for ages {YOUTH_MIN_AGE}–{YOUTH_MAX_AGE}.
+                </p>
+                <Error name="birthDate" />
+              </div>
+              <div>
+                <label htmlFor="gender" className="form-label">Gender</label>
+                {/* Free text with suggestions, matching the registry itself — an entry outside the
+                    usual two is recorded as written rather than filed under "other". */}
+                <ComboInput
+                  {...register('gender')}
+                  {...a11y('gender')}
+                  options={GENDER_SUGGESTIONS}
+                  placeholder="Select or type..."
+                  className={inputClass}
+                />
+                <Error name="gender" />
+              </div>
+            </div>
+          )}
 
           {needsMunicipality && (
             <div>

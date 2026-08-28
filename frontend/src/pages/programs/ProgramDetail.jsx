@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { programService } from '../../services/programService';
 import StatusBadge from '../../components/shared/StatusBadge';
+import ParticipantRequests from '../../components/shared/ParticipantRequests';
 import { PageLoader } from '../../components/shared/LoadingSpinner';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
@@ -251,6 +252,9 @@ export default function ProgramDetail() {
           </p>
         </div>
       )}
+
+      {/* Youth ask to join; an SK officer decides. Renders nothing when there are no requests. */}
+      <ParticipantRequests programId={id} canDecide={canEdit} />
 
       {/* Figures carry .numeric so amounts and counts align on the digit rather than drifting
           with proportional glyph widths. */}

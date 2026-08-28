@@ -141,6 +141,10 @@ const seed = async () => {
     }
 
     // Seed users
+    // Shared demo password. The seeded youth logins use the same one, so a reviewer only needs to
+    // remember one credential across every account type.
+    const DEMO_PASSWORD = 'Admin@123';
+
     const usersData = [
       { firstName: 'Admin', lastName: 'Super', email: 'superadmin@skims.gov.ph', password: 'Admin@123', role: 'super_admin', isApproved: true, isEmailVerified: true },
       { firstName: 'Provincial', lastName: 'Admin', email: 'provincial@skims.gov.ph', password: 'Admin@123', role: 'provincial_admin', isApproved: true, isEmailVerified: true },
@@ -516,6 +520,13 @@ const seed = async () => {
       return {
         firstName: YOUTH_FIRST_NAMES[i],
         lastName: YOUTH_LAST_NAMES[i],
+        /*
+         * Their login, and half of the identity rule (full name + email). Built from the name,
+         * which is unique per member, so the addresses are too. example.com is reserved by RFC
+         * 2606 and can never route to a real person's inbox.
+         */
+        email: `${YOUTH_FIRST_NAMES[i]}.${YOUTH_LAST_NAMES[i]}`
+          .toLowerCase().replace(/[^a-z0-9.]+/g, '') + '@example.com',
         birthDate,
         // Mostly male/female, with a couple of free-text entries so the registry shows that the
         // field accepts what a member actually identifies as.
@@ -546,7 +557,43 @@ const seed = async () => {
       );
     }
 
-    await YouthMember.insertMany(youthData);
+    /*
+     * Every seeded youth gets their own login, because youth are account holders now — a registry
+     * with no logins behind it cannot demonstrate self-registration, joining, or the closed role.
+     *
+     * Created here rather than through the register route so they arrive already verified and
+     * approved: the route would fire 40 verification emails and leave 40 accounts that cannot sign
+     * in until someone clicks 40 links. `User.create` (not insertMany) so the password-hashing
+     * pre-save hook runs — insertMany bypasses it and would store plaintext.
+     *
+     * These are NOT added to the QA credentials panel. Forty rows would bury the eight staff
+     * accounts it exists to show, and that panel is currently visible on the public production
+     * site. One sample youth is listed there instead; the rest follow the same pattern.
+     */
+    const youthUsers = await User.create(youthData.map((y) => ({
+      firstName: y.firstName,
+      lastName: y.lastName,
+      email: y.email,
+      password: DEMO_PASSWORD,
+      role: 'youth',
+      municipality: y.municipality,
+      barangay: y.barangay,
+      contactNumber: y.contactNumber,
+      isEmailVerified: true,
+      isApproved: true,
+      isActive: true,
+    })));
+
+    const youthWithLogins = youthData.map((y, i) => ({
+      ...y,
+      user: youthUsers[i]._id,
+      registeredBy: youthUsers[i]._id,
+      // Seeded members read as self-registered, which is the normal path now. A few are left
+      // unverified so the roster shows both states.
+      verificationStatus: i % 4 === 3 ? 'unverified' : 'verified',
+    }));
+
+    await YouthMember.insertMany(youthWithLogins);
     console.log(`Seeded ${youthData.length} youth members (${uniqueNames.size} distinct names)`);
 
     // Seed announcements

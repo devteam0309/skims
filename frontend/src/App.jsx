@@ -65,18 +65,35 @@ const SystemReference = SHOW_DEV_REF ? lazy(() => import('./pages/SystemReferenc
 // Audit Logs
 import AuditLogs from './pages/admin/AuditLogs';
 
+// Youth member surface
+import YouthLayout from './components/layout/YouthLayout';
+import MyPrograms from './pages/youth/MyPrograms';
+import MyDetails from './pages/youth/MyDetails';
+
 import { STAFF, PROGRAM_EDITORS, REPORTERS, EDITOR_ROLES as CONTENT_EDITORS, ADMIN_ROLES } from './utils/constants';
 
-const ProtectedRoute = ({ children, roles, fallback = '/dashboard' }) => {
+/*
+ * Where each role belongs when it lands somewhere it may not be.
+ *
+ * A single '/dashboard' default sent a youth to a page their role cannot open, which bounced them
+ * straight back out — and the staff tree's explicit '/portal' fallback would have dropped them on
+ * the public transparency site rather than their own programmes.
+ */
+const HOME_FOR_ROLE = { youth: '/my/programs', public_user: '/portal' };
+const homeFor = (role) => HOME_FOR_ROLE[role] || '/dashboard';
+
+const ProtectedRoute = ({ children, roles, fallback }) => {
   const { isAuthenticated, user } = useAuthStore();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (roles && !roles.includes(user?.role)) return <Navigate to={fallback} replace />;
+  if (roles && !roles.includes(user?.role)) {
+    return <Navigate to={fallback || homeFor(user?.role)} replace />;
+  }
   return children;
 };
 
 const PublicRoute = ({ children }) => {
-  const { isAuthenticated } = useAuthStore();
-  if (isAuthenticated) return <Navigate to="/dashboard" replace />;
+  const { isAuthenticated, user } = useAuthStore();
+  if (isAuthenticated) return <Navigate to={homeFor(user?.role)} replace />;
   return children;
 };
 
@@ -96,8 +113,17 @@ export default function App() {
         {/* Public portal */}
         <Route path="/portal" element={<PublicLayout><PublicPortal /></PublicLayout>} />
 
+        {/* Youth members. Their own small surface — the staff sidebar carries budgets, expenses
+            and documents, none of which this role may open. */}
+        <Route path="/my/programs" element={
+          <ProtectedRoute roles={['youth']}><YouthLayout><MyPrograms /></YouthLayout></ProtectedRoute>
+        } />
+        <Route path="/my/profile" element={
+          <ProtectedRoute roles={['youth']}><YouthLayout><MyDetails /></YouthLayout></ProtectedRoute>
+        } />
+
         {/* Protected dashboard routes — public_user is redirected to /portal */}
-        <Route path="/" element={<ProtectedRoute roles={STAFF} fallback="/portal"><DashboardLayout /></ProtectedRoute>}>
+        <Route path="/" element={<ProtectedRoute roles={STAFF}><DashboardLayout /></ProtectedRoute>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="programs" element={<Programs />} />

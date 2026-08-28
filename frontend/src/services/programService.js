@@ -12,5 +12,11 @@ export const programService = {
   submit: (id) => api.patch(`/programs/${id}/submit`),
   approve: (id) => api.patch(`/programs/${id}/approve`),
   reject: (id, reason) => api.patch(`/programs/${id}/reject`, { reason }),
+  // Participation. join/withdraw are the youth side; participants/decide are the staff side.
+  join: (id) => api.post(`/programs/${id}/join`),
+  withdraw: (id) => api.delete(`/programs/${id}/join`),
+  getParticipants: (id) => api.get(`/programs/${id}/participants`),
+  decideParticipant: (id, youthId, decision, reason) =>
+    api.patch(`/programs/${id}/participants/${youthId}`, { decision, reason }),
   getStats: (params) => api.get('/programs/stats', { params }),
 };

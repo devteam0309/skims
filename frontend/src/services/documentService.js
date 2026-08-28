@@ -71,6 +71,9 @@ export const youthService = {
   create: (data) => api.post('/youth', data),
   update: (id, data) => api.put(`/youth/${id}`, data),
   delete: (id) => api.delete(`/youth/${id}`),
+  // The signed-in youth's own record. /youth itself is closed to the role.
+  getMine: () => api.get('/youth/me'),
+  updateMine: (data) => api.put('/youth/me', data),
 };
 
 export const userService = {
