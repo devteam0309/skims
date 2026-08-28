@@ -35,12 +35,17 @@ const QA_ACCOUNTS = SHOW_QA_CREDS ? [
   { role: 'DILG Representative', email: 'dilg@marinduque.gov.ph' },
   { role: 'Public User', email: 'youth@example.com' },
   /*
-   * One sample youth, not all forty. Every seeded member has their own login on the same
-   * password, but listing them would bury the staff accounts this panel exists to show — and it
-   * is currently switched on for the public production site. The rest follow the same pattern:
+   * Two sample youth, not all forty. Every seeded member has their own login on the same password,
+   * but listing them would bury the staff accounts this panel exists to show — and it is currently
+   * switched on for the public production site. The rest follow the same pattern:
    * firstname.lastname@example.com, as shown in the youth registry.
+   *
+   * Two rather than one, and deliberately from different municipalities: a single youth account
+   * cannot demonstrate isolation. Signed in as each in turn, neither sees the other's programs,
+   * which is the check a reviewer actually needs to make from the youth side.
    */
   { role: 'Youth Member · Boac', email: 'jose.santos@example.com' },
+  { role: 'Youth Member · Mogpog', email: 'antonio.torres@example.com' },
 ] : [];
 
 const FEATURES = [
