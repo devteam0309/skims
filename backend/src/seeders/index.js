@@ -163,6 +163,8 @@ const seed = async () => {
     const chairBoac = users.find((u) => u.email === 'juan@boac.gov.ph');
     const treasBoac = users.find((u) => u.email === 'maria@boac.gov.ph');
     const chairStac = users.find((u) => u.email === 'pedro@stac.gov.ph');
+    // Needed as a programme creator below; `anaGasan` proper is resolved later for budgets.
+    const anaGasanEarly = users.find((u) => u.email === 'ana@gasan.gov.ph');
     const munAdmin = users.find((u) => u.email === 'municipal@boac.gov.ph');
 
     // Seed programs
@@ -249,6 +251,126 @@ const seed = async () => {
         actualParticipants: 230,
         createdBy: chairBoac._id,
         completionRate: 55,
+        isPublic: true      },
+
+      /*
+       * Additional programs so every municipality has a spread rather than a single record.
+       *
+       * With one program each, three of the four municipalities showed a list of exactly one, and
+       * Gasan's happened to be `delayed` — so an SK Secretary there opened Programs and saw nothing
+       * but a delayed programme, which reads as a broken filter rather than as the whole of their
+       * municipality's portfolio. Each municipality now carries several across different statuses
+       * and approval states, which is also what makes the status chips and the completed count
+       * mean anything in a demo.
+       */
+      {
+        title: 'Gasan Coastal Clean-Up Quarterly Drive',
+        description: 'Quarterly shoreline clean-up and waste segregation drive with barangay volunteers.',
+        objectives: ['Reduce coastal waste', 'Build volunteer habits'],
+        category: 'environment',
+        status: 'ongoing',
+        municipality: munMap['GAS']._id,
+        budget: 60000,
+        startDate: new Date('2026-02-01'),
+        endDate: new Date('2026-11-30'),
+        targetParticipants: 150,
+        actualParticipants: 96,
+        createdBy: anaGasanEarly._id,
+        completionRate: 60,
+        isPublic: true,
+      },
+      {
+        title: 'Gasan Youth Skills and Livelihood Workshop',
+        description: 'Basic vocational workshops in food processing and handicraft for out-of-school youth.',
+        objectives: ['Teach a marketable skill', 'Support out-of-school youth'],
+        category: 'livelihood',
+        status: 'completed',
+        municipality: munMap['GAS']._id,
+        budget: 90000,
+        startDate: new Date('2026-01-10'),
+        endDate: new Date('2026-05-30'),
+        targetParticipants: 80,
+        actualParticipants: 74,
+        createdBy: anaGasanEarly._id,
+        completionRate: 100,
+        isPublic: true,
+      },
+      {
+        title: 'Mogpog Kabataan Sports League',
+        description: 'Inter-barangay basketball and volleyball league for registered SK youth members.',
+        objectives: ['Promote physical wellbeing', 'Strengthen barangay ties'],
+        category: 'sports',
+        status: 'planned',
+        municipality: munMap['MOG']._id,
+        budget: 110000,
+        startDate: new Date('2026-09-15'),
+        endDate: new Date('2026-12-15'),
+        targetParticipants: 240,
+        createdBy: chairBoac._id,
+        isPublic: true,
+      },
+      {
+        title: 'Mogpog Youth Mental Health Forum',
+        description: 'Series of guided sessions on mental wellbeing run with the municipal health office.',
+        objectives: ['Reduce stigma', 'Signpost local support'],
+        category: 'health',
+        status: 'completed',
+        municipality: munMap['MOG']._id,
+        budget: 45000,
+        startDate: new Date('2026-02-20'),
+        endDate: new Date('2026-06-20'),
+        targetParticipants: 120,
+        actualParticipants: 118,
+        createdBy: chairBoac._id,
+        completionRate: 100,
+        isPublic: true,
+      },
+      {
+        title: 'Sta. Cruz Youth Leadership Bootcamp',
+        description: 'Residential leadership training for incoming SK officials and barangay youth leaders.',
+        objectives: ['Develop leadership skills', 'Prepare incoming officials'],
+        category: 'governance',
+        status: 'ongoing',
+        municipality: munMap['STC']._id,
+        budget: 130000,
+        startDate: new Date('2026-04-01'),
+        endDate: new Date('2026-10-31'),
+        targetParticipants: 100,
+        actualParticipants: 63,
+        createdBy: chairStac._id,
+        completionRate: 55,
+        isPublic: true,
+      },
+      {
+        title: 'Sta. Cruz Barangay Reading Corner',
+        description: 'Sets up small reading corners with donated books in five barangay halls.',
+        objectives: ['Improve literacy access', 'Encourage reading among youth'],
+        category: 'education',
+        status: 'completed',
+        municipality: munMap['STC']._id,
+        budget: 55000,
+        startDate: new Date('2026-01-20'),
+        endDate: new Date('2026-05-20'),
+        targetParticipants: 200,
+        actualParticipants: 210,
+        createdBy: chairStac._id,
+        completionRate: 100,
+        isPublic: true,
+      },
+      {
+        title: 'Boac Digital Literacy for Youth',
+        description: 'Introductory computer and online-safety classes held at the municipal library.',
+        objectives: ['Build digital skills', 'Teach online safety'],
+        category: 'education',
+        status: 'delayed',
+        municipality: munMap['BOA']._id,
+        budget: 70000,
+        startDate: new Date('2026-03-01'),
+        endDate: new Date('2026-08-01'),
+        targetParticipants: 90,
+        actualParticipants: 31,
+        createdBy: treasBoac._id,
+        completionRate: 30,
         isPublic: true,
       },
     ];
@@ -313,13 +435,29 @@ const seed = async () => {
     console.log(`Seeded ${budgetSpecs.length} budgets (one per municipality)`);
 
     // Link each program to ITS OWN municipality's budget
+    /*
+     * Looked up by title rather than by array position. Positional links silently misalign the
+     * moment a programme is inserted anywhere but the end of the list — a budget would then be
+     * attached to the wrong programme, and in the wrong municipality, with nothing to show for it.
+     *
+     * Not every programme is linked, deliberately: the rest stand as approved work with no budget
+     * attached, which is a state the system is required to support.
+     */
+    const byTitle = Object.fromEntries(programs.map((p) => [p.title, p]));
     const programLinks = [
-      { prog: programs[0], code: 'BOA' }, // Youth Leadership Summit (governance)
-      { prog: programs[1], code: 'BOA' }, // Health Campaign (health)
-      { prog: programs[2], code: 'STC' }, // Livelihood Skills (livelihood)
-      { prog: programs[3], code: 'GAS' }, // Laro ng Lahi (sports)
-      { prog: programs[4], code: 'MOG' }, // Environmental Clean-Up (environment)
-    ];
+      { title: 'Youth Leadership Summit 2026', code: 'BOA' },
+      { title: 'Kabataan Malusog Health Campaign', code: 'BOA' },
+      { title: 'Livelihood Skills Training for Out-of-School Youth', code: 'STC' },
+      { title: 'Laro ng Lahi Sports Festival', code: 'GAS' },
+      { title: 'Environmental Awareness and Clean-Up Drive', code: 'MOG' },
+    ].map(({ title, code }) => {
+      const prog = byTitle[title];
+      if (!prog) throw new Error(`Seed error: no programme titled "${title}" to link to the ${code} budget`);
+      if (prog.municipality.toString() !== munMap[code]._id.toString()) {
+        throw new Error(`Seed error: "${title}" is not in ${code}; linking it there would cross municipalities`);
+      }
+      return { prog, code };
+    });
     for (const { prog, code } of programLinks) {
       await Program.updateOne({ _id: prog._id }, { budgetRef: budgetsByMun[code]._id });
     }
