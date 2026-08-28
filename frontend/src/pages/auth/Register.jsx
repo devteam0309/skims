@@ -11,6 +11,9 @@ import { municipalityService } from '../../services/documentService';
 import { ROLE_LABELS, SELF_ASSIGNABLE_ROLES, PASSWORD_PATTERN, PASSWORD_RULE_TEXT } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 
+// Mirrors MUNICIPALITY_FREE_ROLES in backend/src/routes/auth.js.
+const MUNICIPALITY_FREE_ROLES = ['provincial_admin', 'public_user'];
+
 const schema = z.object({
   firstName: z.string().min(2, 'First name must be at least 2 characters'),
   lastName: z.string().min(2, 'Last name must be at least 2 characters'),
@@ -31,7 +34,18 @@ const schema = z.object({
   contactNumber: z.string().optional().refine((v) => !v || /^(09|\+639)\d{9}$/.test(v), {
     message: 'Use PH format: 09XXXXXXXXX or +639XXXXXXXXX',
   }),
-}).refine((d) => d.password === d.confirmPassword, { message: 'Passwords do not match', path: ['confirmPassword'] });
+})
+  .refine((d) => d.password === d.confirmPassword, { message: 'Passwords do not match', path: ['confirmPassword'] })
+  /*
+   * The municipality chosen here becomes the account's home municipality, and every scoped query
+   * in the system keys off it. Leaving it blank used to be allowed, which produced an account
+   * that signed in successfully and then found every list empty — programs, budgets, youth — with
+   * nothing on screen explaining why. Required for every municipality-bound role.
+   */
+  .refine((d) => MUNICIPALITY_FREE_ROLES.includes(d.role) || !!d.municipality, {
+    message: 'Select your municipality',
+    path: ['municipality'],
+  });
 
 /*
  * Only roles the backend will actually grant. This previously listed every role except
@@ -56,7 +70,7 @@ export default function Register() {
 
   const { register, handleSubmit, watch, formState: { errors } } = useForm({ resolver: zodResolver(schema) });
   const role = watch('role');
-  const needsMunicipality = role && role !== 'provincial_admin' && role !== 'public_user';
+  const needsMunicipality = role && !MUNICIPALITY_FREE_ROLES.includes(role);
 
   const onSubmit = async (data) => {
     const { confirmPassword, ...payload } = data;

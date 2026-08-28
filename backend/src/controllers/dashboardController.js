@@ -122,6 +122,10 @@ exports.getDashboard = asyncHandler(async (req, res) => {
   });
 });
 
+// Cross-municipality by design — it is the one province-wide view. It therefore carries NO
+// money: this endpoint is open to every REPORTER, which includes an SK Chairperson, so summing
+// budgets here handed each municipality's figures to the neighbouring municipality's staff.
+// Programme counts and completion rates are the comparison; peso amounts stay municipality-scoped.
 exports.getMunicipalityComparison = asyncHandler(async (req, res) => {
   const comparison = await Program.aggregate([
     { $match: { deletedAt: null } },
@@ -130,7 +134,6 @@ exports.getMunicipalityComparison = asyncHandler(async (req, res) => {
         _id: '$municipality',
         totalPrograms: { $sum: 1 },
         completedPrograms: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
-        totalBudget: { $sum: '$budget' },
         avgCompletionRate: { $avg: '$completionRate' },
       },
     },

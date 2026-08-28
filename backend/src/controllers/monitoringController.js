@@ -44,6 +44,9 @@ exports.getMonitoringOverview = asyncHandler(async (req, res) => {
   });
 });
 
+// Feeds the Municipality Performance Comparison chart. Deliberately reports programme activity
+// only — no budget or disbursement totals. For a super_admin the match stage is empty, so any
+// money summed here would be every municipality's, rendered on one chart.
 exports.getMunicipalityReport = asyncHandler(async (req, res) => {
   const matchStage = ['super_admin', 'provincial_admin'].includes(req.user.role)
     ? {}
@@ -61,7 +64,6 @@ exports.getMunicipalityReport = asyncHandler(async (req, res) => {
             $group: {
               _id: '$status',
               count: { $sum: 1 },
-              budget: { $sum: '$budget' },
             },
           },
         ],
@@ -69,22 +71,10 @@ exports.getMunicipalityReport = asyncHandler(async (req, res) => {
       },
     },
     {
-      $lookup: {
-        from: 'budgets',
-        let: { mId: '$_id' },
-        pipeline: [
-          { $match: { $expr: { $eq: ['$municipality', '$$mId'] }, status: 'approved', deletedAt: null } },
-          { $group: { _id: null, total: { $sum: '$totalBudget' }, disbursed: { $sum: '$disbursedAmount' } } },
-        ],
-        as: 'budgetStats',
-      },
-    },
-    {
       $project: {
         name: 1,
         code: 1,
         programStats: 1,
-        budgetStats: { $arrayElemAt: ['$budgetStats', 0] },
       },
     },
   ]);
