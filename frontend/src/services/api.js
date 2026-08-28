@@ -63,7 +63,16 @@ api.interceptors.response.use(
       }
     }
 
-    return Promise.reject(error.response?.data || error);
+    /*
+     * The status travels with the body. Rejecting with the response body alone left callers with
+     * a message and no way to tell a 403 from a 404 — so a program in another municipality and a
+     * program that never existed arrived identically, and the detail page reported both as
+     * "may have been deleted". Additive: existing consumers read `.message` as before.
+     */
+    const status = error.response?.status;
+    const body = error.response?.data;
+    if (body && typeof body === 'object') return Promise.reject(Object.assign({ status }, body));
+    return Promise.reject(error);
   }
 );
 

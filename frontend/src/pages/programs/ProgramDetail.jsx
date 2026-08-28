@@ -25,9 +25,11 @@ export default function ProgramDetail() {
   const { user } = useAuthStore();
   const reduceMotion = useReducedMotion();
 
-  const { data: program, isLoading } = useQuery({
+  const { data: program, isLoading, error } = useQuery({
     queryKey: ['program', id],
     queryFn: () => programService.getById(id).then((r) => r.data.data),
+    // A 403 or 404 is a settled answer, not a blip — retrying just delays the explanation.
+    retry: (count, err) => ![403, 404].includes(err?.status) && count < 2,
   });
 
   const deleteMutation = useMutation({
@@ -108,12 +110,24 @@ export default function ProgramDetail() {
 
   // Previously a bare centred line of grey text — a dead end with no way onward, reached by
   // following a link to a program someone else had just deleted.
+  /*
+   * The server distinguishes "no such program" from "not yours"; this page used to collapse both
+   * into "it may have been deleted", which is misleading in the second case and actively unhelpful
+   * — a reader has no way to tell they were looking at another municipality's record.
+   */
   if (!program) {
+    const forbidden = error?.status === 403;
     return (
       <div className="mx-auto max-w-5xl rounded-xl border border-gray-200 bg-white py-16 text-center dark:border-gray-700 dark:bg-gray-800">
         <Target size={24} className="mx-auto mb-3 text-gray-300 dark:text-gray-600" aria-hidden="true" />
-        <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Program not found</p>
-        <p className="meta-text mt-1">It may have been deleted.</p>
+        <p className="text-sm font-medium text-gray-600 dark:text-gray-300">
+          {forbidden ? 'This program belongs to another municipality' : 'Program not found'}
+        </p>
+        <p className="meta-text mt-1">
+          {forbidden
+            ? 'You can only open programs from your own municipality.'
+            : 'It may have been deleted, or the link may be from before the data was last reset.'}
+        </p>
         <Link to="/programs" className="mt-3 inline-block text-sm font-medium text-navy-700 hover:underline dark:text-navy-300">
           Back to programs
         </Link>
