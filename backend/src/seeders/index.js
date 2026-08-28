@@ -320,6 +320,21 @@ const seed = async () => {
       await Program.updateOne({ _id: prog._id }, { budgetRef: budgetsByMun[code]._id });
     }
 
+    /*
+     * Approval state for the seeded programs.
+     *
+     * A program that is already ongoing or completed must read as approved — leaving them at the
+     * schema default of 'draft' would show a running program still awaiting clearance. The two
+     * that have not started are left mid-workflow on purpose so the approval flow is demonstrable
+     * without first having to create a program: one is waiting on a decision, one was sent back.
+     */
+    for (const prog of programs) {
+      const running = ['ongoing', 'completed', 'delayed'].includes(prog.status);
+      await Program.updateOne({ _id: prog._id }, running
+        ? { approvalStatus: 'approved', approvedBy: provincial._id, approvedAt: new Date('2026-01-12') }
+        : { approvalStatus: 'submitted', submittedAt: new Date('2026-02-01') });
+    }
+
     // Seed expenses — each one's program, budget and municipality all belong to the SAME municipality
     const expensesData = [
       {
@@ -388,12 +403,30 @@ const seed = async () => {
         { $group: { _id: null, total: { $sum: '$amount' } } },
       ]);
       const disbursed = agg?.total || 0;
+
+      /*
+       * Commitments follow the same rule the runtime uses: an approved program encumbers what it
+       * has not yet spent. Seeding committedAmount as a flat program total would double-count the
+       * part already disbursed against it, so each program contributes budget − actualExpenses,
+       * floored at zero for a program that has overspent.
+       */
+      const linked = await Program.find({ budgetRef: b._id, approvalStatus: 'approved', deletedAt: null })
+        .select('budget actualExpenses');
+      const committed = linked.reduce(
+        (sum, p) => sum + Math.max(0, (p.budget || 0) - (p.actualExpenses || 0)),
+        0
+      );
+
       await Budget.updateOne(
         { _id: b._id },
-        { disbursedAmount: disbursed, remainingBalance: b.totalBudget - disbursed }
+        { disbursedAmount: disbursed, committedAmount: committed, remainingBalance: b.totalBudget - disbursed }
+      );
+      await Program.updateMany(
+        { budgetRef: b._id, approvalStatus: 'approved', deletedAt: null },
+        [{ $set: { committedAmount: { $max: [0, { $subtract: ['$budget', '$actualExpenses'] }] } } }]
       );
     }
-    console.log('Reconciled budget disbursements with approved expenses');
+    console.log('Reconciled budget disbursements and program commitments');
 
     // Keep each program's actualExpenses aligned with its approved expenses
     // (mirrors the runtime approveExpense behaviour: actualExpenses += approved amount)
