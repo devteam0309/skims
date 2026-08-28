@@ -470,7 +470,6 @@ const seed = async () => {
      * arrays with different strides keeps all 40 combinations unique.
      */
     const EDUCATION_LEVELS = ['elementary', 'high_school', 'college', 'vocational', 'graduate', 'out_of_school'];
-    const currentYear = new Date().getFullYear();
 
     const youthData = Array.from({ length: 40 }, (_, i) => {
       const mun = municipalities[i % municipalities.length];
@@ -488,12 +487,23 @@ const seed = async () => {
        * historical members — someone who was registered at 29 and is now 31.
        */
       const agedOut = i % 5 === 4;
-      const age = agedOut ? 31 + (i % 3) : 15 + (i % 16);
+      const age = agedOut ? 31 + (i % 3) : 15 + (i % 15);
+
+      /*
+       * Anchored to today and walked backwards, not `new Date(year - age, ...)`. Subtracting
+       * years alone leaves anyone whose birthday falls later in the calendar year a year younger
+       * than intended — it seeded a 14-year-old into an age-gated registry, which the create
+       * route would itself have rejected. Going backwards in days can only make a member older,
+       * so the floor holds: `age` becomes `age` or `age + 1`, never less.
+       */
+      const birthDate = new Date();
+      birthDate.setFullYear(birthDate.getFullYear() - age);
+      birthDate.setDate(birthDate.getDate() - ((i * 9) % 330));
 
       return {
         firstName: YOUTH_FIRST_NAMES[i % YOUTH_FIRST_NAMES.length],
         lastName: YOUTH_LAST_NAMES[(i * 3) % YOUTH_LAST_NAMES.length],
-        birthDate: new Date(currentYear - age, i % 12, (i % 28) + 1),
+        birthDate,
         // Mostly male/female, with a couple of free-text entries so the registry shows that the
         // field accepts what a member actually identifies as.
         gender: i % 11 === 3 ? 'LGBTQIA+' : (i % 2 === 0 ? 'Male' : 'Female'),

@@ -1,6 +1,7 @@
 /* One-off data-integrity audit — surfaces SILENT errors (bad refs, derived-field drift, scope mismatches). Read-only. */
 require('dotenv').config();
 const mongoose = require('mongoose');
+const { calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } = require('../src/utils/age');
 
 const Municipality = require('../src/models/Municipality');
 const Barangay = require('../src/models/Barangay');
@@ -49,8 +50,23 @@ const idStr = (v) => (v && v._id ? v._id : v)?.toString();
       if (!b) flag('HIGH', 'youth', `Youth ${y.firstName} ${y.lastName} → barangay does not exist`);
       else if (idStr(b.municipality) !== idStr(y.municipality)) flag('HIGH', 'youth', `Youth ${y.firstName} ${y.lastName}: barangay '${b.name}' belongs to a DIFFERENT municipality`);
     }
-    const age = y.birthDate ? Math.floor((Date.now() - new Date(y.birthDate)) / (365.25 * 864e5)) : null;
-    if (age != null && (age < 15 || age > 30)) flag('MED', 'youth', `Youth ${y.firstName} ${y.lastName} age ${age} outside 15-30`);
+    /*
+     * Uses the shared calendar-age helper rather than a 365.25-day division. The approximation
+     * drifts either side of a birthday and floors to the wrong integer — the same defect already
+     * removed from the youth route, the model virtual and the registration form; this script was
+     * the last copy of it.
+     *
+     * Below the minimum and above the maximum are not the same finding. A member under 15 should
+     * never have been accepted and indicates bad data. A member over 30 is expected: people age
+     * out of the SK while their registry record legitimately remains, so it is reported as
+     * informational rather than as a defect to fix.
+     */
+    const age = calculateAge(y.birthDate);
+    if (age != null && age < YOUTH_MIN_AGE) {
+      flag('HIGH', 'youth', `Youth ${y.firstName} ${y.lastName} age ${age} is below the minimum of ${YOUTH_MIN_AGE}`);
+    } else if (age != null && age > YOUTH_MAX_AGE) {
+      flag('INFO', 'youth', `Youth ${y.firstName} ${y.lastName} age ${age} has aged out of the SK band`);
+    }
   }
 
   // --- Budgets: derived fields + allocation sanity + scope ---
@@ -155,13 +171,18 @@ const idStr = (v) => (v && v._id ? v._id : v)?.toString();
   }
 
   // --- Report ---
-  const order = { HIGH: 0, MED: 1, LOW: 2 };
+  // INFO sits below LOW: it records an expected condition, not something to act on, and is
+  // counted separately so a clean run still reads as clean.
+  const order = { HIGH: 0, MED: 1, LOW: 2, INFO: 3 };
   findings.sort((a, b) => order[a.sev] - order[b.sev]);
-  console.log(`=== INTEGRITY FINDINGS: ${findings.length} ===`);
-  if (!findings.length) console.log('  ✓ No silent data-integrity issues found.');
+
+  const count = (sev) => findings.filter((f) => f.sev === sev).length;
+  const actionable = findings.filter((f) => f.sev !== 'INFO');
+
+  console.log(`=== INTEGRITY FINDINGS: ${actionable.length} ===`);
+  if (!actionable.length) console.log('  ✓ No silent data-integrity issues found.');
   for (const f of findings) console.log(`  [${f.sev}] ${f.area}: ${f.msg}`);
-  const high = findings.filter((f) => f.sev === 'HIGH').length;
-  console.log(`\nHIGH: ${high}  MED: ${findings.filter((f) => f.sev === 'MED').length}`);
+  console.log(`\nHIGH: ${count('HIGH')}  MED: ${count('MED')}  LOW: ${count('LOW')}  INFO: ${count('INFO')}`);
 
   await mongoose.disconnect();
   process.exit(0);
