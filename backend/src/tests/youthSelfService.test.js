@@ -299,3 +299,51 @@ describe('joining a program', () => {
     expect((await Program.findById(program._id)).actualParticipants).toBe(0);
   });
 });
+
+/*
+ * Youth hold accounts, but they are not staff. The Users page manages SK officials — a handful per
+ * municipality — so tens of thousands of youth appearing there would bury every account it exists
+ * to show.
+ */
+describe('youth stay out of staff user management', () => {
+  it('omits youth from the users list by default', async () => {
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
+    await makeYouth(municipalityId);
+
+    const res = await request(app).get('/api/users').set(authHeader(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data.some((u) => u.role === 'youth')).toBe(false);
+  });
+
+  it('still returns them when asked for by name', async () => {
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
+    await makeYouth(municipalityId);
+
+    const res = await request(app).get('/api/users?role=youth').set(authHeader(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].role).toBe('youth');
+  });
+
+  it('never lists a youth as pending approval', async () => {
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
+    await makeYouth(municipalityId);
+
+    const res = await request(app).get('/api/users/pending').set(authHeader(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data.some((u) => u.role === 'youth')).toBe(false);
+  });
+
+  // Promoting one would orphan the registry record it is linked to. Role assignment is restricted
+  // to super_admin and provincial_admin, so the check is exercised through one of those.
+  it('refuses to turn a youth account into a staff role', async () => {
+    const { token } = await createUser({ role: 'provincial_admin' });
+    const mun = await createMunicipality();
+    const { user } = await makeYouth(mun._id);
+
+    const res = await request(app).put(`/api/users/${user._id}/role`).set(authHeader(token))
+      .send({ role: 'sk_kagawad' });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/registry record/i);
+  });
+});

@@ -11,7 +11,17 @@ exports.getUsers = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, role, municipality, search, isApproved, isActive } = req.query;
   const filter = { deletedAt: null };
 
+  /*
+   * Youth are excluded unless asked for by name.
+   *
+   * This page exists to manage SK officials, of whom there are a handful per municipality. Youth
+   * hold accounts too and there are potentially tens of thousands of them, so including them by
+   * default would bury every staff account and make the page useless for its actual purpose. They
+   * are still reachable with ?role=youth, and the registry at /youth is the proper place to work
+   * with them.
+   */
   if (role) filter.role = role;
+  else filter.role = { $ne: 'youth' };
   if (municipality) filter.municipality = municipality;
   if (isApproved === 'true' || isApproved === 'false') filter.isApproved = isApproved === 'true';
   if (isActive === 'true' || isActive === 'false') filter.isActive = isActive === 'true';
@@ -98,6 +108,15 @@ exports.rejectUser = asyncHandler(async (req, res) => {
   successResponse(res, 200, 'User rejected');
 });
 
+/*
+ * `youth` is deliberately absent from every list, in both directions.
+ *
+ * Granting it would create an account with no registry record behind it — every youth endpoint
+ * resolves the member by `user`, so the account would be able to log in and do nothing at all.
+ * Taking it away would leave a YouthMember pointing at what is now a staff login, and the person
+ * would silently vanish from the roster. A youth account is created by registration and changed
+ * by deleting it, not by role assignment.
+ */
 const ASSIGNABLE_ROLES = {
   super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'public_user'],
   provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'public_user'],
@@ -125,6 +144,12 @@ exports.updateUserRole = asyncHandler(async (req, res) => {
   const allowed = ASSIGNABLE_ROLES[req.user.role] || [];
   if (!allowed.includes(role)) {
     return errorResponse(res, 403, `Your role cannot assign the '${role}' role`);
+  }
+
+  const target = await User.findById(req.params.id).select('role');
+  if (!target) return errorResponse(res, 404, 'User not found');
+  if (target.role === 'youth') {
+    return errorResponse(res, 400, 'A youth account cannot be changed into a staff role — it is tied to a registry record');
   }
   const user = await User.findByIdAndUpdate(
     req.params.id,
@@ -161,7 +186,9 @@ exports.deleteUser = asyncHandler(async (req, res) => {
 
 exports.getPendingApprovals = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20 } = req.query;
-  const filter = { isApproved: false, isActive: true, deletedAt: null };
+  // Youth approve themselves, so none should ever be pending. Excluded explicitly all the same:
+  // if that ever changes, this queue is not the place it should surface first.
+  const filter = { isApproved: false, isActive: true, deletedAt: null, role: { $ne: 'youth' } };
   if (req.user.role === 'municipal_admin') {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
