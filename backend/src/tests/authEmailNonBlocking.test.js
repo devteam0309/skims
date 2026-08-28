@@ -2,6 +2,7 @@ const request = require('supertest');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
 const User = require('../models/User');
+const Municipality = require('../models/Municipality');
 const Notification = require('../models/Notification');
 
 // A mail host that accepts the connection but never answers (Render's free tier blocks outbound
@@ -107,9 +108,12 @@ describe('admin approval notifications carry a TTL', () => {
       password: 'Test@1234', role: 'super_admin', isApproved: true, isEmailVerified: true,
     });
 
+    // sk_kagawad is municipality-bound, so registration now requires one: an account with no
+    // municipality can sign in and then see nothing, because every list query scopes to it.
+    const municipality = await Municipality.create({ name: 'Boac', code: 'BOA' });
     const res = await request(app).post('/api/auth/register').send({
       firstName: 'Needs', lastName: 'Approval', email: 'kagawad@example.com',
-      password: 'Test@1234', role: 'sk_kagawad',
+      password: 'Test@1234', role: 'sk_kagawad', municipality: municipality._id.toString(),
     });
     expect(res.status).toBe(201);
 

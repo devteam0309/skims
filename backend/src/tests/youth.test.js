@@ -42,12 +42,33 @@ describe('POST /api/youth', () => {
     expect(res.status).toBe(422);
   });
 
-  it('returns 422 for invalid gender', async () => {
+  // Gender is deliberately free text now, so an unlisted value is valid data rather than an
+  // error — a member is recorded as they identify instead of being flattened into 'other'.
+  it('accepts a gender outside the suggested options and stores it verbatim', async () => {
     const { token } = await createUser({ role: 'sk_chairperson' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
-      .send(MEMBER_PAYLOAD({ gender: 'unknown' }));
+      .send(MEMBER_PAYLOAD({ gender: 'LGBTQIA+' }));
+    expect(res.status).toBe(201);
+    expect(res.body.data.gender).toBe('LGBTQIA+');
+  });
+
+  it('still rejects a blank gender', async () => {
+    const { token } = await createUser({ role: 'sk_chairperson' });
+    const res = await request(app)
+      .post('/api/youth')
+      .set(authHeader(token))
+      .send(MEMBER_PAYLOAD({ gender: '   ' }));
+    expect(res.status).toBe(422);
+  });
+
+  it('rejects a gender long enough to be a note rather than a label', async () => {
+    const { token } = await createUser({ role: 'sk_chairperson' });
+    const res = await request(app)
+      .post('/api/youth')
+      .set(authHeader(token))
+      .send(MEMBER_PAYLOAD({ gender: 'x'.repeat(41) }));
     expect(res.status).toBe(422);
   });
 

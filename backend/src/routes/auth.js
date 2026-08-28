@@ -10,6 +10,10 @@ const {
   refreshAccessToken,
 } = require('../controllers/authController');
 
+// provincial_admin oversees the whole province and public_user is not tied to an LGU; every
+// other self-assignable role is municipality-bound.
+const MUNICIPALITY_FREE_ROLES = ['provincial_admin', 'public_user'];
+
 const registerValidation = validate([
   body('firstName').trim().notEmpty().withMessage('First name is required').isLength({ max: 50 }),
   body('lastName').trim().notEmpty().withMessage('Last name is required').isLength({ max: 50 }),
@@ -19,6 +23,18 @@ const registerValidation = validate([
     .matches(/^(?=.*[A-Z])(?=.*[0-9])/).withMessage('Password must contain an uppercase letter and a number'),
   body('contactNumber').optional({ checkFalsy: true })
     .matches(/^(09|\+639)\d{9}$/).withMessage('Use PH format: 09XXXXXXXXX or +639XXXXXXXXX'),
+  // A municipality is what every scoped query keys off. Registering without one produced an
+  // account that could sign in and then see nothing at all, with no explanation — so it is
+  // required for every role that is municipality-bound, and rejected for those that are not.
+  body('municipality').custom((value, { req }) => {
+    // An omitted role becomes public_user in the controller, so it must read as municipality-free
+    // here too — `body('role').not().isIn(...)` treats undefined as "not in the list" and would
+    // have demanded a municipality from every plain citizen sign-up.
+    const role = req.body.role || 'public_user';
+    if (!MUNICIPALITY_FREE_ROLES.includes(role) && !value) throw new Error('Municipality is required');
+    if (value && !/^[a-f\d]{24}$/i.test(String(value))) throw new Error('Select a valid municipality');
+    return true;
+  }),
 ]);
 
 // normalizeEmail() MUST match registerValidation above. Register normalizes (which strips Gmail

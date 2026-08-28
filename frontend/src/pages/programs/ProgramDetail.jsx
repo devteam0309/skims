@@ -12,7 +12,8 @@ import { formatCurrency, formatDate } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
-import { PROGRAM_EDITORS } from '../../utils/constants';
+import { PROGRAM_EDITORS, ADMIN_ROLES } from '../../utils/constants';
+import Swal from 'sweetalert2';
 
 const STATUSES = ['planned', 'ongoing', 'delayed', 'completed', 'cancelled'];
 
@@ -50,6 +51,58 @@ export default function ProgramDetail() {
     if (result.isConfirmed) statusMutation.mutate(newStatus);
   };
 
+  const approvalMutation = useMutation({
+    mutationFn: ({ action, reason }) => (
+      action === 'submit' ? programService.submit(id)
+        : action === 'approve' ? programService.approve(id)
+          : programService.reject(id, reason)
+    ),
+    onSuccess: (_, { action }) => {
+      toast.success(
+        action === 'submit' ? 'Submitted for approval'
+          : action === 'approve' ? 'Program approved' : 'Program rejected'
+      );
+      queryClient.invalidateQueries(['program', id]);
+      queryClient.invalidateQueries(['programs']);
+      // The approval encumbers budget, so the budget figures on screen elsewhere are now stale.
+      queryClient.invalidateQueries(['budgets']);
+    },
+    onError: (e) => toast.error(e.message || 'Could not update the approval'),
+  });
+
+  const handleSubmitForApproval = async () => {
+    const result = await confirm.save({
+      title: 'Submit for approval?',
+      text: 'An administrator will review this program before it can be implemented.',
+    });
+    if (result.isConfirmed) approvalMutation.mutate({ action: 'submit' });
+  };
+
+  const handleApprove = async () => {
+    // Approving commits money against the budget, so it is confirmed as a financial action.
+    const result = await confirm.financial({
+      title: 'Approve this program?',
+      text: allocated > 0 && program.budgetRef
+        ? `${formatCurrency(allocated)} will be committed against ${program.budgetRef.title}.`
+        : 'This program has no budget linked, so nothing will be committed.',
+    });
+    if (result.isConfirmed) approvalMutation.mutate({ action: 'approve' });
+  };
+
+  const handleReject = async () => {
+    const { isConfirmed, value } = await Swal.fire({
+      title: 'Reject this program?',
+      input: 'textarea',
+      inputLabel: 'Reason',
+      inputPlaceholder: 'Explain what needs to change before resubmission...',
+      inputValidator: (v) => (!v || !v.trim() ? 'A reason is required' : undefined),
+      showCancelButton: true,
+      confirmButtonText: 'Reject',
+      confirmButtonColor: '#dc2626',
+    });
+    if (isConfirmed) approvalMutation.mutate({ action: 'reject', reason: value });
+  };
+
   if (isLoading) return <PageLoader />;
 
   // Previously a bare centred line of grey text — a dead end with no way onward, reached by
@@ -68,6 +121,7 @@ export default function ProgramDetail() {
   }
 
   const canEdit = PROGRAM_EDITORS.includes(user?.role);
+  const canApprove = ADMIN_ROLES.includes(user?.role);
   const completion = program.completionRate || 0;
 
   /*
@@ -98,6 +152,9 @@ export default function ProgramDetail() {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="page-title">{program.title}</h1>
               <StatusBadge status={program.status} />
+              {/* Approval and lifecycle are separate facts — "approved and ongoing" is a normal
+                  state — so the two chips sit side by side rather than one replacing the other. */}
+              {program.approvalStatus && <StatusBadge status={program.approvalStatus} />}
             </div>
             <p className="page-subtitle">
               {program.municipality?.name}
@@ -109,7 +166,39 @@ export default function ProgramDetail() {
         </div>
 
         {canEdit && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Submitting is the author's move; approving is not. Both are hidden once the
+                program has been cleared, so the header does not offer a dead action. */}
+            {['draft', 'rejected'].includes(program.approvalStatus) && (
+              <button
+                type="button"
+                onClick={handleSubmitForApproval}
+                disabled={approvalMutation.isPending}
+                className="rounded-lg bg-navy-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+              >
+                Submit for approval
+              </button>
+            )}
+            {program.approvalStatus === 'submitted' && canApprove && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  disabled={approvalMutation.isPending}
+                  className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-60"
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReject}
+                  disabled={approvalMutation.isPending}
+                  className="rounded-lg border border-red-300 px-3 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:opacity-60 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/10"
+                >
+                  Reject
+                </button>
+              </>
+            )}
             {/* The select carried no accessible name — a screen reader announced only the current
                 status, with no indication that changing it rewrites the program's state. */}
             <label htmlFor="program-status" className="sr-only">Change program status</label>
@@ -145,6 +234,23 @@ export default function ProgramDetail() {
           </div>
         )}
       </div>
+
+      {/* A rejected program is otherwise indistinguishable from a draft, leaving the author to
+          guess what to change before resubmitting. */}
+      {program.approvalStatus === 'rejected' && program.rejectionReason && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-500/10">
+          <p className="text-sm font-semibold text-red-800 dark:text-red-300">This program was rejected</p>
+          <p className="mt-1 text-sm text-red-700 dark:text-red-200">{program.rejectionReason}</p>
+        </div>
+      )}
+
+      {program.approvalStatus === 'submitted' && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+          <p className="text-sm text-amber-800 dark:text-amber-200">
+            Awaiting approval. It can still be edited until an administrator decides.
+          </p>
+        </div>
+      )}
 
       {/* Figures carry .numeric so amounts and counts align on the digit rather than drifting
           with proportional glyph widths. */}

@@ -1,6 +1,13 @@
 const mongoose = require('mongoose');
 
 const PROGRAM_STATUSES = ['planned', 'ongoing', 'delayed', 'completed', 'cancelled'];
+
+// Approval is tracked separately from `status` on purpose. The two answer different questions —
+// "has this been cleared to run?" and "how far along is it?" — and the panel's own wording,
+// "approved and implemented", describes a program that is simultaneously approved and ongoing.
+// One overloaded field cannot hold both, and folding these into PROGRAM_STATUSES would also
+// silently reclassify every existing program and break the status filters and stat bar.
+const PROGRAM_APPROVAL_STATUSES = ['draft', 'submitted', 'approved', 'rejected'];
 const PROGRAM_CATEGORIES = [
   'education',
   'health',
@@ -30,11 +37,24 @@ const programSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true, maxlength: 200 },
     description: { type: String, required: true },
     objectives: [{ type: String }],
-    category: { type: String, enum: PROGRAM_CATEGORIES, required: true },
+    // Not an enum. PROGRAM_CATEGORIES is the suggested list the UI offers, but a municipality
+    // running something genuinely outside it may type its own rather than be pushed into 'other',
+    // which erased the distinction between every unusual program.
+    category: { type: String, required: true, trim: true, maxlength: 60 },
     status: { type: String, enum: PROGRAM_STATUSES, default: 'planned' },
+    approvalStatus: { type: String, enum: PROGRAM_APPROVAL_STATUSES, default: 'draft' },
+    submittedAt: Date,
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    approvedAt: Date,
+    rejectionReason: String,
+    // Set when an approval encumbers a budget, so a later rejection or deletion releases exactly
+    // what was committed even if program.budget has been edited since.
+    committedAmount: { type: Number, default: 0 },
     municipality: { type: mongoose.Schema.Types.ObjectId, ref: 'Municipality', required: true },
     barangay: { type: mongoose.Schema.Types.ObjectId, ref: 'Barangay' },
-    budget: { type: Number, required: true, min: 0 },
+    // Optional by design: a program may be planned and submitted for approval before any budget
+    // exists for it. Requiring an amount here blocked exactly that.
+    budget: { type: Number, default: 0, min: 0 },
     budgetRef: { type: mongoose.Schema.Types.ObjectId, ref: 'Budget', default: null },
     actualExpenses: { type: Number, default: 0 },
     startDate: { type: Date, required: true },
@@ -84,3 +104,4 @@ programSchema.pre('save', function (next) {
 module.exports = mongoose.model('Program', programSchema);
 module.exports.PROGRAM_STATUSES = PROGRAM_STATUSES;
 module.exports.PROGRAM_CATEGORIES = PROGRAM_CATEGORIES;
+module.exports.PROGRAM_APPROVAL_STATUSES = PROGRAM_APPROVAL_STATUSES;

@@ -9,5 +9,8 @@ export const programService = {
   delete: (id) => api.delete(`/programs/${id}`),
   addMilestone: (id, data) => api.post(`/programs/${id}/milestones`, data),
   updateMilestone: (id, milestoneId, data) => api.put(`/programs/${id}/milestones/${milestoneId}`, data),
+  submit: (id) => api.patch(`/programs/${id}/submit`),
+  approve: (id) => api.patch(`/programs/${id}/approve`),
+  reject: (id, reason) => api.patch(`/programs/${id}/reject`, { reason }),
   getStats: (params) => api.get('/programs/stats', { params }),
 };

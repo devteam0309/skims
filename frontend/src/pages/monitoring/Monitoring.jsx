@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cart
 import { monitoringService } from '../../services/documentService';
 import { PageLoader } from '../../components/shared/LoadingSpinner';
 import StatusBadge from '../../components/shared/StatusBadge';
-import { formatDate, formatCurrency } from '../../utils/formatters';
+import { formatDate } from '../../utils/formatters';
 import { useChartTheme, srSummary } from '../../utils/chartTheme';
 
 /** Compliance bands, keyed to the same vocabulary StatusBadge uses. */
@@ -40,11 +40,17 @@ export default function Monitoring() {
   const band = COMPLIANCE[compliance?.status] || COMPLIANCE.non_compliant;
   const score = compliance?.complianceScore ?? 0;
 
-  const chartData = (munReport || []).map((m) => ({
-    name: m.name,
-    total: m.programStats?.reduce((s, p) => s + p.count, 0) || 0,
-    budget: m.budgetStats?.total || 0,
-  }));
+  // Programme activity only. This chart is province-wide for admins and reachable by every
+  // REPORTER, so it deliberately carries no peso figures — budgets belong on the Budgets page,
+  // where they are municipality-scoped.
+  const chartData = (munReport || []).map((m) => {
+    const byStatus = Object.fromEntries((m.programStats || []).map((p) => [p._id, p.count]));
+    return {
+      name: m.name,
+      total: (m.programStats || []).reduce((s, p) => s + p.count, 0),
+      completed: byStatus.completed || 0,
+    };
+  });
 
   return (
     <div className="space-y-5">
@@ -172,24 +178,20 @@ export default function Monitoring() {
           </div>
           <p className="sr-only">
             {srSummary(
-              'Programs and budget by municipality',
-              chartData.map((m) => [m.name, `${m.total} programs, ${formatCurrency(m.budget)}`])
+              'Programs by municipality',
+              chartData.map((m) => [m.name, `${m.total} programs, ${m.completed} completed`])
             )}
           </p>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} />
               <XAxis dataKey="name" tick={theme.tick} stroke={theme.axis} />
-              <YAxis yAxisId="left" tick={theme.tick} stroke={theme.axis} />
-              <YAxis yAxisId="right" orientation="right" tick={theme.tick} stroke={theme.axis} tickFormatter={(v) => `₱${(v / 1000).toFixed(0)}k`} />
-              <Tooltip
-                {...theme.tooltip}
-                formatter={(v, name) => [name === 'Budget' ? formatCurrency(v) : v, name]}
-              />
-              {/* Two axes with no key left the reader guessing which bar belonged to which. */}
+              {/* One quantity, one axis. The old right-hand peso axis is gone with the budget bar. */}
+              <YAxis tick={theme.tick} stroke={theme.axis} allowDecimals={false} />
+              <Tooltip {...theme.tooltip} />
               <Legend wrapperStyle={theme.legend} />
-              <Bar yAxisId="left" dataKey="total" fill="#1e3a5f" name="Programs" radius={[4, 4, 0, 0]} />
-              <Bar yAxisId="right" dataKey="budget" fill="#f5c518" name="Budget" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="total" fill="#1e3a5f" name="Total programs" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="completed" fill="#f5c518" name="Completed" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

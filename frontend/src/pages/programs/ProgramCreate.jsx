@@ -8,16 +8,27 @@ import { ArrowLeft, Plus, X } from 'lucide-react';
 import { programService } from '../../services/programService';
 import { municipalityService } from '../../services/documentService';
 import { budgetService } from '../../services/budgetService';
+import ComboInput from '../../components/shared/ComboInput';
 import { PROGRAM_CATEGORIES } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 import { confirm } from '../../utils/confirm';
 import { Field, RequiredNote, control } from '../../components/shared/FormField';
+import useAuthStore from '../../store/authStore';
+
+// The two roles that genuinely span municipalities. Mirrors the server-side check in
+// programController.createProgram, which forces the municipality for everyone else.
+const CROSS_MUNICIPALITY_ROLES = ['super_admin', 'provincial_admin'];
 
 const schema = z.object({
   title: z.string().min(5, 'Title must be at least 5 characters'),
   description: z.string().min(20, 'Description must be at least 20 characters'),
   category: z.string().min(1, 'Category is required'),
-  budget: z.coerce.number().min(1, 'Budget must be greater than 0'),
+  /*
+   * Optional. A program may legitimately be planned and submitted for approval before any money
+   * has been allocated to it, and requiring an amount here blocked exactly that — the panel asked
+   * that an absent budget not stand in the way of approval.
+   */
+  budget: z.coerce.number().min(0, 'Budget cannot be negative'),
   startDate: z.string().min(1, 'Start date is required'),
   endDate: z.string().min(1, 'End date is required'),
   targetParticipants: z.coerce.number().min(1, 'Target participants required'),
@@ -32,12 +43,15 @@ const schema = z.object({
 export default function ProgramCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const isCrossMunicipality = CROSS_MUNICIPALITY_ROLES.includes(user?.role);
   const [objectives, setObjectives] = useState(['']);
   const objectiveRefs = useRef([]);
 
   const { data: munData } = useQuery({
     queryKey: ['municipalities'],
     queryFn: () => municipalityService.getAll().then((r) => r.data.data),
+    enabled: isCrossMunicipality,
   });
 
   const { data: budgetsData } = useQuery({
@@ -120,16 +134,41 @@ export default function ProgramCreate() {
                 too narrow to read its own value. */}
             <div className="grid gap-4 sm:grid-cols-2">
               <Field id="category" label="Category" required error={errors.category}>
-                <select {...register('category')} className={control}>
-                  <option value="">Select category...</option>
-                  {PROGRAM_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
+                {/* Pick one of the usual categories or type your own — a program that is none of
+                    them no longer has to be filed as "Other". */}
+                <ComboInput
+                  {...register('category')}
+                  options={PROGRAM_CATEGORIES}
+                  placeholder="Select or type a category..."
+                />
               </Field>
-              <Field id="municipality" label="Municipality" error={errors.municipality}>
-                <select {...register('municipality')} className={control}>
-                  <option value="">Select municipality...</option>
-                  {munData?.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
-                </select>
+              {/*
+                * A scoped user's programs always belong to their own municipality — the server
+                * forces it and ignores whatever the body says. Offering them a dropdown of all
+                * four was therefore a choice that silently did nothing: pick Gasan as a Boac
+                * chairperson and the program was still filed under Boac. They now see the
+                * municipality it will actually be filed under, and only the two province-wide
+                * roles get to choose.
+                */}
+              <Field
+                id="municipality"
+                label="Municipality"
+                error={errors.municipality}
+                hint={isCrossMunicipality ? undefined : 'Programs are filed under your own municipality.'}
+              >
+                {isCrossMunicipality ? (
+                  <select {...register('municipality')} className={control}>
+                    <option value="">Select municipality...</option>
+                    {munData?.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    value={user?.municipality?.name || ''}
+                    readOnly
+                    disabled
+                    className={`${control} cursor-not-allowed bg-gray-50 text-gray-500 dark:bg-gray-700 dark:text-gray-400`}
+                  />
+                )}
               </Field>
             </div>
 
@@ -203,7 +242,13 @@ export default function ProgramCreate() {
             <Field id="endDate" label="End Date" required error={errors.endDate}>
               <input {...register('endDate')} type="date" className={control} />
             </Field>
-            <Field id="budget" label="Budget (₱)" required error={errors.budget}>
+            <Field
+              id="budget"
+              label="Budget (₱)"
+              optional
+              error={errors.budget}
+              hint="Leave at 0 if no budget has been allocated yet — the program can still be submitted and approved."
+            >
               <input {...register('budget')} type="number" min="0" step="0.01" placeholder="0.00" className={`${control} numeric`} />
             </Field>
             <Field id="targetParticipants" label="Target Participants" required error={errors.targetParticipants}>

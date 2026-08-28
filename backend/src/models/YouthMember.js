@@ -6,7 +6,10 @@ const youthMemberSchema = new mongoose.Schema(
     firstName: { type: String, required: true, trim: true },
     lastName: { type: String, required: true, trim: true },
     birthDate: { type: Date, required: true },
-    gender: { type: String, enum: ['male', 'female', 'other'], required: true },
+    // Free text rather than an enum. 'other' collapsed every identity that is not male or female
+    // into one unusable bucket; a member who identifies as LGBTQIA+ can now be recorded as such.
+    // Length-capped so it stays a short label rather than a note field.
+    gender: { type: String, required: true, trim: true, maxlength: 40 },
     email: { type: String, lowercase: true, trim: true },
     contactNumber: String,
     address: String,
@@ -29,11 +32,23 @@ const youthMemberSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true },
     deletedAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  // The registry table reads `age`, `isSkEligible` and `isActive` together to say who is still
+  // under the SK, so the virtuals have to survive serialisation.
+  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
 youthMemberSchema.virtual('age').get(function () {
   return calculateAge(this.birthDate);
+});
+
+// SK membership is defined by the Sangguniang Kabataan age band. A member who has aged past it is
+// still a valid registry record — a historical one — but is no longer under the SK, which is the
+// distinction the registry could not previously show.
+const SK_MIN_AGE = 15;
+const SK_MAX_AGE = 30;
+youthMemberSchema.virtual('isSkEligible').get(function () {
+  const age = calculateAge(this.birthDate);
+  return age !== null && age !== undefined && age >= SK_MIN_AGE && age <= SK_MAX_AGE;
 });
 
 youthMemberSchema.index({ municipality: 1, barangay: 1 });

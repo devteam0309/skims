@@ -17,6 +17,10 @@ const budgetSchema = new mongoose.Schema(
     allocations: [allocationSchema],
     approvedAmount: { type: Number, default: 0 },
     disbursedAmount: { type: Number, default: 0 },
+    // Money promised to approved programs but not yet spent (an encumbrance). Kept separate from
+    // disbursedAmount deliberately: expenses raised against an approved program later increase
+    // disbursedAmount, so folding the programme amount into the same field would spend it twice.
+    committedAmount: { type: Number, default: 0 },
     remainingBalance: { type: Number, default: 0 },
     status: {
       type: String,
@@ -30,7 +34,9 @@ const budgetSchema = new mongoose.Schema(
     attachments: [{ fileName: String, fileUrl: String }],
     deletedAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  // Virtuals must serialise: availableBalance is read by the Budgets page and the program
+  // approval guard, both of which see the JSON form rather than the document.
+  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
 budgetSchema.index({ municipality: 1, status: 1, deletedAt: 1 });
@@ -41,7 +47,11 @@ budgetSchema.index(
   { unique: true, partialFilterExpression: { deletedAt: null } }
 );
 
-// Auto-compute remaining balance
+// What is genuinely still free to allocate: neither spent nor promised.
+budgetSchema.virtual('availableBalance').get(function () {
+  return (this.totalBudget || 0) - (this.disbursedAmount || 0) - (this.committedAmount || 0);
+});
+
 budgetSchema.pre('save', function (next) {
   this.remainingBalance = this.totalBudget - this.disbursedAmount;
   next();

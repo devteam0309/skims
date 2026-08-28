@@ -7,7 +7,9 @@ const Barangay = require('../models/Barangay');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 
 router.get('/', asyncHandler(async (req, res) => {
-  const municipalities = await Municipality.find({ isActive: true });
+  // Alphabetical at the source, so every municipality dropdown in the app is ordered without
+  // each caller having to sort it again.
+  const municipalities = await Municipality.find({ isActive: true }).collation({ locale: 'en' }).sort({ name: 1 });
   successResponse(res, 200, 'Municipalities', municipalities);
 }));
 
@@ -18,7 +20,11 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.get('/:id/barangays', asyncHandler(async (req, res) => {
-  const barangays = await Barangay.find({ municipality: req.params.id, isActive: true });
+  // Barangay lists ran in insertion order, so the picker was effectively unordered. The English
+  // collation keeps case and accents from splitting the alphabet (e.g. Ñ sorting after Z).
+  const barangays = await Barangay.find({ municipality: req.params.id, isActive: true })
+    .collation({ locale: 'en' })
+    .sort({ name: 1 });
   successResponse(res, 200, 'Barangays', barangays);
 }));
 

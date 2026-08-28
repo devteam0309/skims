@@ -8,17 +8,23 @@ import {
 import { programService } from '../../services/programService';
 import StatusBadge from '../../components/shared/StatusBadge';
 import { formatCurrency, formatDate } from '../../utils/formatters';
-import { PROGRAM_CATEGORIES, PROGRAM_EDITORS } from '../../utils/constants';
+import { PROGRAM_CATEGORIES, PROGRAM_EDITORS, ADMIN_ROLES } from '../../utils/constants';
+import { municipalityService } from '../../services/documentService';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
 
 const STATUSES = ['planned', 'ongoing', 'delayed', 'completed', 'cancelled'];
+const APPROVAL_STATUSES = ['draft', 'submitted', 'approved', 'rejected'];
+
+// Province-wide roles only. Everyone else is already pinned to their own municipality by the
+// server, so offering them the filter would imply a choice they do not have.
+const CROSS_MUNICIPALITY_ROLES = ['super_admin', 'provincial_admin'];
 
 export default function Programs() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const [filters, setFilters] = useState({ page: 1, limit: 12, search: '', status: '', category: '' });
+  const [filters, setFilters] = useState({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '' });
 
   /*
    * The search box is bound to local state and only pushed into the query key after a pause.
@@ -41,10 +47,27 @@ export default function Programs() {
 
   // Server-side aggregated counts — independent of the current page / active filters
   const { data: stats } = useQuery({
-    queryKey: ['program-stats'],
-    queryFn: () => programService.getStats().then((r) => r.data.data),
+    // Keyed on municipality so the headline count matches the list an admin is actually looking
+    // at; otherwise filtering to Mogpog left a province-wide total above Mogpog's programs.
+    queryKey: ['program-stats', filters.municipality],
+    queryFn: () => programService.getStats(
+      filters.municipality ? { municipality: filters.municipality } : undefined
+    ).then((r) => r.data.data),
   });
   const statusCounts = Object.fromEntries((stats?.byStatus || []).map((s) => [s._id, s.count]));
+
+  /*
+   * Built from the categories that actually exist in the data rather than the fixed constant.
+   * Categories are free text now, so a municipality that typed its own would otherwise have no way
+   * to filter by it — the dropdown would list ten options that its programs do not use.
+   */
+  const categoryOptions = (stats?.byCategory || [])
+    .filter((c) => c._id)
+    .map((c) => ({
+      value: c._id,
+      label: PROGRAM_CATEGORIES.find((p) => p.value === c._id)?.label
+        || c._id.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase()),
+    }));
 
   const deleteMutation = useMutation({
     mutationFn: (id) => programService.delete(id),
@@ -58,11 +81,21 @@ export default function Programs() {
   };
 
   const canCreate = PROGRAM_EDITORS.includes(user?.role);
-  const hasFilters = Boolean(filters.search || filters.status || filters.category);
+  const isCrossMunicipality = CROSS_MUNICIPALITY_ROLES.includes(user?.role);
+  const hasFilters = Boolean(
+    filters.search || filters.status || filters.approvalStatus || filters.category || filters.municipality
+  );
+
+  // Only fetched for the roles that can act on it.
+  const { data: municipalities = [] } = useQuery({
+    queryKey: ['municipalities'],
+    queryFn: () => municipalityService.getAll().then((r) => r.data.data),
+    enabled: isCrossMunicipality,
+  });
 
   const clearFilters = () => {
     setSearchInput('');
-    setFilters({ page: 1, limit: 12, search: '', status: '', category: '' });
+    setFilters({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '' });
   };
 
   return (
@@ -70,7 +103,15 @@ export default function Programs() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="page-title">Programs</h1>
-          <p className="page-subtitle">Manage and track youth programs</p>
+          {/* The completed total was only reachable by reading one chip out of five. Stated here
+              because "how many have we finished" is the question the page is usually opened for. */}
+          <p className="page-subtitle">
+            <span className="numeric font-semibold text-gray-700 dark:text-gray-200">{stats?.completed ?? 0}</span>
+            {' of '}
+            <span className="numeric font-semibold text-gray-700 dark:text-gray-200">{stats?.total ?? 0}</span>
+            {' programs completed'}
+            {isCrossMunicipality && !filters.municipality && ' across all municipalities'}
+          </p>
         </div>
         {canCreate && (
           <Link
@@ -122,9 +163,41 @@ export default function Programs() {
               className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
             >
               <option value="">All Categories</option>
-              {PROGRAM_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              {categoryOptions.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </div>
+
+          <div>
+            <label htmlFor="filter-approval" className="sr-only">Filter by approval state</label>
+            <select
+              id="filter-approval"
+              value={filters.approvalStatus}
+              onChange={(e) => setFilters({ ...filters, approvalStatus: e.target.value, page: 1 })}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+            >
+              <option value="">All Approvals</option>
+              {APPROVAL_STATUSES.map((a) => (
+                <option key={a} value={a}>{a.charAt(0).toUpperCase() + a.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Programs are municipality-isolated on the server for every other role, so this only
+              appears for the two that genuinely see more than one. */}
+          {isCrossMunicipality && (
+            <div>
+              <label htmlFor="filter-municipality" className="sr-only">Filter by municipality</label>
+              <select
+                id="filter-municipality"
+                value={filters.municipality}
+                onChange={(e) => setFilters({ ...filters, municipality: e.target.value, page: 1 })}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+              >
+                <option value="">All Municipalities</option>
+                {municipalities.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* There was no way out of a filter combination that returned nothing. */}
           {hasFilters && (
@@ -203,7 +276,15 @@ export default function Programs() {
                 className="flex flex-col rounded-xl border border-gray-200 bg-white p-5 transition-colors hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:hover:border-gray-600"
               >
                 <div className="mb-3 flex items-start justify-between gap-2">
-                  <StatusBadge status={program.status} />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <StatusBadge status={program.status} />
+                    {/* Lifecycle and approval are different facts. A program can be approved and
+                        ongoing at once, so both chips show rather than one standing in for the
+                        other. Approved is the unremarkable case and stays quiet. */}
+                    {program.approvalStatus && program.approvalStatus !== 'approved' && (
+                      <StatusBadge status={program.approvalStatus} />
+                    )}
+                  </div>
                   <div className="flex shrink-0 items-center gap-0.5">
                     {/* Icon-only controls previously announced as bare "link" / "button".
                         Names include the program title so they are unambiguous in a list. */}

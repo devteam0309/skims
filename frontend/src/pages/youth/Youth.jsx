@@ -6,6 +6,8 @@ import { youthService, municipalityService } from '../../services/documentServic
 import DataTable from '../../components/shared/DataTable';
 import Modal from '../../components/shared/Modal';
 import SearchInput from '../../components/shared/SearchInput';
+import StatusBadge from '../../components/shared/StatusBadge';
+import ComboInput from '../../components/shared/ComboInput';
 import { Field, RequiredNote, control } from '../../components/shared/FormField';
 import { formatDate, calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
@@ -32,7 +34,13 @@ const EDUCATION_OPTIONS = [
   ['out_of_school', 'Out of School'],
 ];
 
-const GENDERS = [['', 'All'], ['male', 'Male'], ['female', 'Female'], ['other', 'Other']];
+/*
+ * Suggestions, not a closed list. Gender is free text on both the model and the route, so a member
+ * who identifies as e.g. LGBTQIA+ is recorded as written instead of being flattened into "Other" —
+ * which was the panel's finding. These three are offered because they cover most entries and keep
+ * the common values spelled consistently.
+ */
+const GENDER_SUGGESTIONS = ['Male', 'Female', 'LGBTQIA+'];
 
 const PH_PHONE = /^(09|\+639)\d{9}$/;
 
@@ -246,7 +254,7 @@ export default function Youth() {
 
   const [filters, setFilters] = useState({
     page: 1, limit: 20, search: '', gender: '', educationalAttainment: '', isActive: '',
-    barangay: '', municipality: '',
+    barangay: '', municipality: '', skEligible: '',
   });
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
@@ -382,10 +390,12 @@ export default function Youth() {
 
   const isPending = createMutation.isPending || updateMutation.isPending;
   const hasFilters = Boolean(
-    filters.gender || filters.barangay || filters.educationalAttainment || filters.isActive || filters.municipality || filters.search
+    filters.gender || filters.barangay || filters.educationalAttainment || filters.isActive
+    || filters.municipality || filters.search || filters.skEligible
   );
   const clearFilters = () => setFilters((f) => ({
-    ...f, gender: '', barangay: '', educationalAttainment: '', isActive: '', municipality: '', search: '', page: 1,
+    ...f, gender: '', barangay: '', educationalAttainment: '', isActive: '', municipality: '',
+    search: '', skEligible: '', page: 1,
   }));
 
   const columns = [
@@ -407,6 +417,32 @@ export default function Youth() {
     { key: 'municipality', header: 'Municipality', render: (v) => v?.name || '—' },
     { key: 'barangay', header: 'Barangay', render: (v) => v?.name || '—' },
     { key: 'contactNumber', header: 'Contact', render: (v) => v || '—' },
+    {
+      key: 'isActive',
+      header: 'Status',
+      /*
+       * Two separate facts, and the registry showed neither. `isActive` is an administrative
+       * decision — whether this record is a current member. SK membership is a matter of age:
+       * the Sangguniang Kabataan covers 15–30, so a member who has aged past 30 remains a valid
+       * historical record but is no longer under the SK. Someone can be active and aged out, so
+       * both are shown rather than one standing in for the other.
+       */
+      render: (v, row) => {
+        const active = v !== false;
+        const age = calculateAge(row.birthDate);
+        const underSk = age !== null && age >= YOUTH_MIN_AGE && age <= YOUTH_MAX_AGE;
+        return (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusBadge status={active ? 'active' : 'inactive'} />
+            {active && !underSk && (
+              <span className="meta-text whitespace-nowrap" title={`Age ${age} is outside the SK range of ${YOUTH_MIN_AGE}–${YOUTH_MAX_AGE}`}>
+                aged out of SK
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
     ...(canEdit ? [{
       key: '_id',
       // The header was an empty string, leaving the column with no name for anyone navigating
@@ -469,22 +505,20 @@ export default function Youth() {
         />
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Gender is a single-choice group, so each button reports its own pressed state. */}
-          {GENDERS.map(([val, label]) => (
-            <button
-              key={val || 'all'}
-              type="button"
-              aria-pressed={filters.gender === val}
-              onClick={() => setFilters({ ...filters, gender: val, page: 1 })}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                filters.gender === val
-                  ? 'bg-navy-900 text-white dark:bg-navy-600'
-                  : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          {/* A fixed button per gender cannot work now that the field is free text — an entry the
+              buttons do not name would be unfilterable. The server matches the whole value
+              case-insensitively, so typing "female" finds "Female". */}
+          <div className="w-40">
+            <label htmlFor="filter-gender" className="sr-only">Filter by gender</label>
+            <ComboInput
+              id="filter-gender"
+              options={GENDER_SUGGESTIONS}
+              value={filters.gender}
+              onChange={(e) => setFilters({ ...filters, gender: e.target.value, page: 1 })}
+              placeholder="Any gender"
+              className="!mt-0 !py-1.5 !text-xs"
+            />
+          </div>
 
           {isAdmin && (
             <>
@@ -534,6 +568,20 @@ export default function Youth() {
             <option value="">All Status</option>
             <option value="true">Active</option>
             <option value="false">Inactive</option>
+          </select>
+
+          {/* Age-derived, not a stored flag — see the Status column. Kept separate from
+              Active/Inactive because a member can be an active record and still have aged out. */}
+          <label htmlFor="filter-sk" className="sr-only">Filter by SK membership</label>
+          <select
+            id="filter-sk"
+            value={filters.skEligible}
+            onChange={(e) => setFilters({ ...filters, skEligible: e.target.value, page: 1 })}
+            className={selectClass}
+          >
+            <option value="">All Ages</option>
+            <option value="true">Still under SK</option>
+            <option value="false">Aged out of SK</option>
           </select>
 
           {hasFilters && (
@@ -621,13 +669,18 @@ export default function Youth() {
             >
               <input type="date" value={form.birthDate} onChange={(e) => set('birthDate', e.target.value)} className={control} />
             </Field>
-            <Field id="youth-gender" label="Gender" required>
-              <select value={form.gender} onChange={(e) => set('gender', e.target.value)} className={control}>
-                <option value="">Select...</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="other">Other</option>
-              </select>
+            <Field
+              id="youth-gender"
+              label="Gender"
+              required
+              hint="Choose a suggestion or type the entry that applies."
+            >
+              <ComboInput
+                options={GENDER_SUGGESTIONS}
+                value={form.gender}
+                onChange={(e) => set('gender', e.target.value)}
+                placeholder="Select or type..."
+              />
             </Field>
           </div>
 
