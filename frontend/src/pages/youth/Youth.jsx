@@ -255,7 +255,6 @@ export default function Youth() {
    * the barangay picker once caused. Programs gates its equivalent filter the same way.
    */
   const isCrossMunicipality = ['super_admin', 'provincial_admin'].includes(user?.role);
-  const isAdmin = ADMIN_ROLES.includes(user?.role);
   /*
    * Youth register themselves now, so this is the fallback rather than the normal way in — kept
    * for members with no email address, who cannot sign up and would otherwise be missing from the
@@ -284,7 +283,7 @@ export default function Youth() {
   const { data: municipalities = [] } = useQuery({
     queryKey: ['municipalities'],
     queryFn: () => municipalityService.getAll().then((r) => r.data.data),
-    enabled: isAdmin,
+    enabled: isCrossMunicipality,
   });
 
   /*
@@ -295,8 +294,16 @@ export default function Youth() {
    * empty until they open the modal and choose one, so the "All Barangays" filter sat permanently
    * empty and there was no way to filter the registry by barangay at all.
    */
-  const filterMunId = isAdmin ? filters.municipality : userMunId;
-  const formMunId = isAdmin ? form.municipality : userMunId;
+  /*
+   * Both key off whether the account genuinely spans municipalities, not off ADMIN_ROLES.
+   *
+   * municipal_admin is in ADMIN_ROLES but is scoped by the server like any other municipal role.
+   * Keying on ADMIN_ROLES left it with no municipality filter (correctly hidden) while these
+   * still resolved to the empty filter value — so its barangay picker stayed disabled on "Pick a
+   * municipality" forever, and the registration form offered a choice the server would override.
+   */
+  const filterMunId = isCrossMunicipality ? filters.municipality : userMunId;
+  const formMunId = isCrossMunicipality ? form.municipality : userMunId;
 
   const { data: filterBarangays = [] } = useQuery({
     queryKey: ['barangays', filterMunId],
@@ -358,7 +365,7 @@ export default function Youth() {
     if (!form.firstName || !form.lastName || !form.birthDate || !form.gender) {
       return toast.error('First name, last name, birth date and gender are required');
     }
-    if (isAdmin && !editTarget && !form.municipality) {
+    if (isCrossMunicipality && !editTarget && !form.municipality) {
       return toast.error('Please select a municipality');
     }
     // Calendar age, matching backend/src/utils/age.js. The previous 365.25-day approximation
@@ -719,8 +726,11 @@ export default function Youth() {
           </Field>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field id="youth-municipality" label="Municipality" required={isAdmin && !editTarget}>
-              {isAdmin && !editTarget ? (
+            {/* Only the two province-wide roles choose. For everyone else the server forces the
+                record onto their own municipality, so offering a list would be a control whose
+                selection is silently discarded. */}
+            <Field id="youth-municipality" label="Municipality" required={isCrossMunicipality && !editTarget}>
+              {isCrossMunicipality && !editTarget ? (
                 <select
                   value={form.municipality}
                   onChange={(e) => { set('municipality', e.target.value); set('barangay', ''); }}
