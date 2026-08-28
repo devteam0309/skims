@@ -12,6 +12,11 @@ const ROLES = [
   'sk_secretary',
   'sk_kagawad',
   'dilg_representative',
+  // A member of the Katipunan ng Kabataan with their own login. Distinct from public_user, which
+  // is an ordinary citizen browsing the portal: a youth account is tied to a registry record and
+  // can ask to join its municipality's programmes. Deliberately absent from every group in
+  // constants/roles.js, so authorize() whitelists reject it by default.
+  'youth',
   'public_user',
 ];
 

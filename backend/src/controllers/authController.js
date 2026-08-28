@@ -8,6 +8,10 @@ const emailService = require('../services/emailService');
 const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 const logger = require('../utils/logger');
+const YouthMember = require('../models/YouthMember');
+const { calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } = require('../utils/age');
+
+const escapeRegex = (v) => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Send a verification link without blocking the response, but never silently.
@@ -63,10 +67,74 @@ const sendTokenResponse = async (user, statusCode, res) => {
   return successResponse(res, statusCode, 'Success', { user: userData });
 };
 
-const SELF_ASSIGNABLE_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'public_user'];
+const SELF_ASSIGNABLE_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'youth', 'public_user'];
+
+
+/*
+ * Creates or claims the registry record behind a youth login.
+ *
+ * A youth is identified by full name and email. Where SK staff have already entered someone —
+ * during a barangay canvass, say — self-registering must attach to that record rather than make a
+ * second one: the registry is a roster of people, and the same person appearing twice is exactly
+ * the failure the unique indexes exist to prevent. Without this the compound index would simply
+ * reject the insert, and the youth would be told they are "already registered" with no way past it.
+ *
+ * Matching is on name + birth date + municipality, which is what a staff-entered record reliably
+ * has — it usually has no email at all, so email cannot be the matching key even though it is part
+ * of the identity once one exists.
+ */
+const attachYouthRecord = async (user, { birthDate, gender, contactNumber, barangay }) => {
+  const fail = (message, statusCode = 400) => {
+    const e = new Error(message);
+    e.statusCode = statusCode;
+    return e;
+  };
+
+  if (!birthDate) throw fail('A birth date is required to register as a youth member');
+  if (!gender) throw fail('Gender is required to register as a youth member');
+
+  const age = calculateAge(birthDate);
+  if (age === null) throw fail('Enter a valid birth date');
+  if (age < YOUTH_MIN_AGE || age > YOUTH_MAX_AGE) {
+    throw fail(`Youth membership is for ages ${YOUTH_MIN_AGE} to ${YOUTH_MAX_AGE}; this birth date gives ${age}`);
+  }
+
+  const municipalityId = user.municipality?._id || user.municipality;
+  const existing = await YouthMember.findOne({
+    firstName: new RegExp(`^${escapeRegex(user.firstName)}$`, 'i'),
+    lastName: new RegExp(`^${escapeRegex(user.lastName)}$`, 'i'),
+    birthDate: new Date(birthDate),
+    municipality: municipalityId,
+    deletedAt: null,
+  });
+
+  if (existing) {
+    if (existing.user) throw fail('This youth member already has an account', 409);
+    existing.user = user._id;
+    existing.email = user.email;
+    if (contactNumber && !existing.contactNumber) existing.contactNumber = contactNumber;
+    await existing.save();
+    return existing;
+  }
+
+  return YouthMember.create({
+    firstName: user.firstName,
+    lastName: user.lastName,
+    birthDate: new Date(birthDate),
+    gender,
+    email: user.email,
+    contactNumber,
+    municipality: municipalityId,
+    barangay: barangay || undefined,
+    user: user._id,
+    registeredBy: user._id,
+    // Self-entered, so nobody has vouched for it yet.
+    verificationStatus: 'unverified',
+  });
+};
 
 exports.register = asyncHandler(async (req, res) => {
-  const { firstName, lastName, email, password, role, municipality, barangay, contactNumber } = req.body;
+  const { firstName, lastName, email, password, role, municipality, barangay, contactNumber, birthDate, gender } = req.body;
 
   const existingUser = await User.findOne({ email });
   if (existingUser) return errorResponse(res, 400, 'Email already registered');
@@ -82,16 +150,31 @@ exports.register = asyncHandler(async (req, res) => {
     municipality,
     barangay,
     contactNumber,
-    isApproved: assignedRole === 'public_user',
+    // Youth approve themselves. Requiring an admin to let each member in would put staff back in
+    // the middle of the self-service flow the whole feature exists to provide; the registry record
+    // carries the vetting instead, as verificationStatus.
+    isApproved: assignedRole === 'public_user' || assignedRole === 'youth',
   });
+
+  if (assignedRole === 'youth') {
+    try {
+      await attachYouthRecord(user, { birthDate, gender, contactNumber, barangay });
+    } catch (err) {
+      // The login is useless without its registry record, and a half-created account would block
+      // the address from ever registering again. Roll back rather than strand them.
+      await User.deleteOne({ _id: user._id });
+      return errorResponse(res, err.statusCode || 400, err.message);
+    }
+  }
 
   const verificationToken = user.getEmailVerificationToken();
   await user.save({ validateBeforeSave: false });
 
   sendVerificationInBackground(user, verificationToken);
 
-  // Notify admins when a non-public_user registers and requires approval
-  if (assignedRole !== 'public_user') {
+  // Notify admins when a role that requires approval registers. Youth are excluded: they approve
+  // themselves, and a notification per youth sign-up would bury every other admin notification.
+  if (assignedRole !== 'public_user' && assignedRole !== 'youth') {
     const adminFilter = { role: { $in: ['super_admin', 'provincial_admin', 'municipal_admin'] }, isActive: true, deletedAt: null };
     if (user.municipality) adminFilter.$or = [{ municipality: user.municipality }, { role: { $in: ['super_admin', 'provincial_admin'] } }];
     const admins = await User.find(adminFilter).select('_id').lean();

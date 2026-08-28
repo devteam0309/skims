@@ -26,6 +26,18 @@ const registerValidation = validate([
   // A municipality is what every scoped query keys off. Registering without one produced an
   // account that could sign in and then see nothing at all, with no explanation — so it is
   // required for every role that is municipality-bound, and rejected for those that are not.
+  /*
+   * A youth registration also creates their registry record, which needs a birth date and gender.
+   * Validated here so a bad payload is rejected before the User is created and rolled back.
+   */
+  body('birthDate')
+    .if((value, { req }) => req.body.role === 'youth')
+    .isISO8601().withMessage('A valid birth date is required'),
+  body('gender')
+    .if((value, { req }) => req.body.role === 'youth')
+    .trim().notEmpty().withMessage('Gender is required')
+    .isLength({ max: 40 }).withMessage('Gender must be 40 characters or fewer'),
+
   body('municipality').custom((value, { req }) => {
     // An omitted role becomes public_user in the controller, so it must read as municipality-free
     // here too — `body('role').not().isIn(...)` treats undefined as "not in the list" and would

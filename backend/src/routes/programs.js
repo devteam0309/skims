@@ -8,6 +8,7 @@ const {
   getPrograms, getProgram, createProgram, updateProgram,
   deleteProgram, updateProgramStatus, addMilestone, updateMilestone, getProgramStats,
   submitProgram, approveProgram, rejectProgram,
+  requestToJoin, withdrawJoinRequest, getParticipants, decideParticipant,
 } = require('../controllers/programController');
 
 const programValidation = validate([
@@ -49,6 +50,16 @@ router.patch('/:id/status', protect, authorize(...EDITORS), statusValidation, up
 router.patch('/:id/submit', protect, authorize(...EDITORS), submitProgram);
 router.patch('/:id/approve', protect, authorize(...ADMINS), approveProgram);
 router.patch('/:id/reject', protect, authorize(...ADMINS), rejectValidation, rejectProgram);
+/*
+ * Participation. Joining is the one write a youth account may perform anywhere in the API — the
+ * role is otherwise closed by the allowlist in middleware/auth.js — and the decision on that
+ * request belongs to SK staff, so the two sides are authorised separately.
+ */
+router.post('/:id/join', protect, authorize('youth'), requestToJoin);
+router.delete('/:id/join', protect, authorize('youth'), withdrawJoinRequest);
+router.get('/:id/participants', protect, authorize(...EDITORS), getParticipants);
+router.patch('/:id/participants/:youthId', protect, authorize(...EDITORS), decideParticipant);
+
 router.post('/:id/milestones', protect, authorize(...EDITORS), milestoneValidation, addMilestone);
 router.put('/:id/milestones/:milestoneId', protect, authorize(...EDITORS), updateMilestone);
 router.delete('/:id', protect, authorize(...ADMINS), deleteProgram);

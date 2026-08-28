@@ -26,7 +26,7 @@ const MEMBER = (overrides = {}) => ({
 
 describe('Youth barangay must belong to the member\'s municipality', () => {
   it('accepts a barangay that belongs to the user\'s municipality (create)', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
     const barangay = await Barangay.create({ name: 'Home Brgy', municipality: municipalityId });
 
     const res = await request(app)
@@ -38,7 +38,7 @@ describe('Youth barangay must belong to the member\'s municipality', () => {
   });
 
   it('rejects a barangay from a DIFFERENT municipality (create) with 400', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
     const otherMun = await Municipality.create({ name: 'Other Town', code: 'OTH' });
     const foreignBrgy = await Barangay.create({ name: 'Foreign Brgy', municipality: otherMun._id });
 
@@ -51,7 +51,7 @@ describe('Youth barangay must belong to the member\'s municipality', () => {
   });
 
   it('rejects a non-existent barangay (create) with 400', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -61,7 +61,7 @@ describe('Youth barangay must belong to the member\'s municipality', () => {
   });
 
   it('still creates when barangay is blank (no regression)', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -70,7 +70,7 @@ describe('Youth barangay must belong to the member\'s municipality', () => {
   });
 
   it('accepts a same-municipality barangay on update', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
     const b1 = await Barangay.create({ name: 'B One', municipality: municipalityId });
     const b2 = await Barangay.create({ name: 'B Two', municipality: municipalityId });
     const create = await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER({ barangay: b1._id.toString() }));
@@ -85,7 +85,7 @@ describe('Youth barangay must belong to the member\'s municipality', () => {
   });
 
   it('rejects a foreign-municipality barangay on update with 400', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
     const home = await Barangay.create({ name: 'Home', municipality: municipalityId });
     const otherMun = await Municipality.create({ name: 'Far Town', code: 'FAR' });
     const foreign = await Barangay.create({ name: 'Far Brgy', municipality: otherMun._id });
@@ -104,7 +104,7 @@ describe('Youth barangay must belong to the member\'s municipality', () => {
   });
 
   it('clears the barangay when blanked on update (no validation error)', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
     const home = await Barangay.create({ name: 'Clearable', municipality: municipalityId });
     const create = await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER({ barangay: home._id.toString() }));
     const id = create.body.data._id;

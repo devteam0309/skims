@@ -24,7 +24,7 @@ const MEMBER_PAYLOAD = (overrides = {}) => ({
 
 describe('POST /api/youth', () => {
   it('registers a youth member and returns 201', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -34,7 +34,7 @@ describe('POST /api/youth', () => {
   });
 
   it('returns 422 for missing required fields', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -45,7 +45,7 @@ describe('POST /api/youth', () => {
   // Gender is deliberately free text now, so an unlisted value is valid data rather than an
   // error — a member is recorded as they identify instead of being flattened into 'other'.
   it('accepts a gender outside the suggested options and stores it verbatim', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -55,7 +55,7 @@ describe('POST /api/youth', () => {
   });
 
   it('still rejects a blank gender', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -64,7 +64,7 @@ describe('POST /api/youth', () => {
   });
 
   it('rejects a gender long enough to be a note rather than a label', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -73,7 +73,7 @@ describe('POST /api/youth', () => {
   });
 
   it('returns 400 for age below 15', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -83,7 +83,7 @@ describe('POST /api/youth', () => {
   });
 
   it('returns 400 for age above 30', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .post('/api/youth')
       .set(authHeader(token))
@@ -109,7 +109,7 @@ describe('POST /api/youth', () => {
 
 describe('GET /api/youth/duplicate-check', () => {
   it('returns exists: true when a matching member exists', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const bd = dob(20);
     await request(app)
       .post('/api/youth')
@@ -125,7 +125,7 @@ describe('GET /api/youth/duplicate-check', () => {
   });
 
   it('returns exists: false when no match exists', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app)
       .get('/api/youth/duplicate-check')
       .set(authHeader(token))
@@ -139,7 +139,7 @@ describe('GET /api/youth — demographic filters', () => {
   let token;
 
   beforeEach(async () => {
-    ({ token } = await createUser({ role: 'sk_chairperson' }));
+    ({ token } = await createUser({ role: 'municipal_admin' }));
     await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER_PAYLOAD({ gender: 'female', educationalAttainment: 'college' }));
     await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER_PAYLOAD({ firstName: 'Pedro', gender: 'male', educationalAttainment: 'high_school' }));
   });
@@ -165,8 +165,8 @@ describe('GET /api/youth — demographic filters', () => {
 
 describe('GET /api/youth — municipality scoping', () => {
   it('sk_chairperson only sees their own municipality members', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
-    const { token: otherToken } = await createUser({ role: 'sk_chairperson' });
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
+    const { token: otherToken } = await createUser({ role: 'municipal_admin' });
 
     await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER_PAYLOAD());
     await request(app).post('/api/youth').set(authHeader(otherToken)).send(MEMBER_PAYLOAD({ firstName: 'Pedro' }));
@@ -180,7 +180,7 @@ describe('GET /api/youth — municipality scoping', () => {
 
 describe('PUT /api/youth/:id', () => {
   it('updates a youth member', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const create = await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER_PAYLOAD());
     const id = create.body.data._id;
 
@@ -193,7 +193,7 @@ describe('PUT /api/youth/:id', () => {
   });
 
   it('sk_kagawad can update (in YOUTH_EDITORS)', async () => {
-    const { token: chairToken, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token: chairToken, municipalityId } = await createUser({ role: 'municipal_admin' });
     const { token: kagawadToken } = await createUser({ role: 'sk_kagawad', municipality: municipalityId });
 
     const create = await request(app).post('/api/youth').set(authHeader(chairToken)).send(MEMBER_PAYLOAD());
@@ -207,8 +207,8 @@ describe('PUT /api/youth/:id', () => {
   });
 
   it('blocks cross-municipality update', async () => {
-    const { token: chairToken } = await createUser({ role: 'sk_chairperson' });
-    const { token: otherToken } = await createUser({ role: 'sk_chairperson' });
+    const { token: chairToken } = await createUser({ role: 'municipal_admin' });
+    const { token: otherToken } = await createUser({ role: 'municipal_admin' });
 
     const create = await request(app).post('/api/youth').set(authHeader(chairToken)).send(MEMBER_PAYLOAD());
     const id = create.body.data._id;
@@ -223,7 +223,7 @@ describe('PUT /api/youth/:id', () => {
 
 describe('DELETE /api/youth/:id', () => {
   it('soft-deletes a member', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const create = await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER_PAYLOAD());
     const id = create.body.data._id;
 
@@ -235,8 +235,8 @@ describe('DELETE /api/youth/:id', () => {
   });
 
   it('blocks cross-municipality delete', async () => {
-    const { token: chairToken } = await createUser({ role: 'sk_chairperson' });
-    const { token: otherToken } = await createUser({ role: 'sk_chairperson' });
+    const { token: chairToken } = await createUser({ role: 'municipal_admin' });
+    const { token: otherToken } = await createUser({ role: 'municipal_admin' });
 
     const create = await request(app).post('/api/youth').set(authHeader(chairToken)).send(MEMBER_PAYLOAD());
     const id = create.body.data._id;

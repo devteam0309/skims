@@ -1,6 +1,7 @@
 const asyncHandler = require('express-async-handler');
 const Program = require('../models/Program');
 const Budget = require('../models/Budget');
+const YouthMember = require('../models/YouthMember');
 const Notification = require('../models/Notification');
 const AuditLog = require('../models/AuditLog');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
@@ -272,6 +273,182 @@ exports.rejectProgram = asyncHandler(async (req, res) => {
   }).catch(() => {});
 
   successResponse(res, 200, 'Program rejected', rejected);
+});
+
+/* ------------------------------------------------------------------------------------------- *
+ * Programme participation
+ *
+ * A youth asks to join; SK staff confirm or decline. Only confirmed participants count toward
+ * `targetParticipants` — a request is not a slot — and requests are refused once a programme is
+ * full, so nobody queues for a place that cannot exist.
+ * ------------------------------------------------------------------------------------------- */
+
+// Confirmed participants for a programme. Counted from the registry rather than read from
+// Program.actualParticipants, so the cap cannot drift away from the records behind it.
+const confirmedCount = (programId) => YouthMember.countDocuments({
+  deletedAt: null,
+  programParticipations: { $elemMatch: { program: programId, status: 'confirmed' } },
+});
+
+exports.requestToJoin = asyncHandler(async (req, res) => {
+  const member = await YouthMember.findOne({ user: req.user._id, deletedAt: null });
+  if (!member) return errorResponse(res, 404, 'No youth registry record is linked to your account');
+
+  const program = await Program.findOne({ _id: req.params.id, deletedAt: null });
+  if (!program) return errorResponse(res, 404, 'Program not found');
+
+  const memberMunId = (member.municipality?._id || member.municipality)?.toString();
+  if (program.municipality?.toString() !== memberMunId) {
+    return errorResponse(res, 403, 'This program belongs to a different municipality');
+  }
+  if (program.approvalStatus !== 'approved') {
+    return errorResponse(res, 400, 'This program has not been approved yet');
+  }
+  if (['completed', 'cancelled'].includes(program.status)) {
+    return errorResponse(res, 400, `This program is ${program.status}`);
+  }
+
+  const already = member.programParticipations.find((p) => p.program?.toString() === program._id.toString());
+  if (already && already.status !== 'declined') {
+    return errorResponse(res, 409, already.status === 'confirmed'
+      ? 'You are already a participant in this program'
+      : 'You have already asked to join this program');
+  }
+
+  if (program.targetParticipants > 0 && (await confirmedCount(program._id)) >= program.targetParticipants) {
+    return errorResponse(res, 409, 'This program is already full');
+  }
+
+  if (already) {
+    // A previously declined request may be made again — circumstances change, and the alternative
+    // is a youth permanently locked out of one programme by a single past decision.
+    already.status = 'pending';
+    already.requestedAt = new Date();
+    already.decidedAt = undefined;
+    already.decidedBy = undefined;
+    already.declineReason = undefined;
+  } else {
+    member.programParticipations.push({ program: program._id, status: 'pending' });
+  }
+  await member.save();
+
+  successResponse(res, 200, 'Request to join submitted', { program: program._id, status: 'pending' });
+});
+
+exports.withdrawJoinRequest = asyncHandler(async (req, res) => {
+  const member = await YouthMember.findOne({ user: req.user._id, deletedAt: null });
+  if (!member) return errorResponse(res, 404, 'No youth registry record is linked to your account');
+
+  const entry = member.programParticipations.find((p) => p.program?.toString() === req.params.id);
+  if (!entry || entry.status === 'declined') {
+    return errorResponse(res, 404, 'You have no active request for this program');
+  }
+
+  member.programParticipations.pull({ _id: entry._id });
+  await member.save();
+
+  // A withdrawal by a confirmed participant frees their slot.
+  await Program.updateOne({ _id: req.params.id }, { actualParticipants: await confirmedCount(req.params.id) });
+  successResponse(res, 200, 'Request withdrawn');
+});
+
+exports.getParticipants = asyncHandler(async (req, res) => {
+  const program = await Program.findOne({ _id: req.params.id, deletedAt: null });
+  if (!program) return errorResponse(res, 404, 'Program not found');
+  const denied = denyIfForeign(req, program, 'view participants for');
+  if (denied) return errorResponse(res, 403, denied);
+
+  const members = await YouthMember.find({
+    deletedAt: null,
+    'programParticipations.program': program._id,
+  })
+    .select('firstName lastName birthDate gender barangay contactNumber programParticipations verificationStatus')
+    .populate('barangay', 'name');
+
+  const participants = members.map((m) => {
+    const entry = m.programParticipations.find((p) => p.program?.toString() === program._id.toString());
+    return {
+      _id: m._id,
+      firstName: m.firstName,
+      lastName: m.lastName,
+      age: m.age,
+      gender: m.gender,
+      barangay: m.barangay,
+      contactNumber: m.contactNumber,
+      verificationStatus: m.verificationStatus,
+      status: entry?.status,
+      requestedAt: entry?.requestedAt,
+      decidedAt: entry?.decidedAt,
+      declineReason: entry?.declineReason,
+    };
+  });
+
+  successResponse(res, 200, 'Program participants', {
+    targetParticipants: program.targetParticipants,
+    confirmed: participants.filter((p) => p.status === 'confirmed').length,
+    pending: participants.filter((p) => p.status === 'pending').length,
+    participants,
+  });
+});
+
+exports.decideParticipant = asyncHandler(async (req, res) => {
+  const { decision, reason } = req.body;
+  if (!['confirmed', 'declined'].includes(decision)) {
+    return errorResponse(res, 400, 'Decision must be confirmed or declined');
+  }
+
+  const program = await Program.findOne({ _id: req.params.id, deletedAt: null });
+  if (!program) return errorResponse(res, 404, 'Program not found');
+  const denied = denyIfForeign(req, program, 'manage participants for');
+  if (denied) return errorResponse(res, 403, denied);
+
+  // The cap is checked here, at the moment a place is actually taken, not when it was requested.
+  if (decision === 'confirmed' && program.targetParticipants > 0) {
+    if ((await confirmedCount(program._id)) >= program.targetParticipants) {
+      return errorResponse(res, 409, `This program has reached its target of ${program.targetParticipants} participants`);
+    }
+  }
+
+  // Atomic on the pending state, so two officers deciding at once cannot both take the last slot.
+  const updated = await YouthMember.findOneAndUpdate(
+    {
+      _id: req.params.youthId,
+      deletedAt: null,
+      programParticipations: { $elemMatch: { program: program._id, status: 'pending' } },
+    },
+    {
+      $set: {
+        'programParticipations.$[entry].status': decision,
+        'programParticipations.$[entry].decidedAt': new Date(),
+        'programParticipations.$[entry].decidedBy': req.user._id,
+        'programParticipations.$[entry].declineReason': decision === 'declined' ? reason : undefined,
+      },
+    },
+    { new: true, arrayFilters: [{ 'entry.program': program._id, 'entry.status': 'pending' }] }
+  );
+  if (!updated) return errorResponse(res, 409, 'That request was already decided, or does not exist');
+
+  // Kept in step with the registry so the programme page and reports agree.
+  await Program.updateOne({ _id: program._id }, { actualParticipants: await confirmedCount(program._id) });
+
+  await AuditLog.create({
+    user: req.user._id, action: 'UPDATE', resource: 'program', resourceId: program._id,
+    details: { participant: updated._id, decision }, municipality: program.municipality, ipAddress: req.ip,
+  });
+
+  if (updated.user) {
+    Notification.create({
+      recipient: updated.user,
+      type: 'system',
+      title: decision === 'confirmed' ? 'Program Request Approved' : 'Program Request Declined',
+      message: decision === 'confirmed'
+        ? `You are confirmed for "${program.title}".`
+        : `Your request to join "${program.title}" was declined${reason ? `: ${reason}` : ''}.`,
+      link: '/my/programs',
+    }).catch(() => {});
+  }
+
+  successResponse(res, 200, `Participant ${decision}`, { youth: updated._id, status: decision });
 });
 
 exports.deleteProgram = asyncHandler(async (req, res) => {

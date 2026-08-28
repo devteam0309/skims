@@ -35,14 +35,14 @@ const FULL_FORM = (overrides = {}) => ({
 
 describe('Youth full-form payload (regression for blank ObjectId/enum fields)', () => {
   it('creates with the full form when barangay/education/municipality are blank', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const res = await request(app).post('/api/youth').set(authHeader(token)).send(FULL_FORM());
     expect(res.status).toBe(201);
     expect(res.body.data.firstName).toBe('Maria');
   });
 
   it('updates with the full form when barangay/education are blank (no CastError 404)', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const create = await request(app).post('/api/youth').set(authHeader(token)).send(FULL_FORM());
     const id = create.body.data._id;
 
@@ -55,7 +55,7 @@ describe('Youth full-form payload (regression for blank ObjectId/enum fields)', 
   });
 
   it('sets non-empty optional fields on update', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
     const barangay = await Barangay.create({ name: 'Barangay Uno', municipality: municipalityId });
     const create = await request(app).post('/api/youth').set(authHeader(token)).send(FULL_FORM());
     const id = create.body.data._id;
@@ -73,7 +73,7 @@ describe('Youth full-form payload (regression for blank ObjectId/enum fields)', 
   });
 
   it('clears a previously-set barangay when the field is blanked on update', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
     const barangay = await Barangay.create({ name: 'Barangay Dos', municipality: municipalityId });
     const create = await request(app)
       .post('/api/youth')

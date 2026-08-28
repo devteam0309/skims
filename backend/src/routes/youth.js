@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { body } = require('express-validator');
 const { protect, authorize } = require('../middleware/auth');
-const { YOUTH_EDITORS, YOUTH_REGISTRARS } = require('../constants/roles');
+const { YOUTH_EDITORS, YOUTH_REGISTRARS, ADMINS } = require('../constants/roles');
 const asyncHandler = require('express-async-handler');
 const YouthMember = require('../models/YouthMember');
 const Barangay = require('../models/Barangay');
@@ -59,6 +59,54 @@ const ALLOWED_UPDATE_FIELDS = [
 ];
 
 router.use(protect);
+
+
+/*
+ * A youth's own registry record. The allowlist in middleware/auth.js opens exactly these two
+ * paths to the role — /api/youth itself stays closed, so a youth cannot read the roster and see
+ * other members' addresses and contact numbers.
+ */
+router.get('/me', authorize('youth'), asyncHandler(async (req, res) => {
+  const member = await YouthMember.findOne({ user: req.user._id, deletedAt: null })
+    .populate('municipality', 'name code')
+    .populate('barangay', 'name')
+    .populate('programParticipations.program', 'title status category startDate endDate');
+  if (!member) return errorResponse(res, 404, 'No youth registry record is linked to your account');
+  successResponse(res, 200, 'Your youth record', member);
+}));
+
+// Contact details only. Name, birth date and municipality are what identify the record in an
+// official roster, so they are not self-editable — a correction goes through SK staff.
+const SELF_EDITABLE = ['contactNumber', 'address', 'occupation', 'educationalAttainment', 'barangay'];
+
+router.put('/me', authorize('youth'), asyncHandler(async (req, res) => {
+  const member = await YouthMember.findOne({ user: req.user._id, deletedAt: null });
+  if (!member) return errorResponse(res, 404, 'No youth registry record is linked to your account');
+
+  const $set = {};
+  const $unset = {};
+  for (const key of SELF_EDITABLE) {
+    if (!(key in req.body)) continue;
+    const value = req.body[key];
+    if (value === '' || value === null || value === undefined) $unset[key] = '';
+    else $set[key] = value;
+  }
+
+  if ($set.barangay) {
+    const check = await checkBarangay($set.barangay, member.municipality);
+    if (check !== 'ok') return errorResponse(res, 400, barangayErrorMessage(check));
+  }
+
+  const update = {};
+  if (Object.keys($set).length) update.$set = $set;
+  if (Object.keys($unset).length) update.$unset = $unset;
+  if (!Object.keys(update).length) return successResponse(res, 200, 'Nothing to update', member);
+
+  const updated = await YouthMember.findByIdAndUpdate(member._id, update, { new: true, runValidators: true })
+    .populate('municipality', 'name code')
+    .populate('barangay', 'name');
+  successResponse(res, 200, 'Your details were updated', updated);
+}));
 
 router.get('/duplicate-check', asyncHandler(async (req, res) => {
   const { firstName, lastName, birthDate } = req.query;
@@ -137,7 +185,15 @@ router.get('/:id', asyncHandler(async (req, res) => {
   successResponse(res, 200, 'Youth member', member);
 }));
 
-router.post('/', authorize(...YOUTH_REGISTRARS), youthValidation, asyncHandler(async (req, res) => {
+/*
+ * Youth now register themselves; this is the fallback, not the main path.
+ *
+ * It is narrowed from YOUTH_REGISTRARS to ADMINS and hidden in the UI, but deliberately kept: the
+ * registry is the Katipunan ng Kabataan roster, and self-registration requires an email address.
+ * Removing this entirely would make any youth without one impossible to record, which would leave
+ * the roster incomplete for exactly the households least likely to be reached otherwise.
+ */
+router.post('/', authorize(...ADMINS), youthValidation, asyncHandler(async (req, res) => {
   const isAdmin = ['super_admin', 'provincial_admin', 'municipal_admin'].includes(req.user.role);
   const userMunId = req.user.municipality?._id || req.user.municipality;
   const targetMunId = isAdmin ? (req.body.municipality || userMunId) : userMunId;

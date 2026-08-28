@@ -25,7 +25,7 @@ const MEMBER_PAYLOAD = (overrides = {}) => ({
 
 describe('YouthMember audit trail', () => {
   it('writes a CREATE audit log entry on registration', async () => {
-    const { token, user, municipalityId } = await createUser({ role: 'sk_chairperson' });
+    const { token, user, municipalityId } = await createUser({ role: 'municipal_admin' });
     const res = await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER_PAYLOAD());
     expect(res.status).toBe(201);
 
@@ -37,7 +37,7 @@ describe('YouthMember audit trail', () => {
   });
 
   it('writes an UPDATE audit log entry on edit', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const create = await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER_PAYLOAD());
     const id = create.body.data._id;
 
@@ -49,7 +49,7 @@ describe('YouthMember audit trail', () => {
   });
 
   it('writes a DELETE audit log entry on soft-delete', async () => {
-    const { token } = await createUser({ role: 'sk_chairperson' });
+    const { token } = await createUser({ role: 'municipal_admin' });
     const create = await request(app).post('/api/youth').set(authHeader(token)).send(MEMBER_PAYLOAD());
     const id = create.body.data._id;
 
