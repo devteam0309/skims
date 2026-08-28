@@ -456,19 +456,53 @@ const seed = async () => {
       'Santos', 'Reyes', 'dela Cruz', 'Bautista', 'Ramos', 'Garcia', 'Torres', 'Flores', 'Rivera', 'Lopez',
       'Mendoza', 'Aquino', 'Castillo', 'Villanueva', 'Domingo', 'Navarro', 'Salazar', 'Aguilar', 'Ocampo', 'Pascual',
     ];
-    const youthData = Array.from({ length: 20 }, (_, i) => {
+    /*
+     * 40 members, deliberately spread rather than uniform.
+     *
+     * The previous 20 covered three of the six educational levels (never 'elementary'), were all
+     * active, were all aged 21-26, and — because the barangay was picked with `i % length` and
+     * each municipality only got five members — only ever landed in the first five barangays of
+     * each. A reviewer filtering the registry by Elementary, or by a real barangay like Tanza,
+     * got an empty table and reasonably read it as a broken filter. The data has to be able to
+     * demonstrate the filters that exist.
+     *
+     * The dedup index is {firstName, lastName, birthDate, municipality}; pairing the two name
+     * arrays with different strides keeps all 40 combinations unique.
+     */
+    const EDUCATION_LEVELS = ['elementary', 'high_school', 'college', 'vocational', 'graduate', 'out_of_school'];
+    const currentYear = new Date().getFullYear();
+
+    const youthData = Array.from({ length: 40 }, (_, i) => {
       const mun = municipalities[i % municipalities.length];
       const munBarangays = barangaysByMun[mun._id.toString()] || [];
-      const barangay = munBarangays[i % munBarangays.length];
+
+      // A stride coprime with most barangay counts, so members land across the whole list
+      // instead of clustering on the first few.
+      const barangay = munBarangays.length
+        ? munBarangays[(i * 7) % munBarangays.length]
+        : undefined;
+
+      /*
+       * Ages 15-30 are under the SK; every fifth member is seeded past 30 so the registry has
+       * genuine "aged out" records to distinguish from inactive ones. They are legitimate
+       * historical members — someone who was registered at 29 and is now 31.
+       */
+      const agedOut = i % 5 === 4;
+      const age = agedOut ? 31 + (i % 3) : 15 + (i % 16);
+
       return {
-        firstName: YOUTH_FIRST_NAMES[i],
-        lastName: YOUTH_LAST_NAMES[i],
-        birthDate: new Date(2000 + (i % 5), i % 12, (i % 28) + 1),
-        gender: i % 2 === 0 ? 'male' : 'female',
+        firstName: YOUTH_FIRST_NAMES[i % YOUTH_FIRST_NAMES.length],
+        lastName: YOUTH_LAST_NAMES[(i * 3) % YOUTH_LAST_NAMES.length],
+        birthDate: new Date(currentYear - age, i % 12, (i % 28) + 1),
+        // Mostly male/female, with a couple of free-text entries so the registry shows that the
+        // field accepts what a member actually identifies as.
+        gender: i % 11 === 3 ? 'LGBTQIA+' : (i % 2 === 0 ? 'Male' : 'Female'),
         municipality: mun._id,
         barangay: barangay?._id,
-        educationalAttainment: ['college', 'high_school', 'vocational'][i % 3],
-        isActive: true,
+        educationalAttainment: EDUCATION_LEVELS[i % EDUCATION_LEVELS.length],
+        // A minority are inactive, so Active/Inactive is visibly a distinction and not a
+        // column that reads the same on every row.
+        isActive: i % 7 !== 6,
         registeredBy: chairBoac._id,
       };
     });
