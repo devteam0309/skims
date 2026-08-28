@@ -129,7 +129,7 @@ exports.sendEmailVerification = async (user, token) => {
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#f8f9fa;padding:40px 20px">
         <div style="background:#1e3a5f;padding:30px;text-align:center;border-radius:8px 8px 0 0">
           <h1 style="color:#f5c518;margin:0;font-size:24px">SKIMS</h1>
-          <p style="color:#ffffff;margin:5px 0;font-size:12px">Sangguniang Kabataan Integrated Management System</p>
+          <p style="color:#ffffff;margin:5px 0;font-size:12px">Sangguniang Kabataan Integrated Program and Fund Management System</p>
         </div>
         <div style="background:#ffffff;padding:30px;border-radius:0 0 8px 8px">
           <h2 style="color:#1e3a5f">Hello, ${esc(user.firstName)}!</h2>
@@ -167,7 +167,7 @@ exports.sendPasswordReset = async (user, token) => {
   });
 };
 
-const header = `<div style="background:#1e3a5f;padding:24px;text-align:center"><h1 style="color:#f5c518;margin:0;font-size:22px">SKIMS</h1><p style="color:#fff;margin:4px 0;font-size:11px">Sangguniang Kabataan Integrated Management System</p></div>`;
+const header = `<div style="background:#1e3a5f;padding:24px;text-align:center"><h1 style="color:#f5c518;margin:0;font-size:22px">SKIMS</h1><p style="color:#fff;margin:4px 0;font-size:11px">Sangguniang Kabataan Integrated Program and Fund Management System</p></div>`;
 const wrap = (body) => `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">${header}<div style="padding:30px;background:#fff">${body}</div></div>`;
 const btn = (url, label) => `<div style="text-align:center;margin:28px 0"><a href="${url}" style="background:#1e3a5f;color:#f5c518;padding:13px 28px;text-decoration:none;border-radius:6px;font-weight:bold">${label}</a></div>`;
 

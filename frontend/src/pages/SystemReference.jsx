@@ -4,7 +4,7 @@ import useAuthStore from '../store/authStore';
 
 const SYSTEM = {
   name: 'SKIMS',
-  full: 'Sangguniang Kabataan Integrated Management System',
+  full: 'Sangguniang Kabataan Integrated Program and Fund Management System',
   version: '1.0.0',
   context: 'SK (Sangguniang Kabataan) governance platform for 4 municipalities in Marinduque, Philippines.',
   municipalities: ['Boac (BOA)', 'Gasan (GAS)', 'Mogpog (MOG)', 'Santa Cruz (STC)'],
@@ -1099,7 +1099,7 @@ export default function SystemReference() {
         </Section>
 
         <p className="text-xs text-gray-300 dark:text-gray-600 text-center mt-8 pb-4">
-          SKIMS · Sangguniang Kabataan Integrated Management System · Internal Reference · No nav link · /ref
+          SKIMS · Sangguniang Kabataan Integrated Program and Fund Management System · Internal Reference · No nav link · /ref
         </p>
       </div>
     </div>

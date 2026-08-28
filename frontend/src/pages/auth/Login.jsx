@@ -105,8 +105,10 @@ export default function Login() {
               </div>
             </div>
 
+            {/* The system's full name. The heading previously read "Integrated Management",
+                dropping "Program and Fund" — the two things the platform actually manages. */}
             <h1 className="mb-3 text-3xl font-bold leading-tight">
-              Sangguniang Kabataan<br />Integrated Management
+              Sangguniang Kabataan<br />Integrated Program and Fund<br />Management System
             </h1>
             <p className="mb-8 text-sm leading-relaxed text-navy-300">
               Digitizing youth governance across Boac, Gasan, Mogpog, and Sta. Cruz municipalities.
