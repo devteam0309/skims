@@ -448,13 +448,26 @@ const seed = async () => {
 
     // Seed youth members — first/last name arrays are indexed directly (20 entries each)
     // so every seeded youth gets a unique full name
+    /*
+     * One entry per member, indexed directly, so every seeded youth has a distinct full name.
+     *
+     * These held 20 entries each while the registry seeded 40 members, indexed with `i % 20` and
+     * `(i * 3) % 20`. Both wrap at the same point, so members i and i+20 received the identical
+     * first and last name — every name in the registry appeared exactly twice. It passed the
+     * duplicate check only because that index is {firstName, lastName, birthDate, municipality}
+     * and the birth dates differed.
+     */
     const YOUTH_FIRST_NAMES = [
       'Jose', 'Maria', 'Carlos', 'Ana', 'Miguel', 'Rosa', 'Antonio', 'Elena', 'Roberto', 'Carmen',
       'Paolo', 'Isabel', 'Ricardo', 'Teresa', 'Andres', 'Lourdes', 'Felipe', 'Cristina', 'Manuel', 'Dolores',
+      'Rafael', 'Bianca', 'Emilio', 'Sofia', 'Diego', 'Lucia', 'Nathaniel', 'Camila', 'Julian', 'Beatriz',
+      'Marco', 'Angeline', 'Enrico', 'Trisha', 'Gabriel', 'Katrina', 'Vincent', 'Michelle', 'Rommel', 'Jasmine',
     ];
     const YOUTH_LAST_NAMES = [
       'Santos', 'Reyes', 'dela Cruz', 'Bautista', 'Ramos', 'Garcia', 'Torres', 'Flores', 'Rivera', 'Lopez',
       'Mendoza', 'Aquino', 'Castillo', 'Villanueva', 'Domingo', 'Navarro', 'Salazar', 'Aguilar', 'Ocampo', 'Pascual',
+      'Manalo', 'Fernandez', 'Marasigan', 'Bernardo', 'Panganiban', 'Custodio', 'Espiritu', 'Magbanua', 'Sarmiento', 'Valdez',
+      'Alcantara', 'Quimpo', 'Rosales', 'Cabrera', 'Ilagan', 'Trinidad', 'Zamora', 'Bulaong', 'Lascano', 'Peralta',
     ];
     /*
      * 40 members, deliberately spread rather than uniform.
@@ -501,8 +514,8 @@ const seed = async () => {
       birthDate.setDate(birthDate.getDate() - ((i * 9) % 330));
 
       return {
-        firstName: YOUTH_FIRST_NAMES[i % YOUTH_FIRST_NAMES.length],
-        lastName: YOUTH_LAST_NAMES[(i * 3) % YOUTH_LAST_NAMES.length],
+        firstName: YOUTH_FIRST_NAMES[i],
+        lastName: YOUTH_LAST_NAMES[i],
         birthDate,
         // Mostly male/female, with a couple of free-text entries so the registry shows that the
         // field accepts what a member actually identifies as.
@@ -516,8 +529,25 @@ const seed = async () => {
         registeredBy: chairBoac._id,
       };
     });
+    /*
+     * Fail loudly rather than seeding a registry full of repeated people. The previous duplication
+     * was invisible: the collection's unique index also keys on birthDate and municipality, so
+     * forty members sharing twenty names inserted without complaint and only showed up by reading
+     * the registry. Raising the member count past the name lists now stops the seed instead of
+     * silently wrapping back to the first name.
+     */
+    const fullNames = youthData.map((y) => `${y.firstName} ${y.lastName}`);
+    const uniqueNames = new Set(fullNames);
+    if (uniqueNames.size !== youthData.length) {
+      const dupes = [...new Set(fullNames.filter((n, i) => fullNames.indexOf(n) !== i))];
+      throw new Error(
+        `Seed would create ${youthData.length - uniqueNames.size} duplicate youth name(s): ${dupes.join(', ')}. `
+        + 'Extend YOUTH_FIRST_NAMES / YOUTH_LAST_NAMES to one entry per member.'
+      );
+    }
+
     await YouthMember.insertMany(youthData);
-    console.log(`Seeded ${youthData.length} youth members`);
+    console.log(`Seeded ${youthData.length} youth members (${uniqueNames.size} distinct names)`);
 
     // Seed announcements
     await Announcement.insertMany([
