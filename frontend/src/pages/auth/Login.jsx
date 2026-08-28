@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Eye, EyeOff, LogIn, Shield, Check } from 'lucide-react';
+import { Eye, EyeOff, LogIn, Shield, Check, AlertCircle } from 'lucide-react';
 import { authService } from '../../services/authService';
 import useAuthStore from '../../store/authStore';
 import { toast } from '../../components/ui/toaster';
@@ -62,6 +62,12 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showQA, setShowQA] = useState(false);
+  /*
+   * The sign-in failure, kept on the page rather than only in a toast. A toast is transient by
+   * design and this one competed with a full page reload the interceptor used to trigger, so the
+   * reason a sign-in failed could vanish before it was read. This stays until the next attempt.
+   */
+  const [signInError, setSignInError] = useState('');
   const reduceMotion = useReducedMotion();
 
   /*
@@ -86,15 +92,18 @@ export default function Login() {
 
   const onSubmit = async (data) => {
     setLoading(true);
+    setSignInError('');
     try {
       const res = await authService.login(data);
       setAuth(res.data.data.user);
       toast.success(`Welcome back, ${res.data.data.user.firstName}!`);
       navigate('/dashboard');
     } catch (err) {
-      toast.error(err.message || 'Login failed. Please check your credentials.');
+      const message = err.message || 'Login failed. Please check your credentials.';
+      setSignInError(message);
+      toast.error(message);
       // Returning focus to the form means the next attempt does not start with a hunt for the
-      // field; the toast is transient and easy to miss entirely.
+      // field; the toast is transient, and the banner above carries the reason regardless.
       setFocus('password');
     } finally {
       setLoading(false);
@@ -160,6 +169,16 @@ export default function Login() {
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
+            {/* role="alert" so it is announced, not only seen. */}
+            {signInError && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+              >
+                <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <span>{signInError}</span>
+              </div>
+            )}
             <Field id="email" label="Email Address" required error={errors.email}>
               <input
                 {...register('email')}

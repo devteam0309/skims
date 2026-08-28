@@ -22,10 +22,26 @@ api.interceptors.response.use(
 
     // Only attempt refresh on 401s that haven't already been retried
     if (error.response?.status === 401 && !original._retry) {
-      // Don't loop on the refresh endpoint itself
-      if (original.url === '/auth/refresh' || original.url === '/auth/login') {
+      /*
+       * A rejected sign-in is the caller's to report, not this interceptor's to act on.
+       *
+       * It used to share a branch with a dead refresh token and was answered with
+       * `window.location.href = '/login'` — a full navigation to the page the user is already
+       * standing on. That reloaded the whole app, and the "Invalid credentials" toast the login
+       * form raises was wiped before it could be read: the password was simply wrong, and the
+       * screen just blinked. There is no session to clear and nowhere to send them.
+       */
+      if (original.url === '/auth/login') {
+        return Promise.reject(Object.assign({ status: 401 }, error.response?.data));
+      }
+
+      // A refresh that fails means the session really is gone. Clear it and send them to sign in
+      // — but not if they are already there, since that is the reload this branch used to cause.
+      if (original.url === '/auth/refresh') {
         localStorage.removeItem('auth-storage');
-        window.location.href = '/login';
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login?reason=session_expired';
+        }
         return Promise.reject(error.response?.data || error);
       }
 
