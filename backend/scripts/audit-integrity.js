@@ -2,6 +2,7 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 const { calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } = require('../src/utils/age');
+const { normalizeLabel } = require('../src/utils/labels');
 
 const Municipality = require('../src/models/Municipality');
 const Barangay = require('../src/models/Barangay');
@@ -150,7 +151,16 @@ const idStr = (v) => (v && v._id ? v._id : v)?.toString();
     if (d.deletedAt) continue;
     if (d.municipality && !munIds.has(idStr(d.municipality))) flag('MED', 'document', `Doc '${d.title}' → bad municipality`);
     if (!userIds.has(idStr(d.uploadedBy))) flag('MED', 'document', `Doc '${d.title}' → uploadedBy missing`);
-    if (!DOC_CATS.includes(d.category)) flag('MED', 'document', `Doc '${d.title}' → invalid category '${d.category}'`);
+    /*
+     * Category is free text now — DOC_CATS is the suggested list, not a closed set, so a value
+     * outside it is a deliberate entry rather than bad data. What is still worth flagging is a
+     * category that is missing or not in canonical form, since a stray capital or space would put
+     * an otherwise identical category into its own bucket in every filter and group-by.
+     */
+    if (!d.category) flag('MED', 'document', `Doc '${d.title}' → no category`);
+    else if (d.category !== normalizeLabel(d.category)) {
+      flag('LOW', 'document', `Doc '${d.title}' → category '${d.category}' is not in canonical form`);
+    }
   }
 
   // --- Notifications: recipient must exist ---

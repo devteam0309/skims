@@ -756,7 +756,7 @@ const seed = async () => {
       {
         title: 'Q1 2026 DILG Compliance Report',
         description: 'First-quarter compliance report submitted to DILG.',
-        category: 'barangay_assembly_minutes',
+        category: 'compliance_report',
         fileName: 'skims/documents/seed-compliance-q1',
         originalName: 'DILG-Compliance-Q1-2026.pdf',
         fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-compliance-q1.pdf',
@@ -769,9 +769,11 @@ const seed = async () => {
         tags: ['compliance', 'dilg', 'q1'],
       },
       {
-        title: 'SK Regular Session Minutes — January 2026',
-        description: 'Minutes of the SK Boac regular session held January 2026.',
-        category: 'minutes',
+        // Filed under a category the standard list does not name, so the registry demonstrates
+        // that document category accepts a typed value.
+        title: 'Barangay Assembly Minutes — January 2026',
+        description: 'Minutes of the SK Boac barangay assembly held January 2026.',
+        category: 'barangay_assembly_minutes',
         fileName: 'skims/documents/seed-minutes-jan',
         originalName: 'SK-Minutes-January-2026.docx',
         fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-minutes-jan.docx',
