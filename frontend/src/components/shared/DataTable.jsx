@@ -128,7 +128,11 @@ function EmptyState({ message, action }) {
   );
 }
 
-function PaginationBtn({ children, onClick, disabled, label }) {
+/**
+ * Exported because the programs page renders cards rather than a table and so cannot use
+ * DataTable, but its pager must still look and behave like every other one.
+ */
+export function PaginationBtn({ children, onClick, disabled, label }) {
   return (
     <button
       type="button"
