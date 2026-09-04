@@ -8,6 +8,7 @@ const { normalizeLabel } = require('../utils/labels');
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
+const { pickCreatable, pickWritable, toMutation } = require('../utils/writeFields');
 
 exports.getDocuments = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, municipality, category, search, isArchived, isPublic } = req.query;
@@ -56,7 +57,8 @@ exports.uploadDocument = asyncHandler(async (req, res) => {
   if (!req.file) return errorResponse(res, 400, 'No file uploaded');
 
   const ALLOWED_FIELDS = ['title', 'description', 'category', 'barangay', 'program', 'fiscalYear', 'isPublic'];
-  const body = Object.fromEntries(Object.entries(req.body).filter(([k]) => ALLOWED_FIELDS.includes(k)));
+  // Blanks dropped — an unlinked programme or barangay posts '' and cannot be cast to an ObjectId.
+  const body = pickCreatable(Document, req.body, ALLOWED_FIELDS);
 
   const isImage = req.file.mimetype.startsWith('image/');
   const result = await uploadToCloudinary(req.file.buffer, {
@@ -97,9 +99,11 @@ exports.updateDocument = asyncHandler(async (req, res) => {
 
   const allowed = ['title', 'description', 'category', 'tags', 'isPublic', 'fiscalYear'];
   if (req.body.category) req.body.category = normalizeLabel(req.body.category);
-  const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
-
-  const updated = await Document.findByIdAndUpdate(req.params.id, updates, { new: true });
+  const updated = await Document.findByIdAndUpdate(
+    req.params.id,
+    toMutation(pickWritable(Document, req.body, allowed)),
+    { new: true },
+  );
   successResponse(res, 200, 'Document updated', updated);
 });
 

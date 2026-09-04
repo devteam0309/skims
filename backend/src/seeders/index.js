@@ -538,6 +538,31 @@ const seed = async () => {
         vendor: { name: 'Green Earth Supplies', address: 'Mogpog, Marinduque' },
       },
     ];
+    /*
+     * Sta. Cruz had no expenses at all, so its Expenses page and every figure derived from it read
+     * as zero — the same emptiness that was reported as a bug for Documents and for Gasan's
+     * programmes. Looked up by title, with the municipality asserted, like the budget links above.
+     */
+    const stcProgram = byTitle['Sta. Cruz Youth Leadership Bootcamp'];
+    if (!stcProgram) throw new Error('Seed error: no Sta. Cruz programme to charge an expense to');
+    if (stcProgram.municipality.toString() !== munMap['STC']._id.toString()) {
+      throw new Error('Seed error: the Sta. Cruz bootcamp is not in STC; the expense would cross municipalities');
+    }
+    expensesData.push({
+      type: 'purchase_order',
+      title: 'Venue and Catering for Leadership Bootcamp',
+      description: 'Hall rental and meals for the three-day bootcamp.',
+      amount: 52000,
+      program: stcProgram._id,
+      budget: budgetsByMun['STC']._id,
+      municipality: munMap['STC']._id,
+      transactionDate: new Date('2026-05-12'),
+      status: 'approved',
+      approvedBy: provincial._id,
+      createdBy: chairStac._id,
+      vendor: { name: 'Marinduque Events and Catering', address: 'Santa Cruz, Marinduque' },
+    });
+
     for (const ed of expensesData) {
       await new Expense(ed).save();
     }
@@ -829,11 +854,59 @@ const seed = async () => {
         remarks: 'Draft — compiling receipts before submission.',
       },
     ];
+    /*
+     * One liquidation per remaining municipality, so Liquidations is not a Boac-only page.
+     *
+     * The three above are all Boac's — the same thinness that made Documents look broken to the
+     * Gasan Secretary. Linked by title, never by array position, and the municipality is asserted
+     * before the record is built so a mistake stops the seed instead of quietly filing a
+     * liquidation against another municipality's programme.
+     *
+     * `submittedBy` is a role that could actually have submitted it: liquidations are FINANCE_STAFF
+     * work, so Gasan and Mogpog — which have no chairperson or treasurer seeded — are attributed to
+     * the provincial admin rather than to a secretary who would have been refused.
+     */
+    const extraLiquidations = [
+      { code: 'GAS', title: 'Gasan Youth Skills and Livelihood Workshop', submitter: provincial,
+        totalAmount: 62000, liquidatedAmount: 62000, status: 'approved',
+        remarks: 'Full liquidation for the completed livelihood workshop.' },
+      { code: 'MOG', title: 'Mogpog Youth Mental Health Forum', submitter: provincial,
+        totalAmount: 34000, liquidatedAmount: 21000, status: 'submitted',
+        remarks: 'Partial liquidation; awaiting receipts from the resource speaker.' },
+      { code: 'STC', title: 'Sta. Cruz Barangay Reading Corner', submitter: chairStac,
+        totalAmount: 40000, liquidatedAmount: 0, status: 'draft',
+        remarks: 'Draft — compiling receipts for the book and shelving purchases.' },
+    ];
+    for (const spec of extraLiquidations) {
+      const prog = byTitle[spec.title];
+      if (!prog) throw new Error(`Seed error: no programme titled "${spec.title}" to liquidate`);
+      if (prog.municipality.toString() !== munMap[spec.code]._id.toString()) {
+        throw new Error(`Seed error: "${spec.title}" is not in ${spec.code}; the liquidation would cross municipalities`);
+      }
+      liquidationsData.push({
+        title: `Liquidation — ${spec.title}`,
+        program: prog._id,
+        budget: budgetsByMun[spec.code]._id,
+        municipality: munMap[spec.code]._id,
+        totalAmount: spec.totalAmount,
+        liquidatedAmount: spec.liquidatedAmount,
+        status: spec.status,
+        submittedBy: spec.submitter._id,
+        ...(spec.status === 'draft' ? {} : { submittedAt: new Date('2026-05-10') }),
+        ...(spec.status === 'approved'
+          ? { reviewedBy: provincial._id, reviewedAt: new Date('2026-05-20'), approvedBy: provincial._id, approvedAt: new Date('2026-05-22') }
+          : {}),
+        dueDate: new Date('2026-06-30'),
+        remarks: spec.remarks,
+      });
+    }
+
     const liquidations = [];
+    // Sequential .save() — the reference-number counter depends on it; insertMany would skip the hook.
     for (const ld of liquidationsData) {
       liquidations.push(await new Liquidation(ld).save());
     }
-    console.log(`Seeded ${liquidations.length} liquidations`);
+    console.log(`Seeded ${liquidations.length} liquidations across ${new Set(liquidationsData.map((l) => l.municipality.toString())).size} municipalities`);
 
     // Seed documents
     const documentsData = [

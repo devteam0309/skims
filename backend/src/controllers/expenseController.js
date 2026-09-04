@@ -12,6 +12,7 @@ const { successResponse, errorResponse, paginatedResponse, parsePagination } = r
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
+const { pickCreatable, pickWritable, toMutation } = require('../utils/writeFields');
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 exports.getExpenses = asyncHandler(async (req, res) => {
@@ -69,9 +70,8 @@ exports.getExpense = asyncHandler(async (req, res) => {
 
 exports.createExpense = asyncHandler(async (req, res) => {
   const ALLOWED_CREATE_FIELDS = ['type', 'title', 'description', 'amount', 'program', 'budget', 'municipality', 'barangay', 'vendor', 'transactionDate'];
-  const expenseData = Object.fromEntries(
-    Object.entries(req.body).filter(([k]) => ALLOWED_CREATE_FIELDS.includes(k))
-  );
+  // Blanks dropped: an expense with no programme linked posts `program: ''`, which cannot be cast.
+  const expenseData = pickCreatable(Expense, req.body, ALLOWED_CREATE_FIELDS);
   expenseData.createdBy = req.user._id;
   // Form submits a flat `vendorName` field (FormData); map it onto the nested vendor object
   if (req.body.vendorName) expenseData.vendor = { ...(expenseData.vendor || {}), name: req.body.vendorName };
@@ -181,13 +181,17 @@ exports.updateExpense = asyncHandler(async (req, res) => {
     return errorResponse(res, 400, 'Approved or liquidated expenses cannot be edited');
   }
   const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'amount', 'vendor', 'transactionDate'];
-  const updates = Object.fromEntries(
-    Object.entries(req.body).filter(([k]) => ALLOWED_UPDATE_FIELDS.includes(k))
-  );
+  /*
+   * transactionDate is required, so a blank one is ignored rather than unset — see utils/writeFields.
+   * Clearing it would trade a CastError for a ValidationError and fail the edit either way.
+   */
+  const { set, unset } = pickWritable(Expense, req.body, ALLOWED_UPDATE_FIELDS);
   // Form submits a flat `vendorName` field (FormData); map it onto the nested vendor object
-  if (req.body.vendorName) updates.vendor = { ...(updates.vendor || {}), name: req.body.vendorName };
-  const updated = await Expense.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
-  await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'expense', resourceId: expense._id, details: { changes: Object.keys(updates) }, municipality: req.user.municipality, ipAddress: req.ip });
+  if (req.body.vendorName) set.vendor = { ...(set.vendor || {}), name: req.body.vendorName };
+  const updates = set;
+  const cleared = unset;
+  const updated = await Expense.findByIdAndUpdate(req.params.id, toMutation({ set, unset }), { new: true, runValidators: true });
+  await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'expense', resourceId: expense._id, details: { changes: [...Object.keys(updates), ...cleared] }, municipality: expense.municipality, ipAddress: req.ip });
   successResponse(res, 200, 'Expense updated', updated);
 });
 

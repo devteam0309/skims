@@ -8,6 +8,7 @@ const Notification = require('../models/Notification');
 const AuditLog = require('../models/AuditLog');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { escapeRegex } = require('../utils/regex');
+const { pickCreatable, pickWritable, toMutation } = require('../utils/writeFields');
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
@@ -87,11 +88,7 @@ exports.createProgram = asyncHandler(async (req, res) => {
    * a program without linking a budget failed with a message about the program not existing.
    * Same shape as the fix already carried by routes/youth.js.
    */
-  const programData = Object.fromEntries(
-    Object.entries(req.body)
-      .filter(([k]) => ALLOWED_CREATE_FIELDS.includes(k))
-      .filter(([, v]) => v !== '' && v !== null && v !== undefined)
-  );
+  const programData = pickCreatable(Program, req.body, ALLOWED_CREATE_FIELDS);
   if (programData.category) programData.category = normalizeCategory(programData.category);
   programData.createdBy = req.user._id;
 
@@ -140,9 +137,7 @@ exports.updateProgram = asyncHandler(async (req, res) => {
    * update with a 404, sent to $unset it does what the user asked. Blank scalars are unset too,
    * so a field can be emptied rather than only ever overwritten.
    */
-  const allowed = Object.entries(req.body).filter(([k]) => ALLOWED_UPDATE_FIELDS.includes(k));
-  const updates = Object.fromEntries(allowed.filter(([, v]) => v !== '' && v !== null && v !== undefined));
-  const cleared = allowed.filter(([, v]) => v === '' || v === null).map(([k]) => k);
+  const { set: updates, unset: cleared } = pickWritable(Program, req.body, ALLOWED_UPDATE_FIELDS);
 
   if (updates.category) updates.category = normalizeCategory(updates.category);
 
@@ -152,10 +147,7 @@ exports.updateProgram = asyncHandler(async (req, res) => {
     return errorResponse(res, 400, 'End date must be after start date');
   }
 
-  const mutation = {};
-  if (Object.keys(updates).length) mutation.$set = updates;
-  if (cleared.length) mutation.$unset = Object.fromEntries(cleared.map((k) => [k, '']));
-  const updated = await Program.findByIdAndUpdate(req.params.id, mutation, { new: true, runValidators: true });
+  const updated = await Program.findByIdAndUpdate(req.params.id, toMutation({ set: updates, unset: cleared }), { new: true, runValidators: true });
   // Cleared fields are changes too — omitting them under-reports the edit in the audit trail.
   await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'program', resourceId: program._id, details: { changes: [...Object.keys(updates), ...cleared] }, municipality: program.municipality, ipAddress: req.ip });
   successResponse(res, 200, 'Program updated', updated);
