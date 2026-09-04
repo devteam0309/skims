@@ -51,8 +51,8 @@ const navGroups = [
     roles: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_secretary'],
     items: [
       { to: '/announcements', icon: Megaphone, label: 'Announcements', roles: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_secretary'] },
-      { to: '/users', icon: Users, label: 'User Management', roles: ['super_admin', 'provincial_admin', 'municipal_admin'] },
-      { to: '/audit-logs', icon: Shield, label: 'Audit Logs', roles: ['super_admin', 'provincial_admin', 'municipal_admin'] },
+      { to: '/users', icon: Users, label: 'User Management', roles: ['super_admin'] },
+      { to: '/audit-logs', icon: Shield, label: 'Audit Logs', roles: ['super_admin'] },
     ],
   },
 ];

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middleware/auth');
-const { REPORTERS } = require('../constants/roles');
+const { REPORT_VIEWERS, CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 const asyncHandler = require('express-async-handler');
 const Program = require('../models/Program');
 const Expense = require('../models/Expense');
@@ -9,10 +9,10 @@ const YouthMember = require('../models/YouthMember');
 const { successResponse } = require('../utils/apiResponse');
 
 router.use(protect);
-router.use(authorize(...REPORTERS));
+router.use(authorize(...REPORT_VIEWERS));
 
 const scopeAnalytics = (req, filter) => {
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   }

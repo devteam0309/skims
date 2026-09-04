@@ -146,9 +146,18 @@ export default function ProgramEdit() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field id="category" label="Category" required error={errors.category}>
-                <select {...register('category')} className={control}>
-                  {PROGRAM_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
+                {/*
+                  * Type-or-pick, matching the create form — which already used ComboInput while
+                  * this stayed a fixed <select>, so a category typed on create could not be read
+                  * back or kept on edit. A stored value outside the suggestion list had no
+                  * matching <option> at all: the control rendered blank and quietly rewrote the
+                  * category on the next save.
+                  */}
+                <ComboInput
+                  {...register('category')}
+                  options={PROGRAM_CATEGORIES}
+                  placeholder="Select or type a category..."
+                />
               </Field>
 
               <Field

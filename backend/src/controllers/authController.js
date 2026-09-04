@@ -175,9 +175,10 @@ exports.register = asyncHandler(async (req, res) => {
   // Notify admins when a role that requires approval registers. Youth are excluded: they approve
   // themselves, and a notification per youth sign-up would bury every other admin notification.
   if (assignedRole !== 'public_user' && assignedRole !== 'youth') {
-    const adminFilter = { role: { $in: ['super_admin', 'provincial_admin', 'municipal_admin'] }, isActive: true, deletedAt: null };
-    if (user.municipality) adminFilter.$or = [{ municipality: user.municipality }, { role: { $in: ['super_admin', 'provincial_admin'] } }];
-    const admins = await User.find(adminFilter).select('_id').lean();
+    // Only super_admin is notified, because only super_admin can act on it. The other two admin
+    // tiers used to receive these and no longer have the Users page, so the notification would
+    // have linked them to a screen they cannot open.
+    const admins = await User.find({ role: 'super_admin', isActive: true, deletedAt: null }).select('_id').lean();
     if (admins.length > 0) {
       // createWithExpiry, not insertMany: insertMany bypasses the pre-save hook that sets
       // expiresAt, so these would sit in the collection forever despite the TTL index.

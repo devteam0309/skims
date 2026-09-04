@@ -3,6 +3,7 @@ const router = express.Router();
 const { body } = require('express-validator');
 const { protect, authorize } = require('../middleware/auth');
 const validate = require('../middleware/validate');
+const { BUDGET_APPROVERS } = require('../constants/roles');
 const {
   getBudgets, getBudget, createBudget, updateBudget,
   submitBudget, approveBudget, rejectBudget, reopenBudget, deleteBudget, getBudgetSummary,
@@ -21,8 +22,8 @@ router.get('/:id', getBudget);
 router.post('/', authorize('super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer'), budgetValidation, createBudget);
 router.put('/:id', authorize('super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer'), updateBudget);
 router.patch('/:id/submit', authorize('sk_chairperson', 'sk_treasurer', 'municipal_admin'), submitBudget);
-router.patch('/:id/approve', authorize('super_admin', 'provincial_admin', 'municipal_admin', 'dilg_representative'), approveBudget);
-router.patch('/:id/reject', authorize('super_admin', 'provincial_admin', 'municipal_admin', 'dilg_representative'), rejectBudget);
+router.patch('/:id/approve', authorize(...BUDGET_APPROVERS), approveBudget);
+router.patch('/:id/reject', authorize(...BUDGET_APPROVERS), rejectBudget);
 router.patch('/:id/reopen', authorize('super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer'), reopenBudget);
 router.delete('/:id', authorize('super_admin', 'provincial_admin'), deleteBudget);
 

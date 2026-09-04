@@ -9,6 +9,7 @@ const User = require('../models/User');
 const emailService = require('../services/emailService');
 const { uploadToCloudinary } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -29,7 +30,7 @@ exports.getExpenses = asyncHandler(async (req, res) => {
     if (startDate) filter.transactionDate.$gte = new Date(startDate);
     if (endDate) filter.transactionDate.$lte = new Date(endDate);
   }
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   }
@@ -57,7 +58,7 @@ exports.getExpense = asyncHandler(async (req, res) => {
     .populate('createdBy', 'firstName lastName');
   if (!expense || expense.deletedAt) return errorResponse(res, 404, 'Expense not found');
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (expense.municipality?._id?.toString() !== userMunId && expense.municipality?.toString() !== userMunId) {
       return errorResponse(res, 403, 'Not authorized to view this expense');
@@ -76,7 +77,7 @@ exports.createExpense = asyncHandler(async (req, res) => {
   if (req.body.vendorName) expenseData.vendor = { ...(expenseData.vendor || {}), name: req.body.vendorName };
   if (!expenseData.municipality) expenseData.municipality = req.user.municipality?._id || req.user.municipality;
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (expenseData.municipality?.toString() !== userMunId) {
       return errorResponse(res, 403, 'Cannot create expenses for another municipality');
@@ -172,7 +173,7 @@ exports.createExpense = asyncHandler(async (req, res) => {
 exports.updateExpense = asyncHandler(async (req, res) => {
   const expense = await Expense.findById(req.params.id);
   if (!expense || expense.deletedAt) return errorResponse(res, 404, 'Expense not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (expense.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this expense');
   }
@@ -222,7 +223,7 @@ exports.approveExpense = asyncHandler(async (req, res) => {
     return errorResponse(res, 403, 'You cannot approve an expense you created');
   }
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (expense.municipality?.toString() !== userMunId) {
       return errorResponse(res, 403, 'Not authorized to approve expenses for this municipality');
@@ -274,7 +275,7 @@ exports.bulkApproveExpenses = asyncHandler(async (req, res) => {
     createdBy: { $ne: req.user._id },
     deletedAt: null,
   };
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     filter.municipality = req.user.municipality?._id || req.user.municipality;
   }
 
@@ -369,7 +370,7 @@ exports.deleteExpense = asyncHandler(async (req, res) => {
 exports.getExpenseSummary = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   } else if (req.query.municipality) {

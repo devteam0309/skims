@@ -5,6 +5,7 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 const emailService = require('../services/emailService');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -45,7 +46,7 @@ exports.getBudgets = asyncHandler(async (req, res) => {
   if (fiscalYear) filter.fiscalYear = parseInt(fiscalYear);
   if (status) filter.status = status;
   if (search) filter.title = { $regex: escapeRegex(search), $options: 'i' };
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   }
@@ -70,7 +71,7 @@ exports.getBudget = asyncHandler(async (req, res) => {
     .populate('createdBy', 'firstName lastName')
     .populate('approvedBy', 'firstName lastName');
   if (!budget || budget.deletedAt) return errorResponse(res, 404, 'Budget not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (budget.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to view this budget');
   }
@@ -87,7 +88,7 @@ exports.createBudget = asyncHandler(async (req, res) => {
   // Only super/provincial admins operate across municipalities. For everyone else the municipality
   // is forced from the token — accepting it from the body let a municipal_admin in one municipality
   // create a budget assigned to another.
-  if (['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     if (!budgetData.municipality) budgetData.municipality = req.user.municipality;
   } else {
     budgetData.municipality = req.user.municipality;
@@ -105,7 +106,7 @@ exports.createBudget = asyncHandler(async (req, res) => {
 exports.updateBudget = asyncHandler(async (req, res) => {
   const budget = await Budget.findById(req.params.id);
   if (!budget || budget.deletedAt) return errorResponse(res, 404, 'Budget not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (budget.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this budget');
   }
@@ -135,7 +136,7 @@ exports.updateBudget = asyncHandler(async (req, res) => {
 exports.submitBudget = asyncHandler(async (req, res) => {
   const budget = await Budget.findOne({ _id: req.params.id, deletedAt: null });
   if (!budget) return errorResponse(res, 404, 'Budget not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (budget.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to submit this budget');
   }
@@ -153,7 +154,7 @@ exports.submitBudget = asyncHandler(async (req, res) => {
 exports.approveBudget = asyncHandler(async (req, res) => {
   const budget = await Budget.findOne({ _id: req.params.id, deletedAt: null });
   if (!budget) return errorResponse(res, 404, 'Budget not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (budget.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to approve this budget');
   }
@@ -178,7 +179,7 @@ exports.approveBudget = asyncHandler(async (req, res) => {
 exports.rejectBudget = asyncHandler(async (req, res) => {
   const budget = await Budget.findOne({ _id: req.params.id, deletedAt: null });
   if (!budget) return errorResponse(res, 404, 'Budget not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (budget.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to reject this budget');
   }
@@ -201,7 +202,7 @@ exports.rejectBudget = asyncHandler(async (req, res) => {
 exports.reopenBudget = asyncHandler(async (req, res) => {
   const budget = await Budget.findOne({ _id: req.params.id, deletedAt: null });
   if (!budget) return errorResponse(res, 404, 'Budget not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (budget.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to reopen this budget');
   }
@@ -214,7 +215,7 @@ exports.reopenBudget = asyncHandler(async (req, res) => {
 exports.deleteBudget = asyncHandler(async (req, res) => {
   const budget = await Budget.findById(req.params.id);
   if (!budget || budget.deletedAt) return errorResponse(res, 404, 'Budget not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (budget.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to delete this budget');
   }
@@ -228,7 +229,7 @@ exports.deleteBudget = asyncHandler(async (req, res) => {
 exports.getBudgetSummary = asyncHandler(async (req, res) => {
   const { municipalityId, fiscalYear } = req.query;
   const filter = { deletedAt: null, status: 'approved' };
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   } else if (municipalityId) {

@@ -7,6 +7,8 @@ const { normalizeLabel: normalizeCategory } = require('../utils/labels');
 const Notification = require('../models/Notification');
 const AuditLog = require('../models/AuditLog');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { escapeRegex } = require('../utils/regex');
+const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
 
@@ -19,14 +21,23 @@ exports.getPrograms = asyncHandler(async (req, res) => {
   if (approvalStatus) filter.approvalStatus = approvalStatus;
   if (category) filter.category = normalizeCategory(category);
   if (barangay) filter.barangay = barangay;
-  if (search) filter.$text = { $search: search };
+  /*
+   * A substring match, as on every other list page. This was `$text`, which matches only whole
+   * indexed words: searching "Lead" or "Youth Lead" returned nothing while "Leadership" worked,
+   * so the box looked broken for any partial term — which is how people actually type. The term
+   * is escaped because it is data, not a pattern.
+   */
+  if (search) {
+    const rx = { $regex: escapeRegex(search), $options: 'i' };
+    filter.$or = [{ title: rx }, { description: rx }, { location: rx }];
+  }
   if (startDate || endDate) {
     filter.startDate = {};
     if (startDate) filter.startDate.$gte = new Date(startDate);
     if (endDate) filter.startDate.$lte = new Date(endDate);
   }
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user?.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user?.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   } else if (municipality) {
@@ -58,7 +69,7 @@ exports.getProgram = asyncHandler(async (req, res) => {
 
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     const programMunId = (program.municipality?._id || program.municipality)?.toString();
     if (programMunId !== userMunId) return errorResponse(res, 403, 'Not authorized to view this program');
@@ -69,8 +80,17 @@ exports.getProgram = asyncHandler(async (req, res) => {
 
 exports.createProgram = asyncHandler(async (req, res) => {
   const ALLOWED_CREATE_FIELDS = ['title', 'description', 'category', 'status', 'municipality', 'barangay', 'budget', 'budgetRef', 'startDate', 'endDate', 'targetParticipants', 'objectives', 'assignedOfficers', 'isPublic'];
+  /*
+   * Blank values are dropped rather than stored. The form posts every field it owns, so a program
+   * with no budget linked arrives as `budgetRef: ''` — which Mongoose cannot cast to an ObjectId.
+   * It threw a CastError that the global handler reported as 404 "Resource not found", so creating
+   * a program without linking a budget failed with a message about the program not existing.
+   * Same shape as the fix already carried by routes/youth.js.
+   */
   const programData = Object.fromEntries(
-    Object.entries(req.body).filter(([k]) => ALLOWED_CREATE_FIELDS.includes(k))
+    Object.entries(req.body)
+      .filter(([k]) => ALLOWED_CREATE_FIELDS.includes(k))
+      .filter(([, v]) => v !== '' && v !== null && v !== undefined)
   );
   if (programData.category) programData.category = normalizeCategory(programData.category);
   programData.createdBy = req.user._id;
@@ -79,7 +99,7 @@ exports.createProgram = asyncHandler(async (req, res) => {
   // municipality. For everyone else the body value is ignored outright: a `!municipality`
   // fallback still let a scoped user file a program under a municipality they cannot read,
   // which is precisely the isolation the panel asked us to guarantee.
-  if (['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     if (!programData.municipality) programData.municipality = req.user.municipality;
   } else {
     programData.municipality = req.user.municipality?._id || req.user.municipality;
@@ -108,13 +128,21 @@ exports.createProgram = asyncHandler(async (req, res) => {
 exports.updateProgram = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (program.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this program');
   }
 
   const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'objectives', 'category', 'status', 'barangay', 'budget', 'budgetRef', 'startDate', 'endDate', 'targetParticipants', 'actualParticipants', 'assignedOfficers', 'milestones', 'accomplishmentReport', 'isPublic', 'tags', 'location', 'attachments'];
-  const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => ALLOWED_UPDATE_FIELDS.includes(k)));
+  /*
+   * Same CastError as on create, plus the ability to clear a field. The form submits its whole
+   * shape, so unlinking a budget arrives as `budgetRef: ''`: sent to $set it fails the entire
+   * update with a 404, sent to $unset it does what the user asked. Blank scalars are unset too,
+   * so a field can be emptied rather than only ever overwritten.
+   */
+  const allowed = Object.entries(req.body).filter(([k]) => ALLOWED_UPDATE_FIELDS.includes(k));
+  const updates = Object.fromEntries(allowed.filter(([, v]) => v !== '' && v !== null && v !== undefined));
+  const cleared = allowed.filter(([, v]) => v === '' || v === null).map(([k]) => k);
 
   if (updates.category) updates.category = normalizeCategory(updates.category);
 
@@ -124,8 +152,12 @@ exports.updateProgram = asyncHandler(async (req, res) => {
     return errorResponse(res, 400, 'End date must be after start date');
   }
 
-  const updated = await Program.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
-  await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'program', resourceId: program._id, details: { changes: Object.keys(updates) }, municipality: req.user.municipality, ipAddress: req.ip });
+  const mutation = {};
+  if (Object.keys(updates).length) mutation.$set = updates;
+  if (cleared.length) mutation.$unset = Object.fromEntries(cleared.map((k) => [k, '']));
+  const updated = await Program.findByIdAndUpdate(req.params.id, mutation, { new: true, runValidators: true });
+  // Cleared fields are changes too — omitting them under-reports the edit in the audit trail.
+  await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'program', resourceId: program._id, details: { changes: [...Object.keys(updates), ...cleared] }, municipality: program.municipality, ipAddress: req.ip });
   successResponse(res, 200, 'Program updated', updated);
 });
 
@@ -143,7 +175,7 @@ exports.updateProgram = asyncHandler(async (req, res) => {
 
 // Shared ownership guard. Returns an error message, or null when the caller may act.
 const denyIfForeign = (req, program, verb) => {
-  if (['super_admin', 'provincial_admin'].includes(req.user.role)) return null;
+  if (CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) return null;
   const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
   if (program.municipality?.toString() !== userMunId) return `Not authorized to ${verb} this program`;
   return null;
@@ -470,7 +502,7 @@ exports.updateProgramStatus = asyncHandler(async (req, res) => {
 
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (program.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this program');
   }
@@ -496,7 +528,7 @@ exports.updateProgramStatus = asyncHandler(async (req, res) => {
 exports.addMilestone = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (program.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this program');
   }
@@ -510,7 +542,7 @@ exports.addMilestone = asyncHandler(async (req, res) => {
 exports.updateMilestone = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (program.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this program');
   }
@@ -525,7 +557,7 @@ exports.updateMilestone = asyncHandler(async (req, res) => {
 
 exports.getProgramStats = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   } else if (req.query.municipality) {

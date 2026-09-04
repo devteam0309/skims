@@ -10,11 +10,12 @@ const Expense = require('../models/Expense');
 const Liquidation = require('../models/Liquidation');
 const YouthMember = require('../models/YouthMember');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
+const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 
 const REPORT_LIMIT = 1000;
 
 const municipalityScope = (req, filter) => {
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   }

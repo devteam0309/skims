@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   MapPin, Target, Banknote, Users, FileText, Megaphone, Download,
-  Calendar, TrendingUp, ChevronDown, Pin, AlertCircle,
+  Calendar, ChevronDown, Pin, AlertCircle,
 } from 'lucide-react';
 import { publicService } from '../../services/documentService';
 import { formatCurrency, formatDate } from '../../utils/formatters';

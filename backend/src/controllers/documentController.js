@@ -5,6 +5,7 @@ const AuditLog = require('../models/AuditLog');
 const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { normalizeLabel } = require('../utils/labels');
+const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
 
@@ -42,7 +43,7 @@ exports.getDocument = asyncHandler(async (req, res) => {
     .populate('municipality', 'name')
     .populate('uploadedBy', 'firstName lastName');
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) {
       return errorResponse(res, 403, 'Not authorized to view this document');
@@ -89,7 +90,7 @@ exports.uploadDocument = asyncHandler(async (req, res) => {
 exports.updateDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this document');
   }
@@ -105,7 +106,7 @@ exports.updateDocument = asyncHandler(async (req, res) => {
 exports.archiveDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to archive this document');
   }
@@ -125,7 +126,7 @@ exports.trackDownload = asyncHandler(async (req, res) => {
   // Non-public documents require authentication and municipality membership
   if (!doc.isPublic) {
     if (!req.user) return errorResponse(res, 401, 'Authentication required to access this document');
-    if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
       const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
       if (doc.municipality?.toString() !== userMunId) {
         return errorResponse(res, 403, 'Not authorized to access this document');
@@ -147,7 +148,7 @@ exports.serveFile = asyncHandler(async (req, res) => {
 
   if (!doc.isPublic) {
     if (!req.user) return errorResponse(res, 401, 'Authentication required to access this document');
-    if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
       const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
       if (doc.municipality?.toString() !== userMunId) {
         return errorResponse(res, 403, 'Not authorized to access this document');
@@ -168,7 +169,7 @@ exports.serveFile = asyncHandler(async (req, res) => {
 exports.unarchiveDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to restore this document');
   }
@@ -186,7 +187,7 @@ exports.replaceFile = asyncHandler(async (req, res) => {
 
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to replace this document');
   }
@@ -241,7 +242,7 @@ exports.serveVersion = asyncHandler(async (req, res) => {
 
   if (!doc.isPublic) {
     if (!req.user) return errorResponse(res, 401, 'Authentication required to access this document');
-    if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
       const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
       if (doc.municipality?.toString() !== userMunId) {
         return errorResponse(res, 403, 'Not authorized to access this document');
@@ -263,7 +264,7 @@ exports.bulkArchiveDocuments = asyncHandler(async (req, res) => {
   if (!Array.isArray(ids) || ids.length === 0) return errorResponse(res, 400, 'No document IDs provided');
   if (ids.length > 50) return errorResponse(res, 400, 'Cannot bulk archive more than 50 documents at once');
   const filter = { _id: { $in: ids }, isArchived: false, deletedAt: null };
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     filter.municipality = req.user.municipality?._id || req.user.municipality;
   }
   const toArchive = await Document.find(filter).select('_id title');
@@ -289,7 +290,7 @@ exports.bulkArchiveDocuments = asyncHandler(async (req, res) => {
 exports.deleteDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to delete this document');
   }

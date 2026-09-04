@@ -5,9 +5,10 @@ const Expense = require('../models/Expense');
 const Liquidation = require('../models/Liquidation');
 const Municipality = require('../models/Municipality');
 const { successResponse } = require('../utils/apiResponse');
+const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 
 const scopeMunicipality = (req, filter) => {
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   }
@@ -48,7 +49,7 @@ exports.getMonitoringOverview = asyncHandler(async (req, res) => {
 // only — no budget or disbursement totals. For a super_admin the match stage is empty, so any
 // money summed here would be every municipality's, rendered on one chart.
 exports.getMunicipalityReport = asyncHandler(async (req, res) => {
-  const matchStage = ['super_admin', 'provincial_admin'].includes(req.user.role)
+  const matchStage = CROSS_MUNICIPALITY_READ.includes(req.user.role)
     ? {}
     : { _id: req.user.municipality?._id || req.user.municipality };
 

@@ -8,7 +8,9 @@ const { paginatedResponse } = require('../utils/apiResponse');
 const MAX_LIMIT = 100;
 
 router.use(protect);
-router.use(authorize('super_admin', 'provincial_admin', 'municipal_admin'));
+// The audit trail is super_admin only. Provincial and municipal admins were removed at the
+// panel's request; this guard is the enforcement, not the sidebar.
+router.use(authorize('super_admin'));
 
 router.get('/', asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, user, action, resource, municipality, startDate, endDate } = req.query;

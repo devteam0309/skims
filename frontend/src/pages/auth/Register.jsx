@@ -103,6 +103,8 @@ export default function Register() {
   const isYouth = role === 'youth';
 
   const onSubmit = async (data) => {
+    // Destructured only to keep it out of the payload — the API has no use for the confirmation.
+    // eslint-disable-next-line no-unused-vars
     const { confirmPassword, ...payload } = data;
     setLoading(true);
     try {

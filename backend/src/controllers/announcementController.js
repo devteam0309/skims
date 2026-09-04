@@ -3,6 +3,7 @@ const Announcement = require('../models/Announcement');
 const AuditLog = require('../models/AuditLog');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { normalizeLabel } = require('../utils/labels');
+const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
 
@@ -16,7 +17,7 @@ exports.getAnnouncements = asyncHandler(async (req, res) => {
   if (type) filter.type = normalizeLabel(type);
   if (isPublic !== undefined) filter.isPublic = isPublic === 'true';
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     filter.$or = [{ municipality: req.user.municipality?._id || req.user.municipality }, { municipality: null }];
   } else if (municipality) {
     filter.municipality = municipality;
@@ -41,7 +42,7 @@ exports.getAnnouncement = asyncHandler(async (req, res) => {
     .populate('author', 'firstName lastName role');
   if (!ann || ann.deletedAt) return errorResponse(res, 404, 'Announcement not found');
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     const annMunId = (ann.municipality?._id || ann.municipality)?.toString();
     if (annMunId && annMunId !== userMunId) return errorResponse(res, 403, 'Not authorized to view this announcement');
@@ -54,7 +55,7 @@ exports.createAnnouncement = asyncHandler(async (req, res) => {
   const data = Object.fromEntries(Object.entries(req.body).filter(([k]) => ALLOWED_CREATE_FIELDS.includes(k)));
   if (data.type) data.type = normalizeLabel(data.type);
   data.author = req.user._id;
-  const isAdmin = ['super_admin', 'provincial_admin'].includes(req.user.role);
+  const isAdmin = CROSS_MUNICIPALITY_WRITE.includes(req.user.role);
   data.municipality = isAdmin ? (data.municipality || req.user.municipality?._id || req.user.municipality || null) : (req.user.municipality?._id || req.user.municipality || null);
   if (!data.publishedAt) data.publishedAt = new Date();
 
@@ -66,7 +67,7 @@ exports.createAnnouncement = asyncHandler(async (req, res) => {
 exports.updateAnnouncement = asyncHandler(async (req, res) => {
   const ann = await Announcement.findById(req.params.id);
   if (!ann || ann.deletedAt) return errorResponse(res, 404, 'Announcement not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (ann.municipality && ann.municipality.toString() !== userMunId) {
       return errorResponse(res, 403, 'Not authorized to edit this announcement');
@@ -81,7 +82,7 @@ exports.updateAnnouncement = asyncHandler(async (req, res) => {
 exports.deleteAnnouncement = asyncHandler(async (req, res) => {
   const ann = await Announcement.findById(req.params.id);
   if (!ann || ann.deletedAt) return errorResponse(res, 404, 'Announcement not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (ann.municipality && ann.municipality.toString() !== userMunId) {
       return errorResponse(res, 403, 'Not authorized to delete this announcement');

@@ -46,6 +46,8 @@ export const municipalityService = {
   getAll: () => api.get('/municipalities'),
   getById: (id) => api.get(`/municipalities/${id}`),
   getBarangays: (id) => api.get(`/municipalities/${id}/barangays`),
+  // Province-wide: every barangay, each carrying its municipality for grouping.
+  getAllBarangays: () => api.get('/municipalities/barangays'),
 };
 
 export const monitoringService = {

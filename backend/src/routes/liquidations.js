@@ -4,7 +4,7 @@ const { body, param } = require('express-validator');
 const { protect, authorize } = require('../middleware/auth');
 const upload = require('../middleware/fileUpload');
 const validate = require('../middleware/validate');
-const { ADMINS, FINANCE_STAFF, REPORTERS } = require('../constants/roles');
+const { ADMINS, FINANCE_STAFF, FINANCE_APPROVERS } = require('../constants/roles');
 const { getLiquidations, getLiquidation, createLiquidation, submitLiquidation, approveLiquidation, rejectLiquidation, deleteLiquidation } = require('../controllers/liquidationController');
 
 const idParam = validate([param('id').isMongoId().withMessage('Invalid liquidation ID')]);
@@ -25,8 +25,8 @@ router.get('/', getLiquidations);
 router.get('/:id', idParam, getLiquidation);
 router.post('/', authorize(...FINANCE_STAFF), upload.array('documents', 20), liquidationValidation, createLiquidation);
 router.patch('/:id/submit', authorize(...FINANCE_STAFF), idParam, submitLiquidation);
-router.patch('/:id/approve', authorize(...REPORTERS), idParam, approveLiquidation);
-router.patch('/:id/reject', authorize(...REPORTERS), idParam, rejectLiquidation);
+router.patch('/:id/approve', authorize(...FINANCE_APPROVERS), idParam, approveLiquidation);
+router.patch('/:id/reject', authorize(...FINANCE_APPROVERS), idParam, rejectLiquidation);
 router.delete('/:id', authorize(...ADMINS), idParam, deleteLiquidation);
 
 module.exports = router;

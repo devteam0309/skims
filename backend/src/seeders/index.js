@@ -369,7 +369,13 @@ const seed = async () => {
         endDate: new Date('2026-08-01'),
         targetParticipants: 90,
         actualParticipants: 31,
-        createdBy: treasBoac._id,
+        /*
+         * Authorship must be someone who could actually have authored it. POST /programs is
+         * restricted to EDITORS, which excludes sk_treasurer — so attributing this to Maria Santos
+         * described a creation the application would have refused, and made the Details panel read
+         * as though it were naming the wrong person.
+         */
+        createdBy: chairBoac._id,
         completionRate: 30,
         isPublic: true,
       },
@@ -923,8 +929,51 @@ const seed = async () => {
         tags: ['minutes', 'session'],
       },
     ];
+    /*
+     * Every municipality gets its own documents.
+     *
+     * Five of the six above are Boac's and one is Sta. Cruz's, which left Gasan and Mogpog with an
+     * empty Documents page — read by the panel as "the Secretary cannot see what the Chairperson
+     * can" when the two were simply looking at different municipalities. Thin seed data has now
+     * been reported as a defect four separate times, so the registry, the programmes and these all
+     * spread deliberately.
+     */
+    const uploaderByCode = { BOA: chairBoac, STC: chairStac, GAS: anaGasan, MOG: provincial };
+    const perMunicipalityDocs = [
+      { category: 'cbydp', title: 'Comprehensive Barangay Youth Development Plan 2026-2028',
+        description: 'Three-year youth development plan covering education, health and livelihood priorities.',
+        ext: 'pdf', type: 'application/pdf', size: 431200, isPublic: true, tags: ['cbydp', 'planning'] },
+      { category: 'minutes', title: 'SK Regular Session Minutes — February 2026',
+        description: 'Minutes of the regular session, including approval of the quarterly work plan.',
+        ext: 'pdf', type: 'application/pdf', size: 154300, isPublic: false, tags: ['minutes', 'session'] },
+      { category: 'compliance_report', title: 'DILG Compliance Report — Q2 2026',
+        description: 'Quarterly compliance submission covering fund utilisation and programme delivery.',
+        ext: 'pdf', type: 'application/pdf', size: 298450, isPublic: true, tags: ['compliance', 'dilg'] },
+    ];
+    for (const [code, mun] of Object.entries(munMap)) {
+      const uploader = uploaderByCode[code] || provincial;
+      for (const d of perMunicipalityDocs) {
+        const slug = `${d.category}-${code.toLowerCase()}-2026`;
+        documentsData.push({
+          title: `${d.title} — ${mun.name}`,
+          description: d.description,
+          category: d.category,
+          fileName: `skims/documents/seed-${slug}`,
+          originalName: `${slug}.${d.ext}`,
+          fileUrl: `https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-${slug}.${d.ext}`,
+          fileType: d.type,
+          fileSize: d.size,
+          municipality: mun._id,
+          uploadedBy: uploader._id,
+          fiscalYear: 2026,
+          isPublic: d.isPublic,
+          tags: d.tags,
+        });
+      }
+    }
+
     const documents = await Document.insertMany(documentsData);
-    console.log(`Seeded ${documents.length} documents`);
+    console.log(`Seeded ${documents.length} documents across ${Object.keys(munMap).length} municipalities`);
 
     // Seed notifications (createWithExpiry applies the TTL that insertMany would otherwise bypass)
     const notificationsData = [

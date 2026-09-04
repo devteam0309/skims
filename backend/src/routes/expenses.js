@@ -4,7 +4,7 @@ const { body } = require('express-validator');
 const { protect, authorize } = require('../middleware/auth');
 const upload = require('../middleware/fileUpload');
 const validate = require('../middleware/validate');
-const { ADMINS, FINANCE_STAFF, REPORTERS } = require('../constants/roles');
+const { ADMINS, FINANCE_STAFF, REPORT_VIEWERS, FINANCE_APPROVERS } = require('../constants/roles');
 const { EXPENSE_TYPES } = require('../models/Expense');
 const { getExpenses, getExpense, createExpense, updateExpense, approveExpense, deleteExpense, getExpenseSummary, bulkApproveExpenses } = require('../controllers/expenseController');
 
@@ -16,13 +16,13 @@ const expenseValidation = validate([
 ]);
 
 router.use(protect);
-router.get('/summary', authorize(...REPORTERS), getExpenseSummary);
+router.get('/summary', authorize(...REPORT_VIEWERS), getExpenseSummary);
 router.get('/', getExpenses);
 router.get('/:id', getExpense);
 router.post('/', authorize(...FINANCE_STAFF), upload.array('attachments', 10), expenseValidation, createExpense);
 router.put('/:id', authorize(...ADMINS, 'sk_treasurer'), updateExpense);
-router.patch('/bulk-approve', authorize(...REPORTERS), bulkApproveExpenses);
-router.patch('/:id/approve', authorize(...REPORTERS), approveExpense);
+router.patch('/bulk-approve', authorize(...FINANCE_APPROVERS), bulkApproveExpenses);
+router.patch('/:id/approve', authorize(...FINANCE_APPROVERS), approveExpense);
 router.delete('/:id', authorize(...ADMINS), deleteExpense);
 
 module.exports = router;

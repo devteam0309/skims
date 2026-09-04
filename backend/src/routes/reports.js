@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middleware/auth');
-const { REPORTERS } = require('../constants/roles');
+const { REPORT_VIEWERS } = require('../constants/roles');
 const { generateProgramReport, generateFinancialReport, generateYouthReport, generateTemplate } = require('../controllers/reportController');
 
 router.use(protect);
-router.get('/programs', authorize(...REPORTERS), generateProgramReport);
-router.get('/financial', authorize(...REPORTERS), generateFinancialReport);
-router.get('/youth', authorize(...REPORTERS), generateYouthReport);
-router.get('/template/:name', authorize(...REPORTERS), generateTemplate);
+router.get('/programs', authorize(...REPORT_VIEWERS), generateProgramReport);
+router.get('/financial', authorize(...REPORT_VIEWERS), generateFinancialReport);
+router.get('/youth', authorize(...REPORT_VIEWERS), generateYouthReport);
+router.get('/template/:name', authorize(...REPORT_VIEWERS), generateTemplate);
 
 module.exports = router;

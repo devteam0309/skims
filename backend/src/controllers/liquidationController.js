@@ -9,6 +9,7 @@ const emailService = require('../services/emailService');
 const { uploadToCloudinary } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { normalizeLabel } = require('../utils/labels');
+const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -50,7 +51,7 @@ exports.getLiquidation = asyncHandler(async (req, res) => {
     .populate('submittedBy', 'firstName lastName email')
     .populate('approvedBy', 'firstName lastName');
   if (!liq || liq.deletedAt) return errorResponse(res, 404, 'Liquidation not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (liq.municipality?._id?.toString() !== userMunId && liq.municipality?.toString() !== userMunId) {
       return errorResponse(res, 403, 'Not authorized to view this liquidation');
@@ -94,7 +95,7 @@ exports.createLiquidation = asyncHandler(async (req, res) => {
 exports.submitLiquidation = asyncHandler(async (req, res) => {
   const liq = await Liquidation.findOne({ _id: req.params.id, deletedAt: null });
   if (!liq) return errorResponse(res, 404, 'Liquidation not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (liq.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to submit this liquidation');
   }
@@ -123,7 +124,7 @@ exports.submitLiquidation = asyncHandler(async (req, res) => {
 exports.approveLiquidation = asyncHandler(async (req, res) => {
   const liq = await Liquidation.findOne({ _id: req.params.id, deletedAt: null });
   if (!liq) return errorResponse(res, 404, 'Liquidation not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (liq.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to approve this liquidation');
   }
@@ -160,7 +161,7 @@ exports.approveLiquidation = asyncHandler(async (req, res) => {
 exports.rejectLiquidation = asyncHandler(async (req, res) => {
   const liq = await Liquidation.findOne({ _id: req.params.id, deletedAt: null });
   if (!liq) return errorResponse(res, 404, 'Liquidation not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (liq.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to reject this liquidation');
   }

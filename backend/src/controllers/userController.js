@@ -4,6 +4,7 @@ const Notification = require('../models/Notification');
 const AuditLog = require('../models/AuditLog');
 const emailService = require('../services/emailService');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
 
@@ -64,7 +65,7 @@ exports.getUser = asyncHandler(async (req, res) => {
    * municipality's staff were hidden from the list and readable by id. Reachable-by-id is exactly
    * the gap a list-level filter cannot close.
    */
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     const targetMunId = (user.municipality?._id || user.municipality)?.toString();
     if (user._id.toString() !== req.user._id.toString() && targetMunId !== userMunId) {
