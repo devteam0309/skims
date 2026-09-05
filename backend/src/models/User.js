@@ -12,12 +12,14 @@ const ROLES = [
   'sk_secretary',
   'sk_kagawad',
   'dilg_representative',
-  // A member of the Katipunan ng Kabataan with their own login. Distinct from public_user, which
-  // is an ordinary citizen browsing the portal: a youth account is tied to a registry record and
-  // can ask to join its municipality's programmes. Deliberately absent from every group in
+  // A member of the Katipunan ng Kabataan with their own login: tied to a registry record, and
+  // able to ask to join its municipality's programmes. Deliberately absent from every group in
   // constants/roles.js, so authorize() whitelists reject it by default.
+  //
+  // `public_user` was retired here — it granted strictly less than being signed out, because the
+  // transparency portal and every /api/public/* endpoint are open to anyone. It also served as
+  // the silent catch-all for any unrecognised role at registration, which hid a real bug.
   'youth',
-  'public_user',
 ];
 
 const userSchema = new mongoose.Schema(
@@ -42,7 +44,12 @@ const userSchema = new mongoose.Schema(
       },
       select: false,
     },
-    role: { type: String, enum: ROLES, default: 'public_user' },
+    /*
+     * Required, with no default. The default used to be `public_user`, which meant a malformed or
+     * omitted role silently produced a working account instead of an error. Every caller now names
+     * the role it intends — registration validates it, the seeder states it, admins assign it.
+     */
+    role: { type: String, enum: ROLES, required: [true, 'A role is required'] },
     municipality: { type: mongoose.Schema.Types.ObjectId, ref: 'Municipality' },
     barangay: { type: mongoose.Schema.Types.ObjectId, ref: 'Barangay' },
     contactNumber: { type: String, trim: true },

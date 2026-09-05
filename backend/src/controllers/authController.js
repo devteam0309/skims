@@ -67,7 +67,14 @@ const sendTokenResponse = async (user, statusCode, res) => {
   return successResponse(res, statusCode, 'Success', { user: userData });
 };
 
-const SELF_ASSIGNABLE_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'youth', 'public_user'];
+/*
+ * What a registrant may claim for themselves. Everything else — the three admin tiers — is
+ * assigned by an existing admin after the fact, or anyone could register as super_admin.
+ *
+ * `public_user` was removed along with the role itself. Nothing takes its place as a fallback:
+ * an unrecognised role is now an error rather than a silent downgrade. See registerRole() below.
+ */
+const SELF_ASSIGNABLE_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'youth'];
 
 
 /*
@@ -139,7 +146,19 @@ exports.register = asyncHandler(async (req, res) => {
   const existingUser = await User.findOne({ email });
   if (existingUser) return errorResponse(res, 400, 'Email already registered');
 
-  const assignedRole = SELF_ASSIGNABLE_ROLES.includes(role) ? role : 'public_user';
+  /*
+   * Reject rather than downgrade.
+   *
+   * This used to fall back to `public_user` for anything unrecognised, which is how the register
+   * form could offer "Provincial SK Fed. Admin" and "Municipal SK Fed. Admin" — neither
+   * self-assignable — and hand back a working account of an entirely different kind with no
+   * message at all. The registrant chose one thing and silently received another.
+   */
+  if (!role) return errorResponse(res, 400, 'Select the type of account you are registering for');
+  if (!SELF_ASSIGNABLE_ROLES.includes(role)) {
+    return errorResponse(res, 400, 'That account type cannot be self-registered. Ask an administrator to assign it.');
+  }
+  const assignedRole = role;
 
   const user = await User.create({
     firstName,
@@ -153,7 +172,7 @@ exports.register = asyncHandler(async (req, res) => {
     // Youth approve themselves. Requiring an admin to let each member in would put staff back in
     // the middle of the self-service flow the whole feature exists to provide; the registry record
     // carries the vetting instead, as verificationStatus.
-    isApproved: assignedRole === 'public_user' || assignedRole === 'youth',
+    isApproved: assignedRole === 'youth',
   });
 
   if (assignedRole === 'youth') {
@@ -174,7 +193,7 @@ exports.register = asyncHandler(async (req, res) => {
 
   // Notify admins when a role that requires approval registers. Youth are excluded: they approve
   // themselves, and a notification per youth sign-up would bury every other admin notification.
-  if (assignedRole !== 'public_user' && assignedRole !== 'youth') {
+  if (assignedRole !== 'youth') {
     // Only super_admin is notified, because only super_admin can act on it. The other two admin
     // tiers used to receive these and no longer have the Users page, so the notification would
     // have linked them to a screen they cannot open.
@@ -359,3 +378,7 @@ exports.resetPassword = asyncHandler(async (req, res) => {
   await user.save();
   sendTokenResponse(user, 200, res);
 });
+
+// Exported so registerValidation can reject an unusable role with a message that names it,
+// rather than letting it fall through to a misleading municipality error.
+exports.SELF_ASSIGNABLE_ROLES = SELF_ASSIGNABLE_ROLES;

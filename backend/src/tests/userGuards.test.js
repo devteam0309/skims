@@ -21,7 +21,7 @@ describe('Admin endpoints refuse to act on the caller', () => {
     const res = await request(app)
       .put(`/api/users/${user._id}/role`)
       .set(authHeader(token))
-      .send({ role: 'public_user' });
+      .send({ role: 'dilg_representative' });
 
     expect(res.status).toBe(403);
     expect(res.body.message).toMatch(/your own role/i);

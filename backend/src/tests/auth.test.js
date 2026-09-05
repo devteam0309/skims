@@ -18,7 +18,7 @@ describe('POST /api/auth/register', () => {
   it('creates a new user and returns 201', async () => {
     const res = await request(app)
       .post('/api/auth/register')
-      .send({ firstName: 'Juan', lastName: 'Dela Cruz', email: 'juan@example.com', password: 'Test@1234', role: 'public_user' });
+      .send({ firstName: 'Juan', lastName: 'Dela Cruz', email: 'juan@example.com', password: 'Test@1234', role: 'dilg_representative' });
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
   });
@@ -48,7 +48,7 @@ describe('POST /api/auth/register', () => {
     await createUser({ email: 'dup@example.com' });
     const res = await request(app)
       .post('/api/auth/register')
-      .send({ firstName: 'Juan', lastName: 'Cruz', email: 'dup@example.com', password: 'Test@1234' });
+      .send({ firstName: 'Juan', lastName: 'Cruz', email: 'dup@example.com', password: 'Test@1234', role: 'dilg_representative' });
     expect(res.status).toBe(400);
   });
 });

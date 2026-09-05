@@ -157,7 +157,7 @@ describe('POST /api/auth/verify-email/:token', () => {
       lastName: 'Me',
       email: 'verify@example.com',
       password: 'Test@1234',
-      role: 'public_user',
+      role: 'dilg_representative',
       isApproved: true,
       isActive: true,
     });
@@ -189,7 +189,7 @@ describe('POST /api/auth/resend-verification', () => {
       lastName: 'User',
       email: 'unverified2@example.com',
       password: 'Test@1234',
-      role: 'public_user',
+      role: 'dilg_representative',
       isApproved: true,
       isActive: true,
       isEmailVerified: false,

@@ -70,17 +70,9 @@ import YouthLayout from './components/layout/YouthLayout';
 import MyPrograms from './pages/youth/MyPrograms';
 import MyDetails from './pages/youth/MyDetails';
 
-import { STAFF, PROGRAM_EDITORS, EDITOR_ROLES as CONTENT_EDITORS, REPORT_VIEWERS, USER_ADMINS } from './utils/constants';
+import { STAFF, PROGRAM_EDITORS, EDITOR_ROLES as CONTENT_EDITORS, REPORT_VIEWERS, USER_ADMINS, homeFor } from './utils/constants';
 
-/*
- * Where each role belongs when it lands somewhere it may not be.
- *
- * A single '/dashboard' default sent a youth to a page their role cannot open, which bounced them
- * straight back out — and the staff tree's explicit '/portal' fallback would have dropped them on
- * the public transparency site rather than their own programmes.
- */
-const HOME_FOR_ROLE = { youth: '/my/programs', public_user: '/portal' };
-const homeFor = (role) => HOME_FOR_ROLE[role] || '/dashboard';
+// homeFor lives in utils/constants so PublicLayout resolves the same destination — see there.
 
 const ProtectedRoute = ({ children, roles, fallback }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -122,7 +114,7 @@ export default function App() {
           <ProtectedRoute roles={['youth']}><YouthLayout><MyDetails /></YouthLayout></ProtectedRoute>
         } />
 
-        {/* Protected dashboard routes — public_user is redirected to /portal */}
+        {/* Protected dashboard routes — anyone outside STAFF goes to their own home */}
         <Route path="/" element={<ProtectedRoute roles={STAFF}><DashboardLayout /></ProtectedRoute>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />

@@ -7,8 +7,20 @@ export const ROLES = {
   SK_SECRETARY: 'sk_secretary',
   SK_KAGAWAD: 'sk_kagawad',
   DILG_REPRESENTATIVE: 'dilg_representative',
-  PUBLIC_USER: 'public_user',
+  YOUTH: 'youth',
 };
+
+/*
+ * Where each role belongs when it lands somewhere it may not be, and where "back to my pages"
+ * should point from the public portal.
+ *
+ * Shared so the router and PublicLayout cannot disagree: the portal used to send every signed-in
+ * visitor to /dashboard, which a youth may not open — they were bounced straight back out again.
+ * That only became reachable once the youth nav gained a link into the portal.
+ */
+export const HOME_FOR_ROLE = { youth: '/my/programs' };
+export const homeFor = (role) => HOME_FOR_ROLE[role] || '/dashboard';
+export const homeLabelFor = (role) => (role === 'youth' ? 'My pages' : 'Dashboard');
 
 export const ROLE_LABELS = {
   super_admin: 'Super Administrator',
@@ -20,7 +32,6 @@ export const ROLE_LABELS = {
   sk_kagawad: 'SK Kagawad',
   dilg_representative: 'DILG Representative',
   youth: 'Youth Member',
-  public_user: 'Public User',
 };
 
 export const PROGRAM_STATUS_COLORS = {
@@ -80,13 +91,15 @@ export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Au
 
 /**
  * Roles a user may choose for themselves at registration. Must stay in step with
- * SELF_ASSIGNABLE_ROLES in backend/src/controllers/authController.js, which silently downgrades
- * anything outside this list to public_user.
+ * SELF_ASSIGNABLE_ROLES in backend/src/controllers/authController.js, which now REJECTS anything
+ * outside this list with a 400 rather than downgrading it.
  *
- * The register form previously offered every role except super_admin, so a registrant could
- * pick "Municipal SK Fed. Admin", be given public_user without any message, and land on the
- * public portal wondering where their dashboard went. Elevated roles are assigned by an admin
- * after the account exists.
+ * The register form once offered every role except super_admin, so a registrant could pick
+ * "Municipal SK Fed. Admin", be given public_user without any message, and land on the public
+ * portal wondering where their dashboard went. Elevated roles are assigned by an admin after the
+ * account exists.
+ *
+ * There is deliberately no "ordinary citizen" option: the transparency portal needs no account.
  */
 export const SELF_ASSIGNABLE_ROLES = [
   'sk_chairperson',
@@ -97,7 +110,6 @@ export const SELF_ASSIGNABLE_ROLES = [
   // Registering as a youth also creates the registry record, so the form asks for a birth date
   // and gender when this is chosen. Listed first in the UI because it is now the common case.
   'youth',
-  'public_user',
 ];
 
 /**

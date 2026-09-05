@@ -53,9 +53,15 @@ Commit messages carry no AI attribution — no `Co-Authored-By`, no generated-wi
 
 ## Testing
 
-`npm test` in `backend/` runs serially (`--runInBand`); the parallel run is flaky on Windows because
-each suite starts its own `MongoMemoryServer`. A lone red suite whose failures are all
-`buffering timed out`, and which passes alone, is environmental — re-run before investigating.
+One in-memory MongoDB is started for the whole run (`jest.config.js` → `globalSetup`), and suites
+are isolated by database name per worker. `npm test` runs serially (`--runInBand`, ~3.5 min) and is
+what CI uses; a bare `npx jest` runs parallel in under a minute. Both are reliable.
+
+Before this, every suite started its own `MongoMemoryServer` — thirty-five per run — and past
+roughly twenty-five the machine could not bring one up inside Mongoose's 10s buffering window.
+Whichever suite was unlucky failed on `buffering timed out` in `clearDB`, the victim moved between
+runs, and it always passed alone. **If that signature ever reappears, it is the harness, not the
+code** — but it should not, and a red suite is now worth believing.
 
 ## Local development writes to the live database
 

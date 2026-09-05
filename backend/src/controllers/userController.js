@@ -124,17 +124,23 @@ exports.rejectUser = asyncHandler(async (req, res) => {
  * would silently vanish from the roster. A youth account is created by registration and changed
  * by deleting it, not by role assignment.
  */
+/*
+ * `public_user` was the demotion target here — the way to strip someone's staff access without
+ * deleting them. It is gone, and deactivation (PUT /:id/toggle-status) does that job instead.
+ * Deactivating is also the more honest control: demoting left a working login that could still
+ * sign in and see the portal, which is not what "revoke their access" is meant to mean.
+ */
 const ASSIGNABLE_ROLES = {
-  super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'public_user'],
-  provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'public_user'],
-  municipal_admin: ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'public_user'],
+  super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'],
+  provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'],
+  municipal_admin: ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad'],
 };
 
 /**
  * Acting on your own account through the admin endpoints is a one-way door.
  *
- * A super_admin may assign `public_user`, and every admin may deactivate or delete an account —
- * so each of these could be pointed at the caller and strip the caller's own access. Recovering
+ * Role assignment can demote, and every admin may deactivate or delete an account — so each of
+ * these could be pointed at the caller and strip the caller's own access. Recovering
  * from that needs another administrator, or direct database surgery if the account was the last
  * super_admin. None of it is malicious; it is a misclick on the row that happens to be yours.
  *

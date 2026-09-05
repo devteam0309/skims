@@ -8,11 +8,16 @@ const {
   register, login, logout, getMe, updateProfile,
   updatePassword, verifyEmail, forgotPassword, resetPassword, resendVerification,
   refreshAccessToken,
+  SELF_ASSIGNABLE_ROLES,
 } = require('../controllers/authController');
 
-// provincial_admin oversees the whole province and public_user is not tied to an LGU; every
-// other self-assignable role is municipality-bound.
-const MUNICIPALITY_FREE_ROLES = ['provincial_admin', 'public_user'];
+/*
+ * Roles that belong to no single LGU. provincial_admin oversees the whole province, and
+ * dilg_representative is provincial oversight too — it reads across all four municipalities and
+ * the seeded account deliberately has none, so demanding one at registration contradicted the
+ * role. Every other self-assignable role is municipality-bound.
+ */
+const MUNICIPALITY_FREE_ROLES = ['provincial_admin', 'dilg_representative'];
 
 const registerValidation = validate([
   body('firstName').trim().notEmpty().withMessage('First name is required').isLength({ max: 50 }),
@@ -38,11 +43,25 @@ const registerValidation = validate([
     .trim().notEmpty().withMessage('Gender is required')
     .isLength({ max: 40 }).withMessage('Gender must be 40 characters or fewer'),
 
+  /*
+   * Validated here as well as in the controller so the message names the real problem. Without
+   * it, omitting the role fell through to the municipality rule below and came back as
+   * "Municipality is required" — technically true, and useless for working out what to fix.
+   */
+  body('role')
+    .exists({ checkFalsy: true }).withMessage('Select the type of account you are registering for')
+    .bail()
+    .isIn(SELF_ASSIGNABLE_ROLES)
+    .withMessage('That account type cannot be self-registered. Ask an administrator to assign it.'),
+
   body('municipality').custom((value, { req }) => {
-    // An omitted role becomes public_user in the controller, so it must read as municipality-free
-    // here too — `body('role').not().isIn(...)` treats undefined as "not in the list" and would
-    // have demanded a municipality from every plain citizen sign-up.
-    const role = req.body.role || 'public_user';
+    /*
+     * An omitted role is rejected by the controller, so there is no fallback to reason about here
+     * any more. Only skip the municipality requirement for a role that genuinely has none —
+     * an unrecognised role falls through to "municipality required", which is the safe way round:
+     * the controller refuses it a moment later regardless.
+     */
+    const { role } = req.body;
     if (!MUNICIPALITY_FREE_ROLES.includes(role) && !value) throw new Error('Municipality is required');
     if (value && !/^[a-f\d]{24}$/i.test(String(value))) throw new Error('Select a valid municipality');
     return true;

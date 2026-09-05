@@ -21,8 +21,8 @@ import useAuthStore from '../../store/authStore';
  * deliberately not mirrored here.
  */
 const ROLE_ASSIGNABLE_MAP = {
-  super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'public_user'],
-  provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'public_user'],
+  super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'],
+  provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'],
 };
 
 export default function Users() {
@@ -177,7 +177,7 @@ export default function Users() {
         const name = `${row.firstName} ${row.lastName}`;
         /*
          * Both of these are one click away from locking yourself out: a super_admin can demote
-         * themselves to public_user, and any admin can deactivate their own account. Neither the
+         * themselves to a lesser role, and any admin can deactivate their own account. Neither the
          * role endpoint nor the toggle-status endpoint checks whether the target is the caller,
          * so nothing downstream would stop it. Withholding them on your own row removes the
          * footgun from the only place it is reachable in the product.
