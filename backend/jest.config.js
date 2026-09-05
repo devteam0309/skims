@@ -5,24 +5,27 @@ module.exports = {
   testTimeout: 30000,
   coverageDirectory: 'coverage',
   coveragePathIgnorePatterns: ['/node_modules/', '/src/tests/'],
+
   /*
-   * Only affects running `jest` directly — `npm test` passes --runInBand, which overrides this
-   * and is what CI uses. Serial is far more reliable but is not immune: one suite in a 28-suite
-   * serial run has been seen to fail on the same startup timeout, so a lone red suite whose
-   * failures are all `buffering timed out` (and which passes when run alone) is environmental,
-   * not a regression. Re-run before investigating.
+   * One in-memory MongoDB for the entire run, started here and stopped in globalTeardown.
    *
-   * It matters for the bare invocation because each suite stands up its own MongoMemoryServer
-   * (see src/tests/setup.js), so concurrent mongod processes track the worker count. Left
-   * uncapped that is CPUs-1, and past roughly twenty-five suites the machine can no longer bring
-   * them all up inside Mongoose's 10s buffering window; suites then fail on `deleteMany()
-   * buffering timed out` in clearDB — a resource limit, unrelated to anything under test, and
-   * intermittent, which is the worst kind of red to chase.
+   * Each suite used to create its own inside `beforeAll`, so a full run started thirty-five
+   * mongod processes. Past roughly twenty-five, the machine could no longer bring one up inside
+   * Mongoose's 10s buffering window and whichever suite was unlucky failed on `buffering timed
+   * out` in clearDB. The victim moved between runs and always passed alone — red that looks
+   * exactly like a regression in whatever you last touched, and it cost three full runs in a
+   * single session before being fixed properly.
    *
-   * Four is a mitigation rather than a fix: uncapped and at '50%' (six here) it failed roughly
-   * two runs in three, at four about one in six. Prefer `npm test`. The real fix is one shared
-   * server across suites via globalSetup instead of one per suite, which is a larger change to
-   * the harness than this branch should carry.
+   * Suites are isolated by database name per worker (see src/tests/setup.js), not by having a
+   * server each.
    */
-  maxWorkers: 4,
+  globalSetup: '<rootDir>/src/tests/globalSetup.js',
+  globalTeardown: '<rootDir>/src/tests/globalTeardown.js',
+
+  /*
+   * Now that startup is paid once, parallel is both safe and much faster. `npm test` still passes
+   * --runInBand, which overrides this and is what CI uses — kept because serial output is far
+   * easier to read when something genuinely fails.
+   */
+  maxWorkers: '50%',
 };

@@ -33,7 +33,7 @@ const STACK = [
 ];
 
 const ROLES = [
-  { role: 'super_admin', label: 'Super Administrator', scope: 'All municipalities', autoApproved: false, canAssign: 'All 9 roles' },
+  { role: 'super_admin', label: 'Super Administrator', scope: 'All municipalities', autoApproved: false, canAssign: 'All 8 roles' },
   { role: 'provincial_admin', label: 'Provincial SK Fed. Admin', scope: 'All municipalities', autoApproved: false, canAssign: 'All except super_admin' },
   // routes/users.js authorizes PUT /:id/role for super_admin and provincial_admin only, so a
   // municipal_admin cannot assign any role. The controller's ASSIGNABLE_ROLES still carries a
@@ -45,7 +45,6 @@ const ROLES = [
   { role: 'sk_secretary', label: 'SK Secretary', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
   { role: 'sk_kagawad', label: 'SK Kagawad', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
   { role: 'dilg_representative', label: 'DILG Representative', scope: 'All municipalities (read)', autoApproved: false, canAssign: '—' },
-  { role: 'public_user', label: 'Public User', scope: 'Portal only (/portal)', autoApproved: true, canAssign: '—' },
 ];
 
 const ROLE_GROUPS = [
@@ -61,9 +60,9 @@ const ROLE_GROUPS = [
 ];
 
 const AUTH_FLOW = [
-  { step: '1', label: 'Register', detail: 'POST /api/auth/register — SELF_ASSIGNABLE_ROLES only (sk_chairperson, sk_treasurer, sk_secretary, sk_kagawad, dilg_representative, public_user). public_user auto-approved. All others: isApproved=false, isEmailVerified=false.' },
+  { step: '1', label: 'Register', detail: 'POST /api/auth/register — SELF_ASSIGNABLE_ROLES only (sk_chairperson, sk_treasurer, sk_secretary, sk_kagawad, dilg_representative, youth). Anything else is a 400, not a silent downgrade. Youth self-approve; all others: isApproved=false, isEmailVerified=false.' },
   { step: '2', label: 'Email Verification', detail: 'Verification email sent on register. GET /api/auth/verify-email/:token sets isEmailVerified=true. POST /api/auth/resend-verification to re-send (5/15min rate limit).' },
-  { step: '3', label: 'Admin Approval', detail: 'Admin → Users → Pending tab → Approve or Reject with reason. public_user skips this step. Approval sends email notification.' },
+  { step: '3', label: 'Admin Approval', detail: 'Admin → Users → Pending tab (super_admin only) → Approve or Reject with reason. Youth skip this step. Approval sends email notification.' },
   { step: '4', label: 'Login', detail: 'POST /api/auth/login (20/15min IP rate limit) — checks: isEmailVerified → isActive → isApproved → issues JWT in httpOnly cookie (+ Bearer fallback). Also issues refreshToken.' },
   { step: '5', label: 'Protected Requests', detail: 'protect middleware: cookie/Bearer token → JWT verify → user lookup → isEmailVerified → isActive → isApproved → req.user. authorize(...roles) checks role.' },
   { step: '6', label: 'Token Refresh', detail: 'POST /api/auth/refresh — validates refreshToken cookie, issues new access token.' },
@@ -348,7 +347,7 @@ const FRONTEND_ROUTES = [
   { path: '/forgot-password', roles: 'Unauthenticated only', note: '' },
   { path: '/reset-password/:token', roles: 'Unauthenticated only', note: '' },
   { path: '/verify-email/:token', roles: 'Anyone', note: 'No auth required — works from email link' },
-  { path: '/dashboard', roles: 'STAFF', note: 'public_user redirected to /portal' },
+  { path: '/dashboard', roles: 'STAFF', note: 'Non-staff roles are redirected to their own home' },
   { path: '/programs', roles: 'STAFF', note: '' },
   { path: '/programs/new', roles: 'PROGRAM_EDITORS', note: '' },
   { path: '/programs/:id', roles: 'STAFF', note: '' },
@@ -370,7 +369,7 @@ const FRONTEND_ROUTES = [
 ];
 
 const PERMISSIONS_TABLE = [
-  { module: 'Dashboard', access: 'STAFF (not public_user)' },
+  { module: 'Dashboard', access: 'STAFF' },
   { module: 'Programs — View', access: 'STAFF' },
   { module: 'Programs — Create/Edit/Status/Milestones', access: 'EDITORS (ADMINS + sk_chairperson + sk_secretary)' },
   { module: 'Programs — Delete', access: 'ADMINS' },
@@ -389,7 +388,7 @@ const PERMISSIONS_TABLE = [
   { module: 'Liquidations — Approve/Reject', access: 'REPORTERS' },
   { module: 'Liquidations — Delete', access: 'ADMINS' },
   { module: 'Documents — View', access: 'STAFF' },
-  { module: 'Documents — Upload', access: 'DOC_UPLOADERS (all SK roles except dilg, public_user)' },
+  { module: 'Documents — Upload', access: 'DOC_UPLOADERS (all SK roles except dilg)' },
   { module: 'Documents — Edit metadata', access: 'DOC_EDITORS (ADMINS + sk_chairperson + sk_secretary)' },
   { module: 'Documents — Archive/Unarchive', access: 'DOC_EDITORS' },
   { module: 'Documents — Delete', access: 'ADMINS' },
@@ -417,7 +416,6 @@ const TEST_ACCOUNTS = [
   { role: 'sk_secretary', email: 'ana@gasan.gov.ph', password: 'Admin@123', municipality: 'Gasan' },
   { role: 'sk_chairperson', email: 'pedro@stac.gov.ph', password: 'Admin@123', municipality: 'Santa Cruz' },
   { role: 'dilg_representative', email: 'dilg@marinduque.gov.ph', password: 'Admin@123', municipality: '—' },
-  { role: 'public_user', email: 'youth@example.com', password: 'Admin@123', municipality: '—' },
 ];
 
 const KNOWN_GAPS = [
@@ -448,7 +446,7 @@ const SECURITY_MEASURES = [
   'Municipality scoping: all non-admin list/create/update/delete ops scoped to own municipality',
   'Self-approval blocked on expenses (createdBy !== approver)',
   'Role assignment hierarchy: ASSIGNABLE_ROLES map prevents privilege escalation',
-  'Self-assignable roles on register: limited to sk_* + dilg + public_user',
+  'Self-assignable roles on register: limited to sk_* + dilg + youth; anything else is rejected',
   'ReDoS protection: escapeRegex() on all $regex search inputs',
   'HTML injection prevention in emails: esc() escapes user-controlled values in HTML templates',
   'Duplicate key error: field name only, no conflicting value echoed (prevents email enumeration)',

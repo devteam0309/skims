@@ -30,7 +30,7 @@ describe('email sending never blocks the HTTP response', () => {
 
     const res = await request(app).post('/api/auth/register').send({
       firstName: 'Hang', lastName: 'Test', email: 'hang@example.com',
-      password: 'Test@1234', role: 'public_user',
+      password: 'Test@1234', role: 'dilg_representative',
     });
 
     expect(res.status).toBe(201);
@@ -48,7 +48,7 @@ describe('email sending never blocks the HTTP response', () => {
 
     const res = await request(app).post('/api/auth/register').send({
       firstName: 'Reject', lastName: 'Test', email: 'reject@example.com',
-      password: 'Test@1234', role: 'public_user',
+      password: 'Test@1234', role: 'dilg_representative',
     });
 
     expect(res.status).toBe(201);
@@ -67,7 +67,7 @@ describe('email sending never blocks the HTTP response', () => {
 
     await request(app).post('/api/auth/register').send({
       firstName: 'Silent', lastName: 'Failure', email: 'silent@example.com',
-      password: 'Test@1234', role: 'public_user',
+      password: 'Test@1234', role: 'dilg_representative',
     });
 
     // The rejection is handled off the request path, so let the microtask queue drain.
@@ -82,7 +82,7 @@ describe('email sending never blocks the HTTP response', () => {
     emailService.sendEmailVerification.mockResolvedValue({});
     await request(app).post('/api/auth/register').send({
       firstName: 'Resend', lastName: 'Test', email: 'resend@example.com',
-      password: 'Test@1234', role: 'public_user',
+      password: 'Test@1234', role: 'dilg_representative',
     });
 
     emailService.sendEmailVerification.mockImplementation(neverResolves);

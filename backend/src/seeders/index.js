@@ -154,7 +154,6 @@ const seed = async () => {
       { firstName: 'Ana', lastName: 'Reyes', email: 'ana@gasan.gov.ph', password: 'Admin@123', role: 'sk_secretary', municipality: munMap['GAS']._id, isApproved: true, isEmailVerified: true },
       { firstName: 'DILG', lastName: 'Officer', email: 'dilg@marinduque.gov.ph', password: 'Admin@123', role: 'dilg_representative', isApproved: true, isEmailVerified: true },
       { firstName: 'Carlos', lastName: 'Munoz', email: 'municipal@boac.gov.ph', password: 'Admin@123', role: 'municipal_admin', municipality: munMap['BOA']._id, isApproved: true, isEmailVerified: true },
-      { firstName: 'Youth', lastName: 'User', email: 'youth@example.com', password: 'Admin@123', role: 'public_user', isApproved: true, isEmailVerified: true },
     ];
 
     const users = await User.create(usersData);

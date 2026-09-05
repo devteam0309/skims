@@ -17,7 +17,7 @@ import { ROLE_LABELS, SELF_ASSIGNABLE_ROLES, PASSWORD_PATTERN, PASSWORD_RULE_TEX
 import { toast } from '../../components/ui/toaster';
 
 // Mirrors MUNICIPALITY_FREE_ROLES in backend/src/routes/auth.js.
-const MUNICIPALITY_FREE_ROLES = ['provincial_admin', 'public_user'];
+const MUNICIPALITY_FREE_ROLES = ['provincial_admin'];
 
 const schema = z.object({
   firstName: z.string().min(2, 'First name must be at least 2 characters'),
@@ -77,10 +77,10 @@ const schema = z.object({
   });
 
 /*
- * Only roles the backend will actually grant. This previously listed every role except
- * super_admin, including provincial_admin and municipal_admin, which authController downgrades
- * to public_user without telling anyone — the registrant chose one account type and silently
- * received another.
+ * Only roles the backend will actually grant. This once listed every role except super_admin,
+ * including provincial_admin and municipal_admin, which authController quietly turned into
+ * public_user — the registrant chose one account type and silently received another. The server
+ * now answers 400 for anything outside this list, so the two sides cannot drift apart unnoticed.
  */
 const SELECTABLE_ROLES = SELF_ASSIGNABLE_ROLES.map((value) => [value, ROLE_LABELS[value]]);
 

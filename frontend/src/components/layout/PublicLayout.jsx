@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { LayoutDashboard, LogIn, LogOut } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
+import { homeFor, homeLabelFor } from '../../utils/constants';
 import { confirm } from '../../utils/confirm';
 
 const SECTIONS = [
@@ -14,7 +15,7 @@ const SECTIONS = [
  * and it renders before any theme preference is known.
  */
 export default function PublicLayout({ children }) {
-  const { isAuthenticated, logout } = useAuthStore();
+  const { isAuthenticated, user, logout } = useAuthStore();
 
   const handleLogout = async () => {
     const result = await confirm.logout();
@@ -52,12 +53,17 @@ export default function PublicLayout({ children }) {
 
           {isAuthenticated ? (
             <div className="flex items-center gap-2">
+              {/*
+                * Resolved per role rather than hard-coded to /dashboard. A youth may not open the
+                * staff dashboard, so the old link bounced them off it and back to their own pages —
+                * only reachable at all since the youth nav gained a link into this portal.
+                */}
               <Link
-                to="/dashboard"
+                to={homeFor(user?.role)}
                 className="flex items-center gap-2 rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-navy-900 transition-colors hover:bg-gold-400"
               >
                 <LayoutDashboard size={15} aria-hidden="true" />
-                Dashboard
+                {homeLabelFor(user?.role)}
               </Link>
               <button
                 type="button"

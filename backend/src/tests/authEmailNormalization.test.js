@@ -17,7 +17,7 @@ const PASSWORD = 'Test@1234';
 
 const register = (email) =>
   request(app).post('/api/auth/register').send({
-    firstName: 'Norm', lastName: 'Test', email, password: PASSWORD, role: 'public_user',
+    firstName: 'Norm', lastName: 'Test', email, password: PASSWORD, role: 'dilg_representative',
   });
 
 const login = (email) =>

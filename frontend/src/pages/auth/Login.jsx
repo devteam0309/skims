@@ -33,7 +33,6 @@ const QA_ACCOUNTS = SHOW_QA_CREDS ? [
   { role: 'SK Chairperson · Sta. Cruz', email: 'pedro@stac.gov.ph' },
   { role: 'SK Secretary · Gasan', email: 'ana@gasan.gov.ph' },
   { role: 'DILG Representative', email: 'dilg@marinduque.gov.ph' },
-  { role: 'Public User', email: 'youth@example.com' },
   /*
    * Two sample youth, not all forty. Every seeded member has their own login on the same password,
    * but listing them would bury the staff accounts this panel exists to show — and it is currently

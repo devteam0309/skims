@@ -1,5 +1,5 @@
 import { Link, NavLink } from 'react-router-dom';
-import { LogOut, CalendarCheck, UserRound } from 'lucide-react';
+import { LogOut, CalendarCheck, UserRound, Landmark } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
 
@@ -14,6 +14,16 @@ import { confirm } from '../../utils/confirm';
 const LINKS = [
   ['/my/programs', 'Programs', CalendarCheck],
   ['/my/profile', 'My details', UserRound],
+  /*
+   * The transparency portal, reachable from inside the youth shell rather than only from the
+   * signed-out site. It is NOT reproduced here: the portal and every /api/public/* endpoint are
+   * open to anyone, so a second copy inside an authenticated layout would be two implementations
+   * of identical views over identical data, and the second would drift.
+   *
+   * This is what replaced the `public_user` role. That account existed to see this page, and
+   * granted nothing an anonymous visitor did not already have.
+   */
+  ['/portal', 'Transparency', Landmark],
 ];
 
 export default function YouthLayout({ children }) {
