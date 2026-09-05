@@ -28,7 +28,13 @@ export default function PublicLayout({ children }) {
           side, which has more repeated header links than the app does, had none. */}
       <a href="#portal-content" className="skip-to-content">Skip to content</a>
 
-      <header className="bg-navy-900 text-white shadow-lg">
+      {/*
+        * Sticky, so the nav stays put while the page scrolls under it. These two layouts are
+        * ordinary document flow (min-h-screen) rather than the fixed shell the staff app uses —
+        * a portal page is a long read and should scroll as one — so the header has to hold its
+        * own position. Measured on /portal: 1883px of page scroll took the whole nav with it.
+        */}
+      <header className="sticky top-0 z-30 bg-navy-900 text-white shadow-lg">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-4">
           <Link to="/portal" className="flex items-center gap-3">
             {/* alt="" because the wordmark beside it already says SKIMS — otherwise a screen
