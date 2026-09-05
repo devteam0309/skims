@@ -38,7 +38,13 @@ export default function YouthLayout({ children }) {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <a href="#youth-content" className="skip-to-content">Skip to content</a>
 
-      <header className="bg-navy-900 text-white shadow-lg">
+      {/*
+        * Sticky, so the nav stays put while the page scrolls under it. These two layouts are
+        * ordinary document flow (min-h-screen) rather than the fixed shell the staff app uses —
+        * a portal page is a long read and should scroll as one — so the header has to hold its
+        * own position. Measured on /portal: 1883px of page scroll took the whole nav with it.
+        */}
+      <header className="sticky top-0 z-30 bg-navy-900 text-white shadow-lg">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-4">
           <Link to="/my/programs" className="flex items-center gap-3">
             <span className="h-10 w-10 overflow-hidden rounded-lg bg-white">
