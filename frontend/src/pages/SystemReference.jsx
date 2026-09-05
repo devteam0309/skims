@@ -29,34 +29,65 @@ const STACK = [
   { layer: 'UI', tech: 'Tailwind CSS 3 + Radix UI', note: 'Custom navy/gold palette; dark mode throughout' },
   { layer: 'Confirmations', tech: 'SweetAlert2 11', note: 'Centralized confirm utility at utils/confirm.js' },
   { layer: 'Animations', tech: 'Framer Motion 10', note: 'Page transitions, card entrances' },
-  { layer: 'Tests', tech: 'Jest + Supertest + mongodb-memory-server', note: 'Integration tests; run: npm test from backend/' },
+  { layer: 'Tests (backend)', tech: 'Jest + Supertest + mongodb-memory-server', note: '451 tests / 35 suites. ONE shared in-memory Mongo per run via globalSetup, suites isolated by database name per worker. `npm test` (serial, ~3.5min) is what CI uses; bare `npx jest` runs parallel in ~50s.' },
+  { layer: 'Tests (frontend)', tech: 'Vitest + React Testing Library', note: '48 tests. `npm test` from frontend/.' },
+  { layer: 'Lint', tech: 'ESLint 8 (.eslintrc.cjs)', note: 'react/jsx-no-undef + no-undef are the load-bearing rules — an undefined component is a runtime error that vite build compiles happily. Passes at --max-warnings 0.' },
 ];
 
 const ROLES = [
-  { role: 'super_admin', label: 'Super Administrator', scope: 'All municipalities', autoApproved: false, canAssign: 'All 8 roles' },
-  { role: 'provincial_admin', label: 'Provincial SK Fed. Admin', scope: 'All municipalities', autoApproved: false, canAssign: 'All except super_admin' },
-  // routes/users.js authorizes PUT /:id/role for super_admin and provincial_admin only, so a
-  // municipal_admin cannot assign any role. The controller's ASSIGNABLE_ROLES still carries a
-  // municipal_admin entry, but the route rejects the request before it is ever consulted — this
-  // table previously reported that unreachable entry as though it were the behaviour.
+  { role: 'super_admin', label: 'Super Administrator', scope: 'All municipalities', autoApproved: false, canAssign: 'Every role except youth' },
+  /*
+   * User management is super_admin only. routes/users.js authorizes the whole group — list,
+   * pending, approve, reject, role, toggle-status — for super_admin alone, so neither of the
+   * other two admin tiers can assign a role or approve an account. ASSIGNABLE_ROLES still carries
+   * entries for them, but the route refuses the request before the map is ever consulted.
+   */
+  { role: 'provincial_admin', label: 'Provincial SK Fed. Admin', scope: 'All municipalities', autoApproved: false, canAssign: '— (route-gated)' },
   { role: 'municipal_admin', label: 'Municipal SK Fed. Admin', scope: 'Own municipality', autoApproved: false, canAssign: '— (route-gated)' },
   { role: 'sk_chairperson', label: 'SK Chairperson', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
   { role: 'sk_treasurer', label: 'SK Treasurer', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
   { role: 'sk_secretary', label: 'SK Secretary', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
   { role: 'sk_kagawad', label: 'SK Kagawad', scope: 'Own municipality', autoApproved: false, canAssign: '—' },
-  { role: 'dilg_representative', label: 'DILG Representative', scope: 'All municipalities (read)', autoApproved: false, canAssign: '—' },
+  // Provincial oversight: reads every municipality, writes in none. Not on CROSS_MUNICIPALITY_WRITE,
+  // and removed from every approval list — it observes the province rather than deciding for it.
+  { role: 'dilg_representative', label: 'DILG Representative', scope: 'All municipalities (READ ONLY)', autoApproved: false, canAssign: '—' },
+  // A Katipunan ng Kabataan member with their own login, tied to a registry record. Denied
+  // everything except an explicit allowlist in middleware/auth.js — see YOUTH ACCESS below.
+  { role: 'youth', label: 'Youth Member', scope: 'Own municipality (own record + programmes)', autoApproved: true, canAssign: '—' },
 ];
 
+/*
+ * `public_user` was retired. It granted strictly less than being signed out — /portal has no route
+ * guard and every /api/public/* endpoint has no `protect` — while doubling as the silent fallback
+ * for any unrecognised role at registration. That is now a 400. The portal still needs no account.
+ */
+
 const ROLE_GROUPS = [
-  { name: 'ADMINS', roles: 'super_admin, provincial_admin, municipal_admin', use: 'Most admin actions, user management, delete operations' },
+  { name: 'ADMINS', roles: 'super_admin, provincial_admin, municipal_admin', use: 'Most admin actions and delete operations. NOT user management — that is super_admin alone.' },
   { name: 'FINANCE_STAFF', roles: 'ADMINS + sk_chairperson, sk_treasurer', use: 'Create budgets, expenses, liquidations' },
   { name: 'STAFF', roles: 'FINANCE_STAFF + sk_secretary, sk_kagawad, dilg_representative', use: 'Dashboard, monitoring, read access' },
   { name: 'EDITORS', roles: 'ADMINS + sk_chairperson, sk_secretary', use: 'Create/edit programs' },
-  { name: 'REPORTERS', roles: 'ADMINS + sk_chairperson, sk_treasurer, dilg_representative', use: 'Reports, analytics, expense/budget approval' },
+  /*
+   * REPORTERS was split. It gated report VIEWING and money APPROVAL at once, which is how DILG
+   * came to approve budgets by way of being allowed to open Reports — and why adding the
+   * Secretary to Reports would have handed them expense approval as a side effect.
+   */
+  { name: 'REPORT_VIEWERS', roles: 'ADMINS + sk_chairperson, sk_treasurer, sk_secretary, dilg_representative', use: 'Open Reports and Analytics. Viewing only.' },
+  { name: 'FINANCE_APPROVERS', roles: 'ADMINS + sk_chairperson, sk_treasurer', use: 'Approve/reject expenses and liquidations' },
+  { name: 'BUDGET_APPROVERS', roles: 'ADMINS', use: 'Approve/reject budgets' },
   { name: 'YOUTH_REGISTRARS', roles: 'ADMINS + sk_chairperson', use: 'Register new youth members' },
   { name: 'YOUTH_EDITORS', roles: 'ADMINS + sk_chairperson, sk_secretary, sk_kagawad', use: 'Update/delete youth members' },
   { name: 'DOC_UPLOADERS', roles: 'ADMINS + sk_chairperson, sk_treasurer, sk_secretary, sk_kagawad', use: 'Upload documents' },
   { name: 'DOC_EDITORS', roles: 'ADMINS + sk_chairperson, sk_secretary', use: 'Archive/unarchive/replace documents' },
+  /*
+   * Municipality reach is TWO lists, not one. Anything that mutates must check the WRITE list;
+   * only reads may use the READ list. A write handler on the read list is a cross-municipality
+   * write — the defect class this codebase has produced most often.
+   *
+   * municipal_admin is in NEITHER, despite the name: it is scoped like any SK officer.
+   */
+  { name: 'CROSS_MUNICIPALITY_READ', roles: 'super_admin, provincial_admin, dilg_representative', use: 'Reads that span all four municipalities' },
+  { name: 'CROSS_MUNICIPALITY_WRITE', roles: 'super_admin, provincial_admin', use: 'Writes that may target another municipality' },
 ];
 
 const AUTH_FLOW = [
@@ -91,7 +122,7 @@ const MODELS = [
   {
     name: 'User',
     key_fields: 'firstName, lastName, email, password, role, municipality, barangay, isActive, isApproved, isEmailVerified, avatar, refreshToken, loginAttempts, lockUntil, deletedAt',
-    notes: 'password: select:false; complexity validator (upper+num+special); fullName virtual; bcrypt hash on pre-save',
+    notes: 'password: select:false; complexity validator (upper+num+special); fullName virtual; bcrypt hash on pre-save. role is REQUIRED with no default — it used to default to public_user, so a malformed or omitted role silently produced a usable account.',
   },
   {
     name: 'Municipality',
@@ -106,7 +137,7 @@ const MODELS = [
   {
     name: 'Program',
     key_fields: 'title, description, objectives[], category, status, municipality, budgetRef, budget(Number), actualExpenses, startDate, endDate, targetParticipants, actualParticipants, milestones[], completionRate, isPublic, deletedAt',
-    notes: 'completionRate auto-computed from milestones in pre-save. status: planned|ongoing|delayed|completed|cancelled. 11 categories.',
+    notes: 'completionRate auto-computed from milestones in pre-save. status: planned|ongoing|delayed|completed|cancelled. approvalStatus (draft|submitted|approved|rejected) is a SEPARATE field — a programme can be approved and ongoing at once. category is FREE TEXT (maxlength 60), normalised on write via utils/labels; the ten in PROGRAM_CATEGORIES are suggestions, not an enum.',
   },
   {
     name: 'Budget',
@@ -126,17 +157,17 @@ const MODELS = [
   {
     name: 'Document',
     key_fields: 'title, category, fileName, originalName, fileUrl(Cloudinary), fileType, fileSize, municipality, program, uploadedBy, fiscalYear, tags[], isPublic, isArchived, version, previousVersions[], downloadCount, downloadHistory[], deletedAt',
-    notes: '14 document categories. fileUrl is Cloudinary URL. downloadHistory capped at 100 entries.',
+    notes: 'category is FREE TEXT (maxlength 60), normalised on write — the listed categories are suggestions. fileUrl is Cloudinary URL. downloadHistory capped at 100 entries.',
   },
   {
     name: 'YouthMember',
     key_fields: 'firstName, lastName, birthDate, gender, municipality, barangay, educationalAttainment, occupation, isRegisteredVoter, programParticipations[], isActive, registeredBy, deletedAt',
-    notes: 'age virtual (15-30 enforced on create). educationalAttainment: elementary|high_school|college|vocational|graduate|out_of_school.',
+    notes: 'age virtual (15-30 enforced on create). educationalAttainment is FREE TEXT, normalised on write. gender is FREE TEXT stored EXACTLY as typed and matched case-insensitively — deliberately NOT normalised, since flattening "LGBTQIA+" would repeat the problem free text was introduced to fix. Optional `user` ref links a self-registered youth login to the record.',
   },
   {
     name: 'Announcement',
     key_fields: 'title, content, type, municipality, author, isPublic, isPinned, publishedAt, expiresAt, eventDate, eventLocation',
-    notes: 'type: announcement|event|deadline|notice. Municipality-scoped or province-wide.',
+    notes: 'type is FREE TEXT, normalised on write. Normalisation matters beyond grouping here: eventDate and eventLocation are revealed by type === "event", so a typed "Event" must canonicalise to the same string. Municipality-scoped or province-wide.',
   },
   {
     name: 'Notification',
@@ -146,7 +177,7 @@ const MODELS = [
   {
     name: 'AuditLog',
     key_fields: 'user, action, resource, resourceId, oldValues, newValues, details, ipAddress, municipality, status, errorMessage',
-    notes: '7-year TTL. Required on all financial mutations + role changes + document ops. municipality field required for scoped reporting.',
+    notes: '7-year TTL. Required on all financial mutations + role changes + document ops. municipality must be the RECORD’s, not req.user’s — super_admin and provincial_admin have none of their own, so using req.user writes an empty value on exactly the cross-municipality actions that most need scoping.',
   },
   {
     name: 'Counter',
@@ -175,13 +206,13 @@ const API_ENDPOINTS = [
   {
     group: 'Users — /api/users',
     routes: [
-      { method: 'GET', path: '/', auth: 'protect', roles: 'ADMINS', note: 'municipal_admin scoped to own municipality; MAX_LIMIT=100' },
-      { method: 'GET', path: '/pending', auth: 'protect', roles: 'ADMINS', note: 'Pending approvals; paginated; municipal_admin scoped' },
-      { method: 'GET', path: '/:id', auth: 'protect', roles: 'Any', note: 'non-admin cannot see other municipality users; sensitive fields stripped' },
-      { method: 'PUT', path: '/:id/approve', auth: 'protect', roles: 'ADMINS', note: 'Sets isApproved=true; sends email' },
-      { method: 'PUT', path: '/:id/reject', auth: 'protect', roles: 'ADMINS', note: 'Sets isApproved=false with reason; sends email' },
-      { method: 'PUT', path: '/:id/role', auth: 'protect', roles: 'super_admin, provincial_admin', note: 'ASSIGNABLE_ROLES hierarchy enforced' },
-      { method: 'PUT', path: '/:id/toggle-status', auth: 'protect', roles: 'ADMINS', note: 'Toggles isActive' },
+      { method: 'GET', path: '/', auth: 'protect', roles: 'super_admin', note: 'Excludes youth unless ?role=youth asks for them; MAX_LIMIT=100' },
+      { method: 'GET', path: '/pending', auth: 'protect', roles: 'super_admin', note: 'Pending approvals; paginated; never lists youth' },
+      { method: 'GET', path: '/:id', auth: 'protect', roles: 'Any', note: 'Deliberately NOT super_admin-only - it backs profile views. Municipality-scoped in the controller; sensitive fields stripped' },
+      { method: 'PUT', path: '/:id/approve', auth: 'protect', roles: 'super_admin', note: 'Sets isApproved=true; sends email' },
+      { method: 'PUT', path: '/:id/reject', auth: 'protect', roles: 'super_admin', note: 'Sets isApproved=false with reason; sends email' },
+      { method: 'PUT', path: '/:id/role', auth: 'protect', roles: 'super_admin', note: 'ASSIGNABLE_ROLES hierarchy enforced behind the route guard. Refuses a youth account in both directions: granting youth creates a login with no registry record, revoking it orphans one.' },
+      { method: 'PUT', path: '/:id/toggle-status', auth: 'protect', roles: 'super_admin', note: 'Toggles isActive. This is how staff access is revoked - there is no demotion role any more.' },
       { method: 'DELETE', path: '/:id', auth: 'protect', roles: 'super_admin', note: 'Soft-delete (deletedAt)' },
     ],
   },
@@ -189,11 +220,18 @@ const API_ENDPOINTS = [
     group: 'Programs — /api/programs',
     routes: [
       { method: 'GET', path: '/stats', auth: 'protect', roles: 'Any', note: 'Municipality-scoped for non-admins' },
-      { method: 'GET', path: '/', auth: 'protect', roles: 'Any', note: 'Scoped; search, status, category filters; pagination MAX_LIMIT=100' },
+      { method: 'GET', path: '/', auth: 'protect', roles: 'Any', note: 'Scoped; pagination MAX_LIMIT=100. search is a case-insensitive SUBSTRING regex over title/description/location (escaped). It was $text, which matches whole indexed words only - "Lead" found nothing that "Leadership" found.' },
       { method: 'GET', path: '/:id', auth: 'protect', roles: 'Any', note: 'Municipality scope enforced for non-admins' },
       { method: 'POST', path: '/', auth: 'protect', roles: 'EDITORS', note: 'programValidation; ALLOWED_CREATE_FIELDS; municipality forced from user' },
       { method: 'PUT', path: '/:id', auth: 'protect', roles: 'EDITORS', note: 'ALLOWED_UPDATE_FIELDS whitelist; municipality scope' },
       { method: 'PATCH', path: '/:id/status', auth: 'protect', roles: 'EDITORS', note: 'statusValidation; municipality scope' },
+      { method: 'PATCH', path: '/:id/submit', auth: 'protect', roles: 'EDITORS', note: 'draft/rejected→submitted. approvalStatus is separate from status.' },
+      { method: 'PATCH', path: '/:id/approve', auth: 'protect', roles: 'ADMINS', note: 'submitted→approved. Encumbers Budget.committedAmount when a budget is linked, so the same money cannot be promised twice. A programme with NO budget can still be approved.' },
+      { method: 'PATCH', path: '/:id/reject', auth: 'protect', roles: 'ADMINS', note: 'requires a reason; returns to rejected, which can be resubmitted' },
+      { method: 'GET', path: '/:id/participants', auth: 'protect', roles: 'EDITORS', note: 'Join requests for a programme' },
+      { method: 'PATCH', path: '/:id/participants/:youthId', auth: 'protect', roles: 'EDITORS', note: 'Confirm or decline a join request. Only CONFIRMED participants count against targetParticipants, checked atomically at the moment a place is taken so two officers cannot both award the last slot. A declined request may be made again.' },
+      { method: 'POST', path: '/:id/join', auth: 'protect', roles: 'youth', note: 'Request to join. Municipality-scoped by the controller.' },
+      { method: 'DELETE', path: '/:id/join', auth: 'protect', roles: 'youth', note: 'Withdraw a pending request' },
       { method: 'POST', path: '/:id/milestones', auth: 'protect', roles: 'EDITORS', note: 'milestoneValidation; municipality scope' },
       { method: 'PUT', path: '/:id/milestones/:milestoneId', auth: 'protect', roles: 'EDITORS', note: 'ALLOWED_MILESTONE_FIELDS whitelist' },
       { method: 'DELETE', path: '/:id', auth: 'protect', roles: 'ADMINS', note: 'Soft-delete' },
@@ -208,8 +246,8 @@ const API_ENDPOINTS = [
       { method: 'POST', path: '/', auth: 'protect', roles: 'FINANCE_STAFF', note: 'budgetValidation; ALLOWED_CREATE_FIELDS; municipality forced from user' },
       { method: 'PUT', path: '/:id', auth: 'protect', roles: 'FINANCE_STAFF', note: 'Pipeline update recalculates remainingBalance atomically; AuditLog' },
       { method: 'PATCH', path: '/:id/submit', auth: 'protect', roles: 'sk_chairperson, sk_treasurer, municipal_admin', note: 'draft→pending_approval; atomic conditional update' },
-      { method: 'PATCH', path: '/:id/approve', auth: 'protect', roles: 'ADMINS + dilg_representative', note: 'pending_approval→approved; AuditLog; email notification' },
-      { method: 'PATCH', path: '/:id/reject', auth: 'protect', roles: 'ADMINS + dilg_representative', note: 'AuditLog; email notification' },
+      { method: 'PATCH', path: '/:id/approve', auth: 'protect', roles: 'BUDGET_APPROVERS', note: 'pending_approval→approved; AuditLog; email. dilg_representative was removed - oversight observes, it does not decide.' },
+      { method: 'PATCH', path: '/:id/reject', auth: 'protect', roles: 'BUDGET_APPROVERS', note: 'AuditLog; email notification' },
       { method: 'PATCH', path: '/:id/reopen', auth: 'protect', roles: 'FINANCE_STAFF', note: 'approved/rejected→draft' },
       { method: 'DELETE', path: '/:id', auth: 'protect', roles: 'super_admin, provincial_admin', note: 'Soft-delete' },
     ],
@@ -217,12 +255,13 @@ const API_ENDPOINTS = [
   {
     group: 'Expenses — /api/expenses',
     routes: [
-      { method: 'GET', path: '/summary', auth: 'protect', roles: 'REPORTERS', note: 'Scoped for non-admins' },
+      { method: 'GET', path: '/summary', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Scoped for non-admins' },
       { method: 'GET', path: '/', auth: 'protect', roles: 'Any', note: 'Scoped; MAX_LIMIT=100' },
       { method: 'GET', path: '/:id', auth: 'protect', roles: 'Any', note: 'Municipality scope enforced' },
       { method: 'POST', path: '/', auth: 'protect', roles: 'FINANCE_STAFF', note: 'expenseValidation; Cloudinary upload (max 10 attachments); budget status checked; AuditLog' },
       { method: 'PUT', path: '/:id', auth: 'protect', roles: 'ADMINS + sk_treasurer', note: 'ALLOWED_UPDATE_FIELDS; municipality scope; AuditLog' },
-      { method: 'PATCH', path: '/:id/approve', auth: 'protect', roles: 'REPORTERS', note: 'pending→approved; self-approval blocked; updates Budget.disbursedAmount + Program.actualExpenses; AuditLog; email' },
+      { method: 'PATCH', path: '/bulk-approve', auth: 'protect', roles: 'FINANCE_APPROVERS', note: 'Max 50; municipality-scoped; self-approval blocked; same Budget/Program side effects as single approve' },
+      { method: 'PATCH', path: '/:id/approve', auth: 'protect', roles: 'FINANCE_APPROVERS', note: 'pending→approved; self-approval blocked; updates Budget.disbursedAmount + Program.actualExpenses; AuditLog; email' },
       { method: 'DELETE', path: '/:id', auth: 'protect', roles: 'ADMINS', note: 'Soft-delete; blocked if approved/liquidated' },
     ],
   },
@@ -233,8 +272,8 @@ const API_ENDPOINTS = [
       { method: 'GET', path: '/:id', auth: 'protect', roles: 'Any', note: 'Municipality scope enforced' },
       { method: 'POST', path: '/', auth: 'protect', roles: 'FINANCE_STAFF', note: 'Cloudinary upload (max 20 documents); municipality forced from user; AuditLog' },
       { method: 'PATCH', path: '/:id/submit', auth: 'protect', roles: 'FINANCE_STAFF', note: 'draft→submitted; AuditLog; email' },
-      { method: 'PATCH', path: '/:id/approve', auth: 'protect', roles: 'REPORTERS', note: 'submitted→approved; AuditLog; email' },
-      { method: 'PATCH', path: '/:id/reject', auth: 'protect', roles: 'REPORTERS', note: 'requires rejectionReason; AuditLog; email' },
+      { method: 'PATCH', path: '/:id/approve', auth: 'protect', roles: 'FINANCE_APPROVERS', note: 'submitted→approved; AuditLog; email' },
+      { method: 'PATCH', path: '/:id/reject', auth: 'protect', roles: 'FINANCE_APPROVERS', note: 'requires rejectionReason; AuditLog; email' },
       { method: 'DELETE', path: '/:id', auth: 'protect', roles: 'ADMINS', note: 'Soft-delete; blocked if approved' },
     ],
   },
@@ -246,19 +285,23 @@ const API_ENDPOINTS = [
       { method: 'GET', path: '/:id', auth: 'protect', roles: 'Any', note: 'Municipality scope via (doc.municipality?._id || doc.municipality)?.toString()' },
       { method: 'POST', path: '/', auth: 'protect', roles: 'DOC_UPLOADERS', note: 'Single file upload → Cloudinary skims/documents; field whitelist; tags JSON.parse try-catch; AuditLog' },
       { method: 'PUT', path: '/:id', auth: 'protect', roles: 'DOC_EDITORS', note: 'Metadata update; municipality scope' },
+      { method: 'PATCH', path: '/bulk-archive', auth: 'protect', roles: 'DOC_EDITORS', note: 'Max 50; municipality-scoped; AuditLog. Registered BEFORE /:id or the literal path is read as an id.' },
       { method: 'PATCH', path: '/:id/archive', auth: 'protect', roles: 'DOC_EDITORS', note: 'AuditLog' },
       { method: 'PATCH', path: '/:id/unarchive', auth: 'protect', roles: 'DOC_EDITORS', note: '' },
       { method: 'PATCH', path: '/:id/replace-file', auth: 'protect', roles: 'DOC_EDITORS', note: 'Creates previousVersions entry; increments version; Cloudinary re-upload' },
       { method: 'POST', path: '/:id/download', auth: 'optionalAuth', roles: 'Any', note: 'trackDownload — increments count, appends downloadHistory ($slice -100)' },
       { method: 'GET', path: '/:id/serve', auth: 'optionalAuth', roles: 'Any', note: 'Returns Cloudinary URL (redirect or direct); private docs require auth' },
+      { method: 'GET', path: '/:id/versions/:version/serve', auth: 'protect', roles: 'Any', note: 'Serve a previous version; municipality scope enforced' },
       { method: 'DELETE', path: '/:id', auth: 'protect', roles: 'ADMINS', note: 'Soft-delete; AuditLog' },
     ],
   },
   {
     group: 'Youth — /api/youth',
     routes: [
+      { method: 'GET', path: '/me', auth: 'protect', roles: 'youth', note: 'The signed-in youth own registry record' },
+      { method: 'PUT', path: '/me', auth: 'protect', roles: 'youth', note: 'Contact details only. Name, birth date and municipality identify the record on an official roster and are not self-editable - a correction goes through SK staff.' },
       { method: 'GET', path: '/duplicate-check', auth: 'protect', roles: 'Any', note: 'Check by firstName+lastName+birthDate before register; ReDoS-safe escapeRegex' },
-      { method: 'GET', path: '/', auth: 'protect', roles: 'Any', note: 'Scoped; search, gender, education, barangay filters; MAX_LIMIT=100' },
+      { method: 'GET', path: '/', auth: 'protect', roles: 'Any', note: 'Scoped; search, gender, education, barangay, skEligible filters; MAX_LIMIT=100. Sorted firstName then lastName with en collation - the Name column renders "First Last", so a surname sort read as unordered.' },
       { method: 'GET', path: '/:id', auth: 'protect', roles: 'Any', note: 'Municipality scope enforced' },
       { method: 'POST', path: '/', auth: 'protect', roles: 'YOUTH_REGISTRARS', note: 'youthValidation; ALLOWED_CREATE_FIELDS; municipality forced from user; age 15-30 enforced' },
       { method: 'PUT', path: '/:id', auth: 'protect', roles: 'YOUTH_EDITORS', note: 'ALLOWED_UPDATE_FIELDS; municipality scope' },
@@ -288,24 +331,24 @@ const API_ENDPOINTS = [
     group: 'Dashboard — /api/dashboard',
     routes: [
       { method: 'GET', path: '/', auth: 'protect', roles: 'STAFF', note: 'KPIs, recentPrograms, recentExpenses, programsByStatus, monthlyExpenses; scoped' },
-      { method: 'GET', path: '/municipality-comparison', auth: 'protect', roles: 'REPORTERS', note: 'Cross-municipality KPI comparison' },
+      { method: 'GET', path: '/municipality-comparison', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Cross-municipality by design and deliberately carries NO money - it is open to an SK Chairperson, so summing budgets here would hand each municipality figures to the next one staff.' },
     ],
   },
   {
     group: 'Reports — /api/reports',
     routes: [
-      { method: 'GET', path: '/programs', auth: 'protect', roles: 'REPORTERS', note: 'PDF + Excel; municipalityScope(); REPORT_LIMIT=1000' },
-      { method: 'GET', path: '/financial', auth: 'protect', roles: 'REPORTERS', note: 'PDF + Excel; ₱ formatting via formatPHP()' },
-      { method: 'GET', path: '/youth', auth: 'protect', roles: 'REPORTERS', note: 'PDF + Excel' },
-      { method: 'GET', path: '/template/:name', auth: 'protect', roles: 'REPORTERS', note: 'Blank document templates (PR, PO, etc.)' },
+      { method: 'GET', path: '/programs', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel; municipalityScope(); REPORT_LIMIT=1000' },
+      { method: 'GET', path: '/financial', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel; ₱ formatting via formatPHP()' },
+      { method: 'GET', path: '/youth', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel' },
+      { method: 'GET', path: '/template/:name', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Blank document templates (PR, PO, etc.)' },
     ],
   },
   {
     group: 'Analytics — /api/analytics',
     routes: [
-      { method: 'GET', path: '/fund-utilization', auth: 'protect', roles: 'REPORTERS', note: 'Monthly expense aggregation by year; scopeAnalytics()' },
-      { method: 'GET', path: '/program-success', auth: 'protect', roles: 'REPORTERS', note: 'Success rate by category; avgCompletionRate' },
-      { method: 'GET', path: '/youth-engagement', auth: 'protect', roles: 'REPORTERS', note: 'byGender, byEducation, byMunicipality breakdowns' },
+      { method: 'GET', path: '/fund-utilization', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Monthly expense aggregation by year; scopeAnalytics()' },
+      { method: 'GET', path: '/program-success', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Success rate by category; avgCompletionRate' },
+      { method: 'GET', path: '/youth-engagement', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'byGender, byEducation, byMunicipality breakdowns' },
     ],
   },
   {
@@ -333,15 +376,16 @@ const API_ENDPOINTS = [
     group: 'Other',
     routes: [
       { method: 'GET', path: '/api/municipalities', auth: 'protect', roles: 'Any', note: 'All municipalities with barangay counts' },
-      { method: 'GET', path: '/api/municipalities/:id/barangays', auth: 'protect', roles: 'Any', note: 'Barangays for a municipality' },
-      { method: 'GET', path: '/api/audit-logs', auth: 'protect', roles: 'ADMINS', note: 'Paginated; municipality scoped; MAX_LIMIT=100' },
+      { method: 'GET', path: '/api/municipalities/barangays', auth: 'protect', roles: 'Any', note: 'EVERY barangay in the province, each populated with its municipality. Declared BEFORE /:id - further down the file "barangays" would be read as a municipality id and 404. Backs the province-wide barangay filter.' },
+      { method: 'GET', path: '/api/municipalities/:id/barangays', auth: 'protect', roles: 'Any', note: 'Barangays for one municipality' },
+      { method: 'GET', path: '/api/audit-logs', auth: 'protect', roles: 'super_admin', note: 'Paginated; municipality scoped; MAX_LIMIT=100' },
       { method: 'GET', path: '/api/health', auth: 'None', roles: '—', note: 'Returns status:ok, uptime, timestamp. NODE_ENV intentionally excluded.' },
     ],
   },
 ];
 
 const FRONTEND_ROUTES = [
-  { path: '/portal', roles: 'Everyone', note: 'Public portal — programs, budget, documents, announcements. Login button shows Dashboard if authenticated.' },
+  { path: '/portal', roles: 'Everyone — NO login required', note: 'Transparency portal: programs, budget, documents, announcements. When signed in, the header button resolves per role (a youth gets "My pages", not "Dashboard", which they cannot open). Reachable from the youth nav as "Transparency".' },
   { path: '/login', roles: 'Unauthenticated only', note: 'Redirects to /dashboard if logged in. Reads ?reason param from 401 interceptor.' },
   { path: '/register', roles: 'Unauthenticated only', note: '' },
   { path: '/forgot-password', roles: 'Unauthenticated only', note: '' },
@@ -357,14 +401,16 @@ const FRONTEND_ROUTES = [
   { path: '/liquidations', roles: 'STAFF', note: '' },
   { path: '/documents', roles: 'STAFF', note: '' },
   { path: '/youth', roles: 'STAFF', note: '' },
-  { path: '/reports', roles: 'REPORTERS', note: '' },
-  { path: '/analytics', roles: 'REPORTERS', note: '' },
+  { path: '/reports', roles: 'REPORT_VIEWERS', note: 'Includes sk_secretary and dilg_representative' },
+  { path: '/analytics', roles: 'REPORT_VIEWERS', note: '' },
   { path: '/monitoring', roles: 'STAFF', note: '' },
   { path: '/announcements', roles: 'EDITOR_ROLES', note: 'Admin announcement management (create/edit/pin)' },
-  { path: '/users', roles: 'ADMIN_ROLES', note: 'User management + pending approvals' },
+  { path: '/users', roles: 'super_admin', note: 'User management + pending approvals. The sidebar entry is hidden for the other admin tiers, but the route guard AND the API are what enforce it.' },
   { path: '/profile', roles: 'Any authenticated', note: 'Edit name, avatar, contact; change password' },
   { path: '/notifications', roles: 'Any authenticated', note: '' },
-  { path: '/audit-logs', roles: 'ADMIN_ROLES', note: '' },
+  { path: '/audit-logs', roles: 'super_admin', note: '' },
+  { path: '/my/programs', roles: 'youth', note: 'Youth shell (YouthLayout, not the staff sidebar): their programmes and join requests' },
+  { path: '/my/profile', roles: 'youth', note: 'Their own registry record — contact details only' },
   { path: '/ref', roles: 'Any authenticated', note: 'This page — no nav link, manual URL only' },
 ];
 
@@ -376,16 +422,16 @@ const PERMISSIONS_TABLE = [
   { module: 'Budgets — View', access: 'STAFF' },
   { module: 'Budgets — Create/Update', access: 'FINANCE_STAFF' },
   { module: 'Budgets — Submit', access: 'sk_chairperson, sk_treasurer, municipal_admin' },
-  { module: 'Budgets — Approve/Reject', access: 'ADMINS + dilg_representative' },
+  { module: 'Budgets — Approve/Reject', access: 'BUDGET_APPROVERS (ADMINS)' },
   { module: 'Budgets — Delete', access: 'super_admin, provincial_admin' },
   { module: 'Expenses — View', access: 'STAFF' },
   { module: 'Expenses — Create', access: 'FINANCE_STAFF' },
   { module: 'Expenses — Update', access: 'ADMINS + sk_treasurer' },
-  { module: 'Expenses — Approve', access: 'REPORTERS (self-approval blocked)' },
+  { module: 'Expenses — Approve', access: 'FINANCE_APPROVERS (self-approval blocked)' },
   { module: 'Expenses — Delete', access: 'ADMINS (blocked if approved/liquidated)' },
   { module: 'Liquidations — View', access: 'STAFF' },
   { module: 'Liquidations — Create/Submit', access: 'FINANCE_STAFF' },
-  { module: 'Liquidations — Approve/Reject', access: 'REPORTERS' },
+  { module: 'Liquidations — Approve/Reject', access: 'FINANCE_APPROVERS' },
   { module: 'Liquidations — Delete', access: 'ADMINS' },
   { module: 'Documents — View', access: 'STAFF' },
   { module: 'Documents — Upload', access: 'DOC_UPLOADERS (all SK roles except dilg)' },
@@ -395,16 +441,39 @@ const PERMISSIONS_TABLE = [
   { module: 'Youth — View', access: 'STAFF' },
   { module: 'Youth — Register', access: 'YOUTH_REGISTRARS (ADMINS + sk_chairperson)' },
   { module: 'Youth — Edit/Delete', access: 'YOUTH_EDITORS (ADMINS + sk_chairperson + sk_secretary + sk_kagawad)' },
-  { module: 'Reports & Analytics', access: 'REPORTERS' },
+  { module: 'Reports & Analytics', access: 'REPORT_VIEWERS (viewing only — no approval rights come with it)' },
   { module: 'Monitoring', access: 'STAFF' },
   { module: 'Announcements — View', access: 'STAFF' },
   { module: 'Announcements — Create/Edit', access: 'EDITORS' },
   { module: 'Announcements — Delete', access: 'ADMINS' },
-  { module: 'User Management / Approvals', access: 'ADMINS' },
-  { module: 'User Role Assignment', access: 'super_admin, provincial_admin' },
+  { module: 'User Management / Approvals', access: 'super_admin only' },
+  { module: 'User Role Assignment', access: 'super_admin only' },
   { module: 'User Delete', access: 'super_admin only' },
-  { module: 'Audit Logs', access: 'ADMINS' },
+  { module: 'Audit Logs', access: 'super_admin only' },
   { module: 'Public Portal', access: 'Everyone — no login required' },
+  { module: 'Youth — own record + join requests', access: 'youth (deny-by-default allowlist)' },
+];
+
+/*
+ * YOUTH ACCESS IS DENY-BY-DEFAULT.
+ *
+ * middleware/auth.js refuses the `youth` role everything except an explicit YOUTH_ALLOWED list.
+ * This exists because most of the API is guarded by authorize() whitelists that a new role fails
+ * automatically — but a large set of READ routes carry only `protect`: budgets, expenses,
+ * liquidations, documents, /users/:id, dashboard and the youth registry itself. Adding the role
+ * without closing those would have handed every youth account the municipality's financial
+ * records and every other member's address and contact number, many of them minors.
+ *
+ * A route added later is denied to youth until someone lists it. If a youth feature 403s
+ * unexpectedly, the allowlist is the first place to look — not a missing authorize().
+ */
+const YOUTH_ALLOWLIST = [
+  'GET/PUT /api/auth/me, PUT /api/auth/password, POST /api/auth/logout',
+  'GET/PUT /api/youth/me — their own registry record',
+  'GET /api/programs and /api/programs/:id — municipality-scoped by the controller',
+  'POST/DELETE /api/programs/:id/join',
+  'GET /api/announcements (published to the public anyway)',
+  'GET /api/notifications, PUT read/read-all, DELETE /api/notifications/:id',
 ];
 
 const TEST_ACCOUNTS = [
@@ -421,7 +490,9 @@ const TEST_ACCOUNTS = [
 const KNOWN_GAPS = [
   { severity: 'High', item: 'No MFA (multi-factor authentication)' },
   { severity: 'Medium', item: 'Access token (15-min) cannot be revoked mid-life; the 30-day refresh token is DB-backed and revoked on logout, so a compromised access token is valid for at most 15 minutes.' },
-  { severity: 'Medium', item: 'No server-side input sanitization middleware beyond Mongoose validators (express-validator only on auth + program + budget + expense + youth routes).' },
+  { severity: 'Medium', item: 'express-validator covers auth, programs, budgets, expenses, liquidations, documents, notifications and youth routes; a few remaining handlers rely on Mongoose validators plus the field whitelist alone.' },
+  { severity: 'Info', item: 'Only super_admin can approve new accounts. If that account is unavailable, registrations stall — an operational consequence of narrowing user management, not a defect.' },
+  { severity: 'Info', item: 'dilg_representative reads every municipality and writes in none. Its former budget/expense/liquidation approval rights were removed deliberately; restoring them is one line in FINANCE_APPROVERS and BUDGET_APPROVERS.' },
   { severity: 'Info', item: 'Allocation limits are enforced at expense creation (per-program and per-category caps block overspend); cross-budget aggregate reporting is still display-only.' },
   { severity: 'Medium', item: 'Program.budget is a Number field, not a FK ref to Budget model — programmatic budget linkage is via budgetRef but budget figure is a separate number.' },
   { severity: 'Info', item: 'Cloudinary credentials in .env — rotate at cloudinary.com if .env was ever committed to git (CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET).' },
@@ -444,6 +515,13 @@ const SECURITY_MEASURES = [
   'All create/update handlers use ALLOWED_FIELDS whitelist (mass assignment prevention)',
   'All approval flows: atomic findOneAndUpdate({_id, status:expected}) — race condition prevention',
   'Municipality scoping: all non-admin list/create/update/delete ops scoped to own municipality',
+  'Municipality reach is TWO lists: CROSS_MUNICIPALITY_READ (adds dilg_representative) and CROSS_MUNICIPALITY_WRITE. Anything that mutates must check the WRITE list — a write handler on the read list is a cross-municipality write.',
+  'Fail closed: a user with no municipality resolves to { $in: [] }, never an omitted filter. An undefined value is dropped by Mongoose, which would turn a missing field into a full read.',
+  'Viewing reports and approving money are separate constants (REPORT_VIEWERS vs FINANCE_APPROVERS / BUDGET_APPROVERS) — widening report access can no longer grant financial authority as a side effect.',
+  'Blank form values are handled by schema, not by guesswork (utils/writeFields.js): blank on an optional path unsets, blank on a REQUIRED path is ignored so the stored value stands.',
+  'CastError no longer masks bad input: an uncastable body field returns 400 naming the field; only an uncastable :id returns 404.',
+  'Registration rejects an unusable role with 400 rather than silently downgrading it — the downgrade path handed registrants a different kind of account with no message.',
+  'User.role is required with no default; account administration (list, approve, reject, role, toggle-status, audit logs) is super_admin only, enforced at the route.',
   'Self-approval blocked on expenses (createdBy !== approver)',
   'Role assignment hierarchy: ASSIGNABLE_ROLES map prevents privilege escalation',
   'Self-assignable roles on register: limited to sk_* + dilg + youth; anything else is rejected',
@@ -1025,6 +1103,26 @@ export default function SystemReference() {
               </tr>
             ))}
           />
+        </Section>
+
+        <Section title="Youth Access — deny by default">
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <p className="text-xs text-gray-600 dark:text-gray-300 mb-3">
+              middleware/auth.js refuses the <code>youth</code> role everything except this allowlist.
+              Most of the API is guarded by <code>authorize()</code> whitelists a new role fails
+              automatically — but a large set of read routes carry only <code>protect</code>: budgets,
+              expenses, liquidations, documents, <code>/users/:id</code>, dashboard and the youth
+              registry itself. A route added later is denied to youth until someone lists it. If a
+              youth feature 403s unexpectedly, look here first, not for a missing authorize().
+            </p>
+            <ul className="space-y-1">
+              {YOUTH_ALLOWLIST.map((entry, i) => (
+                <li key={i} className="text-xs text-gray-600 dark:text-gray-300 flex gap-2">
+                  <span className="text-green-500 flex-shrink-0">✓</span>{entry}
+                </li>
+              ))}
+            </ul>
+          </div>
         </Section>
 
         {/* Security Measures */}
