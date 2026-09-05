@@ -4,6 +4,7 @@ const Notification = require('../models/Notification');
 const AuditLog = require('../models/AuditLog');
 const emailService = require('../services/emailService');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { escapeRegex } = require('../utils/regex');
 const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
@@ -27,12 +28,9 @@ exports.getUsers = asyncHandler(async (req, res) => {
   if (isApproved === 'true' || isApproved === 'false') filter.isApproved = isApproved === 'true';
   if (isActive === 'true' || isActive === 'false') filter.isActive = isActive === 'true';
   if (search) {
-    const s = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    filter.$or = [
-      { firstName: { $regex: s, $options: 'i' } },
-      { lastName: { $regex: s, $options: 'i' } },
-      { email: { $regex: s, $options: 'i' } },
-    ];
+    // Shared helper rather than a fourth inline copy of the same escape.
+    const rx = { $regex: escapeRegex(search), $options: 'i' };
+    filter.$or = [{ firstName: rx }, { lastName: rx }, { email: rx }];
   }
 
   // municipal_admin can only see users from their own municipality
