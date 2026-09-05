@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Plus, Search, Target, Calendar, Banknote, Users,
+  Plus, Target, Calendar, Banknote, Users,
   Eye, Edit, Trash2, ChevronLeft, ChevronRight, X,
 } from 'lucide-react';
 import { programService } from '../../services/programService';
 import StatusBadge from '../../components/shared/StatusBadge';
+import SearchInput from '../../components/shared/SearchInput';
 import { PaginationBtn } from '../../components/shared/DataTable';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { PROGRAM_CATEGORIES, PROGRAM_EDITORS } from '../../utils/constants';
@@ -27,19 +28,9 @@ export default function Programs() {
   const { user } = useAuthStore();
   const [filters, setFilters] = useState({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '' });
 
-  /*
-   * The search box is bound to local state and only pushed into the query key after a pause.
-   * Previously every keystroke changed the query key and fired a request, so typing
-   * "livelihood" issued ten requests, raced their responses, and counted ten hits against the
-   * API rate limiter. The input stays fully responsive because it renders from local state.
-   */
-  const [searchInput, setSearchInput] = useState('');
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setFilters((f) => (f.search === searchInput ? f : { ...f, search: searchInput, page: 1 }));
-    }, 300);
-    return () => clearTimeout(t);
-  }, [searchInput]);
+  // Debouncing lives in SearchInput now. This page had the original hand-rolled copy, written
+  // before the behaviour was extracted for the funds pages; keeping it meant two implementations
+  // of the same 300ms pause, and only one of them gained the clear button.
 
   const { data, isLoading } = useQuery({
     queryKey: ['programs', filters],
@@ -94,8 +85,8 @@ export default function Programs() {
     enabled: isCrossMunicipality,
   });
 
+  // SearchInput mirrors `value`, so clearing the filter clears the box — no separate reset needed.
   const clearFilters = () => {
-    setSearchInput('');
     setFilters({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '' });
   };
 
@@ -127,18 +118,13 @@ export default function Programs() {
 
       <section aria-label="Filter programs" className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
         <div className="flex flex-wrap gap-3">
-          <div className="flex min-w-48 flex-1 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 focus-within:border-navy-700 dark:border-gray-600 dark:bg-gray-700">
-            <Search size={15} className="shrink-0 text-gray-400 dark:text-gray-500" aria-hidden="true" />
-            <label htmlFor="program-search" className="sr-only">Search programs</label>
-            <input
-              id="program-search"
-              type="search"
-              placeholder="Search programs..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-sm text-gray-700 outline-none dark:text-gray-200"
-            />
-          </div>
+          <SearchInput
+            id="program-search"
+            label="Search programs"
+            placeholder="Search programs..."
+            value={filters.search}
+            onSearch={(search) => setFilters((f) => ({ ...f, search, page: 1 }))}
+          />
 
           {/* Selects previously had no accessible name at all — a screen reader announced only
               the current value, giving no clue what it filtered. */}

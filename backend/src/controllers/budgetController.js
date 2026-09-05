@@ -45,7 +45,21 @@ exports.getBudgets = asyncHandler(async (req, res) => {
   if (municipality) filter.municipality = municipality;
   if (fiscalYear) filter.fiscalYear = parseInt(fiscalYear);
   if (status) filter.status = status;
-  if (search) filter.title = { $regex: escapeRegex(search), $options: 'i' };
+  /*
+   * Title, notes, and the fiscal year when the term is a year.
+   *
+   * Title alone was too narrow: budget titles are formulaic ("SK Boac Annual Budget 2026"), so the
+   * distinguishing part a user actually types is usually the year. fiscalYear is a Number, which a
+   * regex cannot match, so a digits-only term is compared numerically alongside the text match
+   * rather than instead of it — "2026" should find the FY2026 budget whether the year appears in
+   * the title or only in the field.
+   */
+  if (search) {
+    const rx = { $regex: escapeRegex(search), $options: 'i' };
+    const or = [{ title: rx }, { notes: rx }];
+    if (/^\d{4}$/.test(search.trim())) or.push({ fiscalYear: Number(search.trim()) });
+    filter.$or = or;
+  }
   if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };

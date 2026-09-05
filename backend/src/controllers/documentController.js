@@ -5,6 +5,7 @@ const AuditLog = require('../models/AuditLog');
 const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { normalizeLabel } = require('../utils/labels');
+const { escapeRegex } = require('../utils/regex');
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
@@ -18,10 +19,32 @@ exports.getDocuments = asyncHandler(async (req, res) => {
   if (category) filter.category = normalizeLabel(category);
   if (isArchived !== undefined) filter.isArchived = isArchived === 'true';
   if (isPublic !== undefined) filter.isPublic = isPublic === 'true';
-  if (search) filter.$text = { $search: search };
+  /*
+   * A substring match, as on every other list. This was `$text`, which matches whole indexed
+   * words only: "Resolut" or "Annual Bud" found nothing while "Resolution" worked — the same
+   * defect the panel reported against the programmes search, left behind here when that was fixed.
+   * `tags` is an array, and $regex matches if any element does.
+   */
+  if (search) {
+    const rx = { $regex: escapeRegex(search), $options: 'i' };
+    filter.$or = [{ title: rx }, { description: rx }, { tags: rx }];
+  }
 
-  if (req.user?.role !== 'super_admin' && req.user?.role !== 'provincial_admin') {
-    filter.municipality = req.user?.municipality;
+  /*
+   * The two role lists, as everywhere else. This was an inline `!== 'super_admin' && !==
+   * 'provincial_admin'` pair, which is why the sweep that converted the rest missed it — and, more
+   * importantly, why dilg_representative was excluded from the province-wide reads it is meant to
+   * have. A DILG account saw an empty Documents page.
+   *
+   * `{ $in: [] }` is deliberate rather than decorative. Mongoose 8 happens to treat a filter value
+   * of `undefined` as null, so the previous `filter.municipality = req.user.municipality` did fail
+   * closed for an account with no municipality — but only by relying on that behaviour. Saying
+   * "match nothing" outright does not depend on it, and matches the rule the rest of the codebase
+   * states explicitly.
+   */
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user?.role)) {
+    const munId = req.user?.municipality?._id || req.user?.municipality;
+    filter.municipality = munId || { $in: [] };
   }
 
   const { safePage, safeLimit, skip } = parsePagination(req.query, { maxLimit: MAX_LIMIT });

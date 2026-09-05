@@ -25,7 +25,9 @@ exports.getLiquidations = asyncHandler(async (req, res) => {
     { title: { $regex: escapeRegex(search), $options: 'i' } },
     { referenceNumber: { $regex: escapeRegex(search), $options: 'i' } },
   ];
-  if (req.user.role !== 'super_admin' && req.user.role !== 'provincial_admin') {
+  // The two role lists, like everywhere else. Written as an inline `!==` pair it read the same but
+  // excluded dilg_representative from the province-wide reads it is supposed to have.
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   }

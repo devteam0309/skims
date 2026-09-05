@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Menu, Bell, Search, Sun, Moon } from 'lucide-react';
+import { Menu, Bell, Sun, Moon } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { notificationService } from '../../services/documentService';
+import GlobalSearch from './GlobalSearch';
 import useAuthStore from '../../store/authStore';
 import { getRelativeTime } from '../../utils/formatters';
 import { ROLE_LABELS } from '../../utils/constants';
@@ -75,22 +76,7 @@ export default function Header({ onMenuClick }) {
           <Menu size={20} aria-hidden="true" />
         </button>
 
-        {/*
-          NOTE: this input has never had a change or submit handler — it is a non-functional
-          stub. It is left in place rather than deleted because wiring it up is a product
-          decision, not a redesign one. It now at least carries a label for screen readers,
-          which previously announced it only as "edit text".
-        */}
-        <div className="hidden w-72 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 focus-within:border-navy-700 md:flex dark:border-gray-600 dark:bg-gray-700">
-          <Search size={16} className="shrink-0 text-gray-400 dark:text-gray-500" aria-hidden="true" />
-          <label htmlFor="global-search" className="sr-only">Search programs and documents</label>
-          <input
-            id="global-search"
-            type="text"
-            placeholder="Search programs, documents..."
-            className="min-w-0 flex-1 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400 dark:text-gray-200"
-          />
-        </div>
+        <GlobalSearch />
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
