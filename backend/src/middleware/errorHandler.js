@@ -6,8 +6,19 @@ const errorHandler = (err, req, res, next) => {
 
   logger.error(`${err.message} - ${req.method} ${req.url} - IP: ${req.ip}`);
 
-  // Mongoose bad ObjectId
+  /*
+   * A cast failure means one of two very different things, and reporting both as 404 sent people
+   * hunting for a deleted record when the real problem was a value they had just typed. An
+   * uncastable `_id` is genuinely "no such record"; an uncastable *field* is a bad request, and
+   * the response now names the field so the cause is visible rather than guessed at.
+   *
+   * This masked the programs create/edit failure completely: `budgetRef: ''` produced
+   * "Resource not found", which reads as a missing program.
+   */
   if (err.name === 'CastError') {
+    if (err.path && err.path !== '_id') {
+      return res.status(400).json({ success: false, message: `Invalid value for ${err.path}` });
+    }
     return res.status(404).json({ success: false, message: 'Resource not found' });
   }
 

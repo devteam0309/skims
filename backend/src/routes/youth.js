@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { body } = require('express-validator');
 const { protect, authorize } = require('../middleware/auth');
-const { YOUTH_EDITORS, YOUTH_REGISTRARS, ADMINS } = require('../constants/roles');
+const { YOUTH_EDITORS, YOUTH_REGISTRARS, CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 const asyncHandler = require('express-async-handler');
 const YouthMember = require('../models/YouthMember');
 const Barangay = require('../models/Barangay');
@@ -11,6 +11,7 @@ const validate = require('../middleware/validate');
 const { successResponse, errorResponse, paginatedResponse } = require('../utils/apiResponse');
 const { calculateAge, isYouthEligibleAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } = require('../utils/age');
 const { normalizeLabel } = require('../utils/labels');
+const { escapeRegex } = require('../utils/regex');
 
 const mongoose = require('mongoose');
 
@@ -47,7 +48,6 @@ const MAX_LIMIT = 100;
 // The Sangguniang Kabataan age band. Mirrors YouthMember.isSkEligible.
 const SK_MIN_AGE = 15;
 const SK_MAX_AGE = 30;
-const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const ALLOWED_CREATE_FIELDS = [
   'firstName', 'lastName', 'birthDate', 'gender', 'email', 'contactNumber',
@@ -119,7 +119,7 @@ router.get('/duplicate-check', asyncHandler(async (req, res) => {
     birthDate: new Date(birthDate),
     deletedAt: null,
   };
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     // Fail closed. An undefined value is dropped from the query by Mongoose, which would have
     // turned a municipality-less account's duplicate check into a province-wide name lookup.
@@ -161,7 +161,7 @@ router.get('/', asyncHandler(async (req, res) => {
     { lastName: { $regex: escapeRegex(search), $options: 'i' } },
   ];
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     if (!munId) return paginatedResponse(res, [], 1, 20, 0);
     filter.municipality = munId;
@@ -171,7 +171,21 @@ router.get('/', asyncHandler(async (req, res) => {
   const safeLimit = Math.min(parseInt(limit) || 20, MAX_LIMIT);
   const skip = (safePage - 1) * safeLimit;
   const [members, total] = await Promise.all([
-    YouthMember.find(filter).populate('municipality', 'name').populate('barangay', 'name').sort({ lastName: 1 }).skip(skip).limit(safeLimit),
+    /*
+     * Sorted the way the registry is read. The Name column renders "{firstName} {lastName}", so a
+     * surname sort put Juan dela Cruz ahead of Ana Reyes and the list looked unordered to anyone
+     * scanning it — reported separately by three different roles. lastName is the tiebreak.
+     *
+     * Collated so case and accents do not split the alphabet, matching the municipality and
+     * barangay lists. Sorting happens before skip/limit, so the order is global, not per page.
+     */
+    YouthMember.find(filter)
+      .populate('municipality', 'name')
+      .populate('barangay', 'name')
+      .collation({ locale: 'en' })
+      .sort({ firstName: 1, lastName: 1 })
+      .skip(skip)
+      .limit(safeLimit),
     YouthMember.countDocuments(filter),
   ]);
   paginatedResponse(res, members, safePage, safeLimit, total);
@@ -180,7 +194,7 @@ router.get('/', asyncHandler(async (req, res) => {
 router.get('/:id', asyncHandler(async (req, res) => {
   const member = await YouthMember.findById(req.params.id).populate('municipality', 'name').populate('barangay', 'name');
   if (!member || member.deletedAt) return errorResponse(res, 404, 'Youth member not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     const memberMunId = (member.municipality?._id || member.municipality)?.toString();
     if (memberMunId !== userMunId) return errorResponse(res, 403, 'Not authorized to view this youth member');
@@ -189,21 +203,23 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 /*
- * Youth now register themselves; this is the fallback, not the main path.
- *
- * It is narrowed from YOUTH_REGISTRARS to ADMINS and hidden in the UI, but deliberately kept: the
- * registry is the Katipunan ng Kabataan roster, and self-registration requires an email address.
- * Removing this entirely would make any youth without one impossible to record, which would leave
+ * Youth now register themselves; this is the fallback, not the main path. It is deliberately kept:
+ * the registry is the Katipunan ng Kabataan roster, and self-registration requires an email
+ * address. Removing it would make any youth without one impossible to record, which would leave
  * the roster incomplete for exactly the households least likely to be reached otherwise.
+ *
+ * Open to YOUTH_REGISTRARS — the admins plus the SK Chairperson. Narrowed to ADMINS alone it
+ * excluded the officer who actually does the canvassing, so a chairperson could not add a member
+ * at all: the route answered 403 and the UI hid the button to match.
  */
-router.post('/', authorize(...ADMINS), youthValidation, asyncHandler(async (req, res) => {
+router.post('/', authorize(...YOUTH_REGISTRARS), youthValidation, asyncHandler(async (req, res) => {
   /*
    * Only the two genuinely province-wide roles may file a record against another municipality.
    * municipal_admin used to be listed here, which let a Mogpog administrator post a youth record
    * with a Sta. Cruz id in the body and have it stored there — a write across the boundary every
    * other check in the system holds. It is scoped everywhere else; it is scoped here now.
    */
-  const isCrossMunicipality = ['super_admin', 'provincial_admin'].includes(req.user.role);
+  const isCrossMunicipality = CROSS_MUNICIPALITY_WRITE.includes(req.user.role);
   const userMunId = req.user.municipality?._id || req.user.municipality;
   const targetMunId = isCrossMunicipality ? (req.body.municipality || userMunId) : userMunId;
   if (!targetMunId) return errorResponse(res, 400, 'Municipality is required');
@@ -239,7 +255,7 @@ router.post('/', authorize(...ADMINS), youthValidation, asyncHandler(async (req,
 router.put('/:id', authorize(...YOUTH_EDITORS), asyncHandler(async (req, res) => {
   const member = await YouthMember.findById(req.params.id);
   if (!member || member.deletedAt) return errorResponse(res, 404, 'Youth member not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (member.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this youth member');
   }
@@ -277,7 +293,7 @@ router.put('/:id', authorize(...YOUTH_EDITORS), asyncHandler(async (req, res) =>
 router.delete('/:id', authorize(...YOUTH_EDITORS), asyncHandler(async (req, res) => {
   const member = await YouthMember.findById(req.params.id);
   if (!member || member.deletedAt) return errorResponse(res, 404, 'Youth member not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (member.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to delete this youth member');
   }

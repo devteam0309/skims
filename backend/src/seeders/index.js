@@ -369,7 +369,13 @@ const seed = async () => {
         endDate: new Date('2026-08-01'),
         targetParticipants: 90,
         actualParticipants: 31,
-        createdBy: treasBoac._id,
+        /*
+         * Authorship must be someone who could actually have authored it. POST /programs is
+         * restricted to EDITORS, which excludes sk_treasurer — so attributing this to Maria Santos
+         * described a creation the application would have refused, and made the Details panel read
+         * as though it were naming the wrong person.
+         */
+        createdBy: chairBoac._id,
         completionRate: 30,
         isPublic: true,
       },
@@ -532,6 +538,31 @@ const seed = async () => {
         vendor: { name: 'Green Earth Supplies', address: 'Mogpog, Marinduque' },
       },
     ];
+    /*
+     * Sta. Cruz had no expenses at all, so its Expenses page and every figure derived from it read
+     * as zero — the same emptiness that was reported as a bug for Documents and for Gasan's
+     * programmes. Looked up by title, with the municipality asserted, like the budget links above.
+     */
+    const stcProgram = byTitle['Sta. Cruz Youth Leadership Bootcamp'];
+    if (!stcProgram) throw new Error('Seed error: no Sta. Cruz programme to charge an expense to');
+    if (stcProgram.municipality.toString() !== munMap['STC']._id.toString()) {
+      throw new Error('Seed error: the Sta. Cruz bootcamp is not in STC; the expense would cross municipalities');
+    }
+    expensesData.push({
+      type: 'purchase_order',
+      title: 'Venue and Catering for Leadership Bootcamp',
+      description: 'Hall rental and meals for the three-day bootcamp.',
+      amount: 52000,
+      program: stcProgram._id,
+      budget: budgetsByMun['STC']._id,
+      municipality: munMap['STC']._id,
+      transactionDate: new Date('2026-05-12'),
+      status: 'approved',
+      approvedBy: provincial._id,
+      createdBy: chairStac._id,
+      vendor: { name: 'Marinduque Events and Catering', address: 'Santa Cruz, Marinduque' },
+    });
+
     for (const ed of expensesData) {
       await new Expense(ed).save();
     }
@@ -823,11 +854,59 @@ const seed = async () => {
         remarks: 'Draft — compiling receipts before submission.',
       },
     ];
+    /*
+     * One liquidation per remaining municipality, so Liquidations is not a Boac-only page.
+     *
+     * The three above are all Boac's — the same thinness that made Documents look broken to the
+     * Gasan Secretary. Linked by title, never by array position, and the municipality is asserted
+     * before the record is built so a mistake stops the seed instead of quietly filing a
+     * liquidation against another municipality's programme.
+     *
+     * `submittedBy` is a role that could actually have submitted it: liquidations are FINANCE_STAFF
+     * work, so Gasan and Mogpog — which have no chairperson or treasurer seeded — are attributed to
+     * the provincial admin rather than to a secretary who would have been refused.
+     */
+    const extraLiquidations = [
+      { code: 'GAS', title: 'Gasan Youth Skills and Livelihood Workshop', submitter: provincial,
+        totalAmount: 62000, liquidatedAmount: 62000, status: 'approved',
+        remarks: 'Full liquidation for the completed livelihood workshop.' },
+      { code: 'MOG', title: 'Mogpog Youth Mental Health Forum', submitter: provincial,
+        totalAmount: 34000, liquidatedAmount: 21000, status: 'submitted',
+        remarks: 'Partial liquidation; awaiting receipts from the resource speaker.' },
+      { code: 'STC', title: 'Sta. Cruz Barangay Reading Corner', submitter: chairStac,
+        totalAmount: 40000, liquidatedAmount: 0, status: 'draft',
+        remarks: 'Draft — compiling receipts for the book and shelving purchases.' },
+    ];
+    for (const spec of extraLiquidations) {
+      const prog = byTitle[spec.title];
+      if (!prog) throw new Error(`Seed error: no programme titled "${spec.title}" to liquidate`);
+      if (prog.municipality.toString() !== munMap[spec.code]._id.toString()) {
+        throw new Error(`Seed error: "${spec.title}" is not in ${spec.code}; the liquidation would cross municipalities`);
+      }
+      liquidationsData.push({
+        title: `Liquidation — ${spec.title}`,
+        program: prog._id,
+        budget: budgetsByMun[spec.code]._id,
+        municipality: munMap[spec.code]._id,
+        totalAmount: spec.totalAmount,
+        liquidatedAmount: spec.liquidatedAmount,
+        status: spec.status,
+        submittedBy: spec.submitter._id,
+        ...(spec.status === 'draft' ? {} : { submittedAt: new Date('2026-05-10') }),
+        ...(spec.status === 'approved'
+          ? { reviewedBy: provincial._id, reviewedAt: new Date('2026-05-20'), approvedBy: provincial._id, approvedAt: new Date('2026-05-22') }
+          : {}),
+        dueDate: new Date('2026-06-30'),
+        remarks: spec.remarks,
+      });
+    }
+
     const liquidations = [];
+    // Sequential .save() — the reference-number counter depends on it; insertMany would skip the hook.
     for (const ld of liquidationsData) {
       liquidations.push(await new Liquidation(ld).save());
     }
-    console.log(`Seeded ${liquidations.length} liquidations`);
+    console.log(`Seeded ${liquidations.length} liquidations across ${new Set(liquidationsData.map((l) => l.municipality.toString())).size} municipalities`);
 
     // Seed documents
     const documentsData = [
@@ -923,8 +1002,51 @@ const seed = async () => {
         tags: ['minutes', 'session'],
       },
     ];
+    /*
+     * Every municipality gets its own documents.
+     *
+     * Five of the six above are Boac's and one is Sta. Cruz's, which left Gasan and Mogpog with an
+     * empty Documents page — read by the panel as "the Secretary cannot see what the Chairperson
+     * can" when the two were simply looking at different municipalities. Thin seed data has now
+     * been reported as a defect four separate times, so the registry, the programmes and these all
+     * spread deliberately.
+     */
+    const uploaderByCode = { BOA: chairBoac, STC: chairStac, GAS: anaGasan, MOG: provincial };
+    const perMunicipalityDocs = [
+      { category: 'cbydp', title: 'Comprehensive Barangay Youth Development Plan 2026-2028',
+        description: 'Three-year youth development plan covering education, health and livelihood priorities.',
+        ext: 'pdf', type: 'application/pdf', size: 431200, isPublic: true, tags: ['cbydp', 'planning'] },
+      { category: 'minutes', title: 'SK Regular Session Minutes — February 2026',
+        description: 'Minutes of the regular session, including approval of the quarterly work plan.',
+        ext: 'pdf', type: 'application/pdf', size: 154300, isPublic: false, tags: ['minutes', 'session'] },
+      { category: 'compliance_report', title: 'DILG Compliance Report — Q2 2026',
+        description: 'Quarterly compliance submission covering fund utilisation and programme delivery.',
+        ext: 'pdf', type: 'application/pdf', size: 298450, isPublic: true, tags: ['compliance', 'dilg'] },
+    ];
+    for (const [code, mun] of Object.entries(munMap)) {
+      const uploader = uploaderByCode[code] || provincial;
+      for (const d of perMunicipalityDocs) {
+        const slug = `${d.category}-${code.toLowerCase()}-2026`;
+        documentsData.push({
+          title: `${d.title} — ${mun.name}`,
+          description: d.description,
+          category: d.category,
+          fileName: `skims/documents/seed-${slug}`,
+          originalName: `${slug}.${d.ext}`,
+          fileUrl: `https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-${slug}.${d.ext}`,
+          fileType: d.type,
+          fileSize: d.size,
+          municipality: mun._id,
+          uploadedBy: uploader._id,
+          fiscalYear: 2026,
+          isPublic: d.isPublic,
+          tags: d.tags,
+        });
+      }
+    }
+
     const documents = await Document.insertMany(documentsData);
-    console.log(`Seeded ${documents.length} documents`);
+    console.log(`Seeded ${documents.length} documents across ${Object.keys(munMap).length} municipalities`);
 
     // Seed notifications (createWithExpiry applies the TTL that insertMany would otherwise bypass)
     const notificationsData = [

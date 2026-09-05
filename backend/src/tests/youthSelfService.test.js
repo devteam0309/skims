@@ -155,24 +155,37 @@ describe('the youth role is closed by default', () => {
   });
 });
 
-describe('staff youth registration is narrowed to admins', () => {
-  it('allows a municipal_admin', async () => {
-    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
-    const res = await request(app).post('/api/youth').set(authHeader(token)).send({
-      firstName: 'Nena', lastName: 'Ilagan', birthDate: '2007-02-02',
-      gender: 'Female', municipality: municipalityId.toString(),
-    });
-    expect(res.status).toBe(201);
-  });
+/*
+ * Registering on behalf is open to YOUTH_REGISTRARS — the admins plus the SK Chairperson.
+ *
+ * It was briefly narrowed to ADMINS alone, which excluded the officer who actually canvasses the
+ * Katipunan ng Kabataan roster: a chairperson could not add a member at all. The roles below the
+ * chairperson stay out, so the boundary is still asserted in both directions.
+ */
+describe('staff youth registration is open to youth registrars', () => {
+  it.each(['municipal_admin', 'provincial_admin', 'super_admin', 'sk_chairperson'])(
+    'allows a %s',
+    async (role) => {
+      const { token, municipalityId } = await createUser({ role });
+      const res = await request(app).post('/api/youth').set(authHeader(token)).send({
+        firstName: 'Nena', lastName: 'Ilagan', birthDate: '2007-02-02',
+        gender: 'Female', municipality: municipalityId.toString(),
+      });
+      expect(res.status).toBe(201);
+    },
+  );
 
-  it('no longer allows an sk_chairperson', async () => {
-    const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });
-    const res = await request(app).post('/api/youth').set(authHeader(token)).send({
-      firstName: 'Nena', lastName: 'Ilagan', birthDate: '2007-02-02',
-      gender: 'Female', municipality: municipalityId.toString(),
-    });
-    expect(res.status).toBe(403);
-  });
+  it.each(['sk_secretary', 'sk_kagawad', 'sk_treasurer', 'dilg_representative'])(
+    'still refuses a %s',
+    async (role) => {
+      const { token, municipalityId } = await createUser({ role });
+      const res = await request(app).post('/api/youth').set(authHeader(token)).send({
+        firstName: 'Nena', lastName: 'Ilagan', birthDate: '2007-02-02',
+        gender: 'Female', municipality: municipalityId.toString(),
+      });
+      expect(res.status).toBe(403);
+    },
+  );
 });
 
 describe('joining a program', () => {
@@ -305,9 +318,15 @@ describe('joining a program', () => {
  * municipality — so tens of thousands of youth appearing there would bury every account it exists
  * to show.
  */
+/*
+ * Acting as super_admin because account administration is now restricted to it. These cases are
+ * about youth being excluded from the staff directory, not about who may open it — see
+ * user.test.js for the access boundary itself.
+ */
 describe('youth stay out of staff user management', () => {
   it('omits youth from the users list by default', async () => {
-    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
+    const { token } = await createUser({ role: 'super_admin' });
+    const { _id: municipalityId } = await createMunicipality();
     await makeYouth(municipalityId);
 
     const res = await request(app).get('/api/users').set(authHeader(token));
@@ -316,7 +335,8 @@ describe('youth stay out of staff user management', () => {
   });
 
   it('still returns them when asked for by name', async () => {
-    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
+    const { token } = await createUser({ role: 'super_admin' });
+    const { _id: municipalityId } = await createMunicipality();
     await makeYouth(municipalityId);
 
     const res = await request(app).get('/api/users?role=youth').set(authHeader(token));
@@ -326,7 +346,8 @@ describe('youth stay out of staff user management', () => {
   });
 
   it('never lists a youth as pending approval', async () => {
-    const { token, municipalityId } = await createUser({ role: 'municipal_admin' });
+    const { token } = await createUser({ role: 'super_admin' });
+    const { _id: municipalityId } = await createMunicipality();
     await makeYouth(municipalityId);
 
     const res = await request(app).get('/api/users/pending').set(authHeader(token));
@@ -335,9 +356,9 @@ describe('youth stay out of staff user management', () => {
   });
 
   // Promoting one would orphan the registry record it is linked to. Role assignment is restricted
-  // to super_admin and provincial_admin, so the check is exercised through one of those.
+  // to super_admin, so the check is exercised through it.
   it('refuses to turn a youth account into a staff role', async () => {
-    const { token } = await createUser({ role: 'provincial_admin' });
+    const { token } = await createUser({ role: 'super_admin' });
     const mun = await createMunicipality();
     const { user } = await makeYouth(mun._id);
 

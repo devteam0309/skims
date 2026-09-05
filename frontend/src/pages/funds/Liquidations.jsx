@@ -13,7 +13,7 @@ import { toFormData } from '../../utils/formData';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
-import { FINANCE_STAFF, ADMIN_ROLES } from '../../utils/constants';
+import { FINANCE_STAFF, FINANCE_APPROVERS } from '../../utils/constants';
 
 const EMPTY_FORM = { title: '', program: '', budget: '', totalAmount: '', liquidatedAmount: '', dueDate: '', remarks: '' };
 
@@ -77,7 +77,8 @@ export default function Liquidations() {
   });
 
   const canCreate = FINANCE_STAFF.includes(user?.role);
-  const canApprove = [...ADMIN_ROLES, 'dilg_representative'].includes(user?.role);
+  // DILG is provincial oversight and observes rather than decides — see constants.js.
+  const canApprove = FINANCE_APPROVERS.includes(user?.role);
 
   const handleCreate = async () => {
     if (!form.title.trim()) return toast.error('Title is required');

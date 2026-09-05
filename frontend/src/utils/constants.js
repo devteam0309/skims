@@ -31,6 +31,13 @@ export const PROGRAM_STATUS_COLORS = {
   cancelled: 'bg-yellow-100 text-yellow-700',
 };
 
+/*
+ * Suggestions, not a closed list — the category input is a ComboInput that stores whatever is
+ * typed. "Other" was removed deliberately: the control looks like a <select>, so offering
+ * "Other" taught users to pick it and then left them nowhere to say what they actually meant,
+ * which is the exact problem free text solves. Existing programs stored as `other` still show
+ * and still filter — the filter builds its options from live data, not from this list.
+ */
 export const PROGRAM_CATEGORIES = [
   { value: 'education', label: 'Education' },
   { value: 'health', label: 'Health' },
@@ -42,7 +49,6 @@ export const PROGRAM_CATEGORIES = [
   { value: 'social_services', label: 'Social Services' },
   { value: 'culture_and_arts', label: 'Culture & Arts' },
   { value: 'infrastructure', label: 'Infrastructure' },
-  { value: 'other', label: 'Other' },
 ];
 
 export const DOCUMENT_CATEGORIES = [
@@ -127,8 +133,18 @@ export const EDITOR_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];
 export const FINANCE_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'dilg_representative'];
 export const FINANCE_STAFF = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer'];
 export const STAFF = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'];
-export const REPORTERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'dilg_representative'];
+/*
+ * Mirrors backend constants/roles.js. Opening Reports is a view; approving money is not, and the
+ * two were one list — which is how DILG came to approve budgets by way of reading reports, and
+ * why adding the Secretary to Reports would have handed them expense approval.
+ */
+export const REPORT_VIEWERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'dilg_representative'];
+export const FINANCE_APPROVERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer'];
+export const BUDGET_APPROVERS = [...ADMIN_ROLES];
+// Account administration and the audit trail are super_admin only.
+export const USER_ADMINS = ['super_admin'];
 export const PROGRAM_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];
+export const YOUTH_REGISTRARS = [...ADMIN_ROLES, 'sk_chairperson'];
 export const YOUTH_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary', 'sk_kagawad'];
 export const DOC_UPLOADERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad'];
 export const DOC_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];

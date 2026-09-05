@@ -14,7 +14,7 @@ import { toFormData } from '../../utils/formData';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
-import { FINANCE_STAFF, REPORTERS } from '../../utils/constants';
+import { FINANCE_STAFF, FINANCE_APPROVERS } from '../../utils/constants';
 
 const EXPENSE_TYPES = [
   { value: 'purchase_request', label: 'Purchase Request' },
@@ -109,7 +109,7 @@ export default function Expenses() {
   });
 
   const canCreate = FINANCE_STAFF.includes(user?.role);
-  const canApprove = REPORTERS.includes(user?.role);
+  const canApprove = FINANCE_APPROVERS.includes(user?.role);
 
   const handleRecordExpense = async () => {
     if (!form.type) return toast.error('Please select an expense type');

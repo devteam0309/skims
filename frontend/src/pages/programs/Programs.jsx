@@ -9,7 +9,7 @@ import { programService } from '../../services/programService';
 import StatusBadge from '../../components/shared/StatusBadge';
 import { PaginationBtn } from '../../components/shared/DataTable';
 import { formatCurrency, formatDate } from '../../utils/formatters';
-import { PROGRAM_CATEGORIES, PROGRAM_EDITORS, ADMIN_ROLES } from '../../utils/constants';
+import { PROGRAM_CATEGORIES, PROGRAM_EDITORS } from '../../utils/constants';
 import { municipalityService } from '../../services/documentService';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';

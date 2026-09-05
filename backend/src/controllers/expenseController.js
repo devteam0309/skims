@@ -9,8 +9,10 @@ const User = require('../models/User');
 const emailService = require('../services/emailService');
 const { uploadToCloudinary } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 
 const MAX_LIMIT = 100;
+const { pickCreatable, pickWritable, toMutation } = require('../utils/writeFields');
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 exports.getExpenses = asyncHandler(async (req, res) => {
@@ -29,7 +31,7 @@ exports.getExpenses = asyncHandler(async (req, res) => {
     if (startDate) filter.transactionDate.$gte = new Date(startDate);
     if (endDate) filter.transactionDate.$lte = new Date(endDate);
   }
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   }
@@ -57,7 +59,7 @@ exports.getExpense = asyncHandler(async (req, res) => {
     .populate('createdBy', 'firstName lastName');
   if (!expense || expense.deletedAt) return errorResponse(res, 404, 'Expense not found');
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (expense.municipality?._id?.toString() !== userMunId && expense.municipality?.toString() !== userMunId) {
       return errorResponse(res, 403, 'Not authorized to view this expense');
@@ -68,15 +70,14 @@ exports.getExpense = asyncHandler(async (req, res) => {
 
 exports.createExpense = asyncHandler(async (req, res) => {
   const ALLOWED_CREATE_FIELDS = ['type', 'title', 'description', 'amount', 'program', 'budget', 'municipality', 'barangay', 'vendor', 'transactionDate'];
-  const expenseData = Object.fromEntries(
-    Object.entries(req.body).filter(([k]) => ALLOWED_CREATE_FIELDS.includes(k))
-  );
+  // Blanks dropped: an expense with no programme linked posts `program: ''`, which cannot be cast.
+  const expenseData = pickCreatable(Expense, req.body, ALLOWED_CREATE_FIELDS);
   expenseData.createdBy = req.user._id;
   // Form submits a flat `vendorName` field (FormData); map it onto the nested vendor object
   if (req.body.vendorName) expenseData.vendor = { ...(expenseData.vendor || {}), name: req.body.vendorName };
   if (!expenseData.municipality) expenseData.municipality = req.user.municipality?._id || req.user.municipality;
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (expenseData.municipality?.toString() !== userMunId) {
       return errorResponse(res, 403, 'Cannot create expenses for another municipality');
@@ -172,7 +173,7 @@ exports.createExpense = asyncHandler(async (req, res) => {
 exports.updateExpense = asyncHandler(async (req, res) => {
   const expense = await Expense.findById(req.params.id);
   if (!expense || expense.deletedAt) return errorResponse(res, 404, 'Expense not found');
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (expense.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this expense');
   }
@@ -180,13 +181,17 @@ exports.updateExpense = asyncHandler(async (req, res) => {
     return errorResponse(res, 400, 'Approved or liquidated expenses cannot be edited');
   }
   const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'amount', 'vendor', 'transactionDate'];
-  const updates = Object.fromEntries(
-    Object.entries(req.body).filter(([k]) => ALLOWED_UPDATE_FIELDS.includes(k))
-  );
+  /*
+   * transactionDate is required, so a blank one is ignored rather than unset — see utils/writeFields.
+   * Clearing it would trade a CastError for a ValidationError and fail the edit either way.
+   */
+  const { set, unset } = pickWritable(Expense, req.body, ALLOWED_UPDATE_FIELDS);
   // Form submits a flat `vendorName` field (FormData); map it onto the nested vendor object
-  if (req.body.vendorName) updates.vendor = { ...(updates.vendor || {}), name: req.body.vendorName };
-  const updated = await Expense.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
-  await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'expense', resourceId: expense._id, details: { changes: Object.keys(updates) }, municipality: req.user.municipality, ipAddress: req.ip });
+  if (req.body.vendorName) set.vendor = { ...(set.vendor || {}), name: req.body.vendorName };
+  const updates = set;
+  const cleared = unset;
+  const updated = await Expense.findByIdAndUpdate(req.params.id, toMutation({ set, unset }), { new: true, runValidators: true });
+  await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'expense', resourceId: expense._id, details: { changes: [...Object.keys(updates), ...cleared] }, municipality: expense.municipality, ipAddress: req.ip });
   successResponse(res, 200, 'Expense updated', updated);
 });
 
@@ -222,7 +227,7 @@ exports.approveExpense = asyncHandler(async (req, res) => {
     return errorResponse(res, 403, 'You cannot approve an expense you created');
   }
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
     if (expense.municipality?.toString() !== userMunId) {
       return errorResponse(res, 403, 'Not authorized to approve expenses for this municipality');
@@ -274,7 +279,7 @@ exports.bulkApproveExpenses = asyncHandler(async (req, res) => {
     createdBy: { $ne: req.user._id },
     deletedAt: null,
   };
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
     filter.municipality = req.user.municipality?._id || req.user.municipality;
   }
 
@@ -369,7 +374,7 @@ exports.deleteExpense = asyncHandler(async (req, res) => {
 exports.getExpenseSummary = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
 
-  if (!['super_admin', 'provincial_admin'].includes(req.user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
     const munId = req.user.municipality?._id || req.user.municipality;
     filter.municipality = munId || { $in: [] };
   } else if (req.query.municipality) {

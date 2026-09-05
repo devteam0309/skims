@@ -8,13 +8,14 @@ const User = require('../models/User');
 const Notification = require('../models/Notification');
 const YouthMember = require('../models/YouthMember');
 const { successResponse } = require('../utils/apiResponse');
+const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 
 exports.getDashboard = asyncHandler(async (req, res) => {
   const { municipalityId } = req.query;
   const user = req.user;
 
   let municipalityFilter;
-  if (!['super_admin', 'provincial_admin'].includes(user.role)) {
+  if (!CROSS_MUNICIPALITY_READ.includes(user.role)) {
     const munId = user.municipality?._id || user.municipality;
     municipalityFilter = { municipality: munId || { $in: [] } };
   } else if (municipalityId) {

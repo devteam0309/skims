@@ -13,7 +13,7 @@ import { formatDate, calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } from '../../ut
 import { toast } from '../../components/ui/toaster';
 import { confirm } from '../../utils/confirm';
 import useAuthStore from '../../store/authStore';
-import { YOUTH_EDITORS, ADMIN_ROLES } from '../../utils/constants';
+import { YOUTH_EDITORS, YOUTH_REGISTRARS } from '../../utils/constants';
 
 const EMPTY_FORM = {
   firstName: '', lastName: '', birthDate: '', gender: '',
@@ -258,9 +258,10 @@ export default function Youth() {
   /*
    * Youth register themselves now, so this is the fallback rather than the normal way in — kept
    * for members with no email address, who cannot sign up and would otherwise be missing from the
-   * roster entirely. Narrowed from chairpersons to admins to match the route, which enforces it.
+   * roster entirely. That makes the SK Chairperson the person who most needs it, since they do the
+   * canvassing; restricting it to admins left them unable to add anyone at all.
    */
-  const canRegister = ADMIN_ROLES.includes(user?.role);
+  const canRegister = YOUTH_REGISTRARS.includes(user?.role);
   const canEdit = YOUTH_EDITORS.includes(user?.role);
 
   const [filters, setFilters] = useState({
@@ -305,11 +306,27 @@ export default function Youth() {
   const filterMunId = isCrossMunicipality ? filters.municipality : userMunId;
   const formMunId = isCrossMunicipality ? form.municipality : userMunId;
 
+  /*
+   * With no municipality chosen, a province-wide account gets every barangay in the province
+   * rather than a disabled control telling it to pick a municipality first. Narrowing by
+   * municipality is still offered; it is no longer a precondition for filtering by barangay.
+   */
   const { data: filterBarangays = [] } = useQuery({
-    queryKey: ['barangays', filterMunId],
-    queryFn: () => municipalityService.getBarangays(filterMunId).then((r) => r.data.data),
-    enabled: !!filterMunId,
+    queryKey: ['barangays', filterMunId || 'all'],
+    queryFn: () => (filterMunId
+      ? municipalityService.getBarangays(filterMunId)
+      : municipalityService.getAllBarangays()
+    ).then((r) => r.data.data),
+    enabled: !!filterMunId || isCrossMunicipality,
   });
+
+  // Grouped under their municipality when the list spans the province; flat otherwise, where
+  // every entry already belongs to the same municipality and a header would say nothing.
+  const groupedFilterBarangays = filterMunId ? null : filterBarangays.reduce((acc, b) => {
+    const name = b.municipality?.name || 'Unassigned';
+    (acc[name] = acc[name] || []).push(b);
+    return acc;
+  }, {});
 
   const { data: formBarangays = [] } = useQuery({
     queryKey: ['barangays', formMunId],
@@ -561,11 +578,17 @@ export default function Youth() {
             id="filter-barangay"
             value={filters.barangay}
             onChange={(e) => setFilters({ ...filters, barangay: e.target.value, page: 1 })}
-            disabled={!filterMunId}
+            disabled={!filterMunId && !isCrossMunicipality}
             className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-60`}
           >
-            <option value="">{filterMunId ? 'All Barangays' : 'Pick a municipality'}</option>
-            {filterBarangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+            <option value="">All Barangays</option>
+            {groupedFilterBarangays
+              ? Object.entries(groupedFilterBarangays).map(([mun, list]) => (
+                <optgroup key={mun} label={mun}>
+                  {list.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+                </optgroup>
+              ))
+              : filterBarangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
           </select>
 
           {/* Type-or-pick, matching the registration form and the gender filter beside it. A level

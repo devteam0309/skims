@@ -70,7 +70,7 @@ import YouthLayout from './components/layout/YouthLayout';
 import MyPrograms from './pages/youth/MyPrograms';
 import MyDetails from './pages/youth/MyDetails';
 
-import { STAFF, PROGRAM_EDITORS, REPORTERS, EDITOR_ROLES as CONTENT_EDITORS, ADMIN_ROLES } from './utils/constants';
+import { STAFF, PROGRAM_EDITORS, EDITOR_ROLES as CONTENT_EDITORS, REPORT_VIEWERS, USER_ADMINS } from './utils/constants';
 
 /*
  * Where each role belongs when it lands somewhere it may not be.
@@ -134,15 +134,15 @@ export default function App() {
           <Route path="expenses" element={<Expenses />} />
           <Route path="liquidations" element={<Liquidations />} />
           <Route path="documents" element={<Documents />} />
-          <Route path="reports" element={<ProtectedRoute roles={REPORTERS}><Reports /></ProtectedRoute>} />
+          <Route path="reports" element={<ProtectedRoute roles={REPORT_VIEWERS}><Reports /></ProtectedRoute>} />
           <Route path="monitoring" element={<Monitoring />} />
-          <Route path="analytics" element={<ProtectedRoute roles={REPORTERS}><Analytics /></ProtectedRoute>} />
-          <Route path="users" element={<ProtectedRoute roles={ADMIN_ROLES}><Users /></ProtectedRoute>} />
+          <Route path="analytics" element={<ProtectedRoute roles={REPORT_VIEWERS}><Analytics /></ProtectedRoute>} />
+          <Route path="users" element={<ProtectedRoute roles={USER_ADMINS}><Users /></ProtectedRoute>} />
           <Route path="profile" element={<UserProfile />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="youth" element={<Youth />} />
           <Route path="announcements" element={<ProtectedRoute roles={CONTENT_EDITORS}><Announcements /></ProtectedRoute>} />
-          <Route path="audit-logs" element={<ProtectedRoute roles={ADMIN_ROLES}><AuditLogs /></ProtectedRoute>} />
+          <Route path="audit-logs" element={<ProtectedRoute roles={USER_ADMINS}><AuditLogs /></ProtectedRoute>} />
         </Route>
 
         {/* Hidden system reference — dev/QA builds only; excluded from public production bundle */}
@@ -161,7 +161,7 @@ export default function App() {
             <div className="text-center">
               <p className="text-6xl font-black text-navy-900">404</p>
               <p className="text-xl font-semibold text-gray-700 mt-2">Page not found</p>
-              <p className="text-sm text-gray-400 mt-1">The page you're looking for doesn't exist.</p>
+              <p className="text-sm text-gray-400 mt-1">The page you&rsquo;re looking for doesn&rsquo;t exist.</p>
               <a href="/dashboard" className="mt-6 inline-block px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors">Go to Dashboard</a>
             </div>
           </div>
