@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { programService } from '../../services/programService';
 import StatusBadge from '../../components/shared/StatusBadge';
+import { PaginationBtn } from '../../components/shared/DataTable';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { PROGRAM_CATEGORIES, PROGRAM_EDITORS, ADMIN_ROLES } from '../../utils/constants';
 import { municipalityService } from '../../services/documentService';
@@ -362,12 +363,12 @@ export default function Programs() {
                 <span className="hidden sm:inline"> · {data.meta.total} programs</span>
               </span>
               <div className="flex items-center gap-1">
-                <PageBtn onClick={() => setFilters({ ...filters, page: filters.page - 1 })} disabled={data.meta.page <= 1} label="Previous page">
+                <PaginationBtn onClick={() => setFilters({ ...filters, page: filters.page - 1 })} disabled={data.meta.page <= 1} label="Previous page">
                   <ChevronLeft size={14} aria-hidden="true" />
-                </PageBtn>
-                <PageBtn onClick={() => setFilters({ ...filters, page: filters.page + 1 })} disabled={data.meta.page >= data.meta.pages} label="Next page">
+                </PaginationBtn>
+                <PaginationBtn onClick={() => setFilters({ ...filters, page: filters.page + 1 })} disabled={data.meta.page >= data.meta.pages} label="Next page">
                   <ChevronRight size={14} aria-hidden="true" />
-                </PageBtn>
+                </PaginationBtn>
               </div>
             </nav>
           )}
