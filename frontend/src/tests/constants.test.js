@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MUNICIPALITIES, ADMIN_ROLES, FINANCE_STAFF, YOUTH_EDITORS, ROLE_LABELS, ROLES, SELF_ASSIGNABLE_ROLES, homeFor } from '../utils/constants';
+import { MUNICIPALITIES, ADMIN_ROLES, FINANCE_STAFF, YOUTH_EDITORS, ROLE_LABELS, ROLES, SELF_ASSIGNABLE_ROLES, PROGRAM_CATEGORIES, DOCUMENT_CATEGORIES, homeFor } from '../utils/constants';
 
 describe('MUNICIPALITIES', () => {
   it('lists all four Marinduque municipalities', () => {
@@ -46,5 +46,29 @@ describe('role groups', () => {
     expect(homeFor('youth')).toBe('/my/programs');
     expect(homeFor('sk_chairperson')).toBe('/dashboard');
     expect(homeFor(undefined)).toBe('/dashboard');
+  });
+});
+
+describe('classification suggestion lists', () => {
+  /*
+   * Both feed a ComboInput, so anything not listed can be typed. Offering "Other" on a control that
+   * looks like a <select> taught users to pick it and then left them nowhere to say what they meant
+   * — the exact problem free text solves. It was removed from programmes first; documents kept the
+   * leftover for a round, which is what this pins.
+   */
+  it('offers no "Other" option', () => {
+    [PROGRAM_CATEGORIES, DOCUMENT_CATEGORIES].forEach((list) => {
+      expect(list.map((c) => c.value)).not.toContain('other');
+      expect(list.map((c) => c.label)).not.toContain('Other');
+    });
+  });
+
+  it('every suggestion is a value/label pair the ComboInput can render', () => {
+    [...PROGRAM_CATEGORIES, ...DOCUMENT_CATEGORIES].forEach((c) => {
+      expect(typeof c.value).toBe('string');
+      expect(c.value).toMatch(/^[a-z0-9_]+$/);
+      expect(typeof c.label).toBe('string');
+      expect(c.label.length).toBeGreaterThan(0);
+    });
   });
 });

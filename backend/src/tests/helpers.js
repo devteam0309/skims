@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Municipality = require('../models/Municipality');
 const Budget = require('../models/Budget');
 const Program = require('../models/Program');
+const Barangay = require('../models/Barangay');
 
 const createMunicipality = async (overrides = {}) => {
   return Municipality.create({
@@ -67,6 +68,18 @@ const createProgram = async (municipalityId, createdBy, overrides = {}) => {
   });
 };
 
+/**
+ * A barangay in the given municipality. Named uniquely because Barangay has a compound unique index
+ * on (name, municipality), which a fixed name would violate on the second call in a suite.
+ */
+const createBarangay = async (municipalityId, overrides = {}) => {
+  return Barangay.create({
+    name: `Barangay ${Math.random().toString(36).slice(2, 8)}`,
+    municipality: municipalityId,
+    ...overrides,
+  });
+};
+
 const authHeader = (token) => ({ Authorization: `Bearer ${token}` });
 
-module.exports = { createUser, createMunicipality, createBudget, createProgram, authHeader };
+module.exports = { createUser, createMunicipality, createBarangay, createBudget, createProgram, authHeader };

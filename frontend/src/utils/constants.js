@@ -62,6 +62,12 @@ export const PROGRAM_CATEGORIES = [
   { value: 'infrastructure', label: 'Infrastructure' },
 ];
 
+/*
+ * Suggestions too, on the same ComboInput and for the same reason as PROGRAM_CATEGORIES above —
+ * "Other" was the leftover half of that change. An office filing something the list does not name
+ * records what it is; documents already stored as `other` still display and still filter, since the
+ * filter is a ComboInput that accepts a typed value and the server canonicalises it.
+ */
 export const DOCUMENT_CATEGORIES = [
   { value: 'resolution', label: 'Resolution' },
   { value: 'purchase_request', label: 'Purchase Request' },
@@ -76,7 +82,6 @@ export const DOCUMENT_CATEGORIES = [
   { value: 'minutes', label: 'Minutes' },
   { value: 'ordinance', label: 'Ordinance' },
   { value: 'certificate', label: 'Certificate' },
-  { value: 'other', label: 'Other' },
 ];
 
 /*

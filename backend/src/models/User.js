@@ -68,6 +68,23 @@ const userSchema = new mongoose.Schema(
     lockUntil: Date,
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedAt: Date,
+    /*
+     * Pending email change.
+     *
+     * A change of address is not applied on request. `email` stays exactly as it is until an
+     * administrator approves the new one, because the address IS the account: it is the login
+     * identifier, the destination for password resets and the route back in after a lockout. An
+     * unreviewed change would let a mistyped address — or a borrowed session — quietly take the
+     * account over, with the real holder unable to reset their way back.
+     *
+     * Deliberately modelled as fields on User rather than a collection of its own: exactly one
+     * change can be outstanding per account, and this reuses the `isApproved`/`approvedBy` shape the
+     * registration flow already established rather than inventing a second approval mechanism.
+     */
+    pendingEmail: { type: String, lowercase: true, trim: true, default: null },
+    pendingEmailRequestedAt: Date,
+    pendingEmailRejectedAt: Date,
+    pendingEmailRejectionReason: String,
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true }
@@ -75,6 +92,10 @@ const userSchema = new mongoose.Schema(
 
 // Indexes
 userSchema.index({ role: 1 });
+// Serves the pending-email-change queue, and the uniqueness check against addresses already claimed
+// by an outstanding request.
+userSchema.index({ pendingEmail: 1 });
+userSchema.index({ barangay: 1 });
 userSchema.index({ municipality: 1 });
 userSchema.index({ deletedAt: 1 });
 

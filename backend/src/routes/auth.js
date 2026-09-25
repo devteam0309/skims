@@ -7,6 +7,7 @@ const validate = require('../middleware/validate');
 const {
   register, login, logout, getMe, updateProfile,
   updatePassword, verifyEmail, forgotPassword, resetPassword, resendVerification,
+  requestEmailChange, cancelEmailChange,
   refreshAccessToken,
   SELF_ASSIGNABLE_ROLES,
 } = require('../controllers/authController');
@@ -78,6 +79,14 @@ const loginValidation = validate([
 ]);
 
 // Same reason: these look users up by email and must normalize identically.
+const emailChangeValidation = validate([
+  // normalizeEmail for the same reason registration applies it: an address stored unnormalised is
+  // one its owner can never log in with. See project memory on the dotted-Gmail lockout.
+  body('email').trim().notEmpty().withMessage('A new email address is required')
+    .isEmail().withMessage('Enter a valid email address').normalizeEmail(),
+  body('currentPassword').notEmpty().withMessage('Your current password is required'),
+]);
+
 const emailLookupValidation = validate([
   body('email').isEmail().withMessage('Valid email address is required').normalizeEmail(),
 ]);
@@ -88,6 +97,24 @@ const emailLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   message: { success: false, message: 'Too many email requests, please try again later.' },
+});
+
+/*
+ * Its own limiter, not the email one.
+ *
+ * An email-change request is authenticated and password-checked, so it is not the unauthenticated
+ * mail-spraying `emailLimiter` guards against — but it does notify every super_admin, so it still
+ * needs a ceiling. Sharing the reset-email budget would also mean a user who changed their address
+ * had fewer password-reset attempts left, which is a strange thing to trade.
+ *
+ * Skipped under test, matching the global limiter in app.js: a suite makes far more requests from one
+ * address than any person would.
+ */
+const emailChangeLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  skip: () => process.env.NODE_ENV === 'test',
+  message: { success: false, message: 'Too many email change requests, please try again later.' },
 });
 
 const loginLimiter = rateLimit({
@@ -105,6 +132,16 @@ router.post('/logout', protect, logout);
 router.get('/me', protect, getMe);
 router.put('/me', protect, upload.single('avatar'), updateProfile);
 router.put('/password', protect, updatePassword);
+/*
+ * A change of email is a REQUEST, not an update: it stores `pendingEmail` and leaves `email` alone
+ * until an administrator approves it (PUT /api/users/:id/email-change/approve). `PUT /me` above
+ * still does not accept an `email` field, so this is the only way to start the process.
+ *
+ * Rate-limited with the email limiter: the request notifies administrators, and an unlimited
+ * endpoint would let one account bury their queue.
+ */
+router.post('/me/email-change', protect, emailChangeLimiter, emailChangeValidation, requestEmailChange);
+router.delete('/me/email-change', protect, cancelEmailChange);
 router.get('/verify-email/:token', verifyEmail);
 router.post('/forgot-password', emailLimiter, emailLookupValidation, forgotPassword);
 router.post('/resend-verification', emailLimiter, emailLookupValidation, resendVerification);

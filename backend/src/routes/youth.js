@@ -5,30 +5,17 @@ const { protect, authorize } = require('../middleware/auth');
 const { YOUTH_EDITORS, YOUTH_REGISTRARS, CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 const asyncHandler = require('express-async-handler');
 const YouthMember = require('../models/YouthMember');
-const Barangay = require('../models/Barangay');
 const AuditLog = require('../models/AuditLog');
 const validate = require('../middleware/validate');
 const { successResponse, errorResponse, paginatedResponse } = require('../utils/apiResponse');
 const { calculateAge, isYouthEligibleAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } = require('../utils/age');
 const { normalizeLabel } = require('../utils/labels');
 const { escapeRegex } = require('../utils/regex');
+const { checkBarangay, barangayErrorMessage } = require('../utils/barangay');
+const { applyReadScope, writeScopeViolation, forceScopeOnCreate, barangayScopeOf, idOf } = require('../utils/scope');
+const upload = require('../middleware/fileUpload');
+const { parseYouthWorkbook, markInFileDuplicates, COLUMN_LABELS, REQUIRED_COLUMNS, MAX_ROWS } = require('../services/youthImportService');
 
-const mongoose = require('mongoose');
-
-// Returns: 'ok' if the barangay is valid for the municipality (or no barangay given),
-// 'invalid' if the id is malformed or does not exist, 'mismatch' if it belongs elsewhere.
-const checkBarangay = async (barangayId, municipalityId) => {
-  if (!barangayId) return 'ok';
-  if (!mongoose.Types.ObjectId.isValid(barangayId)) return 'invalid';
-  const b = await Barangay.findById(barangayId).select('municipality');
-  if (!b) return 'invalid';
-  return b.municipality?.toString() === municipalityId?.toString() ? 'ok' : 'mismatch';
-};
-
-const barangayErrorMessage = (result) =>
-  result === 'invalid'
-    ? 'The selected barangay does not exist'
-    : 'The selected barangay does not belong to this municipality';
 
 const youthValidation = validate([
   body('firstName').trim().notEmpty().withMessage('First name is required'),
@@ -109,6 +96,177 @@ router.put('/me', authorize('youth'), asyncHandler(async (req, res) => {
   successResponse(res, 200, 'Your details were updated', updated);
 }));
 
+/* ============================================================================================= *
+ * Excel import
+ *
+ * Two calls, and the FILE is what is sent both times:
+ *
+ *   POST /api/youth/import/preview  -> parse, validate, report. Writes nothing.
+ *   POST /api/youth/import          -> re-parse, re-validate, insert the rows that pass.
+ *
+ * The confirmation step deliberately does not accept rows from the client. A preview the server does
+ * not re-derive is an ordinary request body wearing a preview's clothes: it could carry rows that
+ * were never in the file, a barangay from another municipality, or an age outside the SK band.
+ * ============================================================================================= */
+
+/** Shared by both endpoints: parse, then check each row against the registry. */
+const analyseImport = async (buffer, user) => {
+  const parsed = await parseYouthWorkbook(buffer);
+  if (!parsed.ok) return parsed;
+
+  const municipality = idOf(user.municipality);
+  // Barangay comes from the account, never from the sheet: a spreadsheet column naming somebody
+  // else's barangay is exactly the tampering the scope rules exist to stop. Unbound admin accounts
+  // import at municipality level and can set a barangay per member afterwards.
+  const barangay = barangayScopeOf(user);
+
+  markInFileDuplicates(parsed.rows);
+
+  /*
+   * Existing members, in one query rather than one per row. Matched on the registry's own unique key
+   * (name + birth date + municipality), case-insensitively, because a roster that capitalises
+   * differently still describes the same person.
+   */
+  const candidates = parsed.rows.filter((r) => r.errors.length === 0 && !r.duplicateOf);
+  const existing = candidates.length > 0
+    ? await YouthMember.find({
+      municipality,
+      deletedAt: null,
+      $or: candidates.map((r) => ({
+        firstName: { $regex: `^${escapeRegex(r.record.firstName)}$`, $options: 'i' },
+        lastName: { $regex: `^${escapeRegex(r.record.lastName)}$`, $options: 'i' },
+        birthDate: r.record.birthDate,
+      })),
+    }).select('firstName lastName birthDate').lean()
+    : [];
+
+  const keyOf = (first, last, birth) =>
+    `${first.toLowerCase()}|${last.toLowerCase()}|${new Date(birth).toISOString().slice(0, 10)}`;
+  const existingKeys = new Set(existing.map((m) => keyOf(m.firstName, m.lastName, m.birthDate)));
+  candidates.forEach((row) => {
+    if (existingKeys.has(keyOf(row.record.firstName, row.record.lastName, row.record.birthDate))) {
+      row.alreadyRegistered = true;
+    }
+  });
+
+  const valid = parsed.rows.filter((r) => r.errors.length === 0 && !r.duplicateOf && !r.alreadyRegistered);
+  const invalid = parsed.rows.filter((r) => r.errors.length > 0);
+  const duplicates = parsed.rows.filter((r) => r.errors.length === 0 && (r.duplicateOf || r.alreadyRegistered));
+
+  return { ok: true, parsed, valid, invalid, duplicates, municipality, barangay };
+};
+
+/** Row shape for the preview table. Dates are ISO, so the UI shows what will actually be stored. */
+const previewRow = (row, status) => ({
+  line: row.line,
+  status,
+  firstName: row.record.firstName,
+  lastName: row.record.lastName,
+  birthDate: row.record.birthDate ? new Date(row.record.birthDate).toISOString().slice(0, 10) : null,
+  gender: row.record.gender,
+  email: row.record.email || null,
+  contactNumber: row.record.contactNumber || null,
+  educationalAttainment: row.record.educationalAttainment || null,
+  errors: row.errors,
+  duplicateOf: row.duplicateOf || null,
+  alreadyRegistered: !!row.alreadyRegistered,
+});
+
+router.post('/import/preview', authorize(...YOUTH_REGISTRARS), upload.single('file'), asyncHandler(async (req, res) => {
+  if (!req.file) return errorResponse(res, 400, 'Attach an .xlsx spreadsheet to import');
+  if (!idOf(req.user.municipality)) {
+    return errorResponse(res, 400, 'Your account has no municipality, so there is no roster to import into');
+  }
+
+  const result = await analyseImport(req.file.buffer, req.user);
+  if (!result.ok) return errorResponse(res, 400, result.error);
+
+  successResponse(res, 200, 'Import preview', {
+    fileName: req.file.originalname,
+    recognisedColumns: result.parsed.headers,
+    requiredColumns: REQUIRED_COLUMNS.map((f) => COLUMN_LABELS[f]),
+    maxRows: MAX_ROWS,
+    totals: {
+      rows: result.parsed.rows.length,
+      valid: result.valid.length,
+      invalid: result.invalid.length,
+      duplicates: result.duplicates.length,
+    },
+    // One list ordered by line number, so it reads as the user's own spreadsheet.
+    rows: [
+      ...result.valid.map((r) => previewRow(r, 'valid')),
+      ...result.invalid.map((r) => previewRow(r, 'invalid')),
+      ...result.duplicates.map((r) => previewRow(r, 'duplicate')),
+    ].sort((a, b) => a.line - b.line),
+  });
+}));
+
+router.post('/import', authorize(...YOUTH_REGISTRARS), upload.single('file'), asyncHandler(async (req, res) => {
+  if (!req.file) return errorResponse(res, 400, 'Attach an .xlsx spreadsheet to import');
+  if (!idOf(req.user.municipality)) {
+    return errorResponse(res, 400, 'Your account has no municipality, so there is no roster to import into');
+  }
+
+  const result = await analyseImport(req.file.buffer, req.user);
+  if (!result.ok) return errorResponse(res, 400, result.error);
+  if (result.valid.length === 0) {
+    return errorResponse(res, 400, 'No importable rows. Correct the highlighted rows and upload the file again.');
+  }
+
+  const docs = result.valid.map((row) => ({
+    ...row.record,
+    municipality: result.municipality,
+    ...(result.barangay ? { barangay: result.barangay } : {}),
+    registeredBy: req.user._id,
+    // Imported from an office roster, so it awaits the same confirmation any canvassed member gets.
+    verificationStatus: 'unverified',
+  }));
+
+  /*
+   * Inserted one at a time rather than with insertMany. A single bad row must not discard the other
+   * two hundred, and the per-row outcome is what the response has to report -- the registry's unique
+   * index can still refuse a pair this pass could not see (a member somebody else created seconds
+   * ago, or two rows differing only in a way the index collates).
+   */
+  const imported = [];
+  const failed = [];
+  for (const doc of docs) {
+    try {
+      const member = await YouthMember.create(doc);
+      imported.push(member._id);
+    } catch (err) {
+      failed.push({
+        name: `${doc.firstName} ${doc.lastName}`,
+        reason: err.code === 11000 ? 'Already registered in this municipality' : 'Could not be saved',
+      });
+    }
+  }
+
+  await AuditLog.create({
+    user: req.user._id,
+    action: 'IMPORT',
+    resource: 'youth_member',
+    details: {
+      fileName: req.file.originalname,
+      rows: result.parsed.rows.length,
+      imported: imported.length,
+      skippedInvalid: result.invalid.length,
+      skippedDuplicate: result.duplicates.length,
+      failed: failed.length,
+      barangay: result.barangay || null,
+    },
+    municipality: result.municipality,
+    ipAddress: req.ip,
+  });
+
+  successResponse(res, 201, `Imported ${imported.length} youth member${imported.length === 1 ? '' : 's'}`, {
+    imported: imported.length,
+    skippedInvalid: result.invalid.length,
+    skippedDuplicate: result.duplicates.length,
+    failed,
+  });
+}));
+
 router.get('/duplicate-check', asyncHandler(async (req, res) => {
   const { firstName, lastName, birthDate } = req.query;
   if (!firstName || !lastName || !birthDate) return successResponse(res, 200, 'Duplicate check', { exists: false });
@@ -119,13 +277,15 @@ router.get('/duplicate-check', asyncHandler(async (req, res) => {
     birthDate: new Date(birthDate),
     deletedAt: null,
   };
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    // Fail closed. An undefined value is dropped from the query by Mongoose, which would have
-    // turned a municipality-less account's duplicate check into a province-wide name lookup.
-    if (!munId) return successResponse(res, 200, 'Duplicate check', { exists: false, member: null });
-    filter.municipality = munId;
+  /*
+   * Scoped like the list, so a chairperson checking for a duplicate is told about one in their own
+   * barangay (or an unassigned municipality-level record) and not about a namesake in another
+   * barangay they may not see. Fails closed for an account with no municipality.
+   */
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role) && !idOf(req.user.municipality)) {
+    return successResponse(res, 200, 'Duplicate check', { exists: false, member: null });
   }
+  applyReadScope(filter, req.user);
   const member = await YouthMember.findOne(filter).select('_id firstName lastName');
   successResponse(res, 200, 'Duplicate check', { exists: !!member, member: member || null });
 }));
@@ -134,7 +294,6 @@ router.get('/', asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, municipality, barangay, search, gender, educationalAttainment, isActive, skEligible } = req.query;
   const filter = { deletedAt: null };
   if (municipality) filter.municipality = municipality;
-  if (barangay) filter.barangay = barangay;
   // Free-text values are stored as typed, so the filter matches the whole value case-insensitively
   // rather than requiring the caller to reproduce the original casing exactly.
   if (gender) filter.gender = { $regex: `^${escapeRegex(gender)}$`, $options: 'i' };
@@ -161,11 +320,15 @@ router.get('/', asyncHandler(async (req, res) => {
     { lastName: { $regex: escapeRegex(search), $options: 'i' } },
   ];
 
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    if (!munId) return paginatedResponse(res, [], 1, 20, 0);
-    filter.municipality = munId;
+  /*
+   * Municipality and barangay both come from the account, not the query. A chairperson bound to
+   * Barangay A sees Barangay A plus the municipality-level records that name no barangay, and
+   * `?barangay=<another>` is discarded rather than honoured — see utils/scope.js.
+   */
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role) && !idOf(req.user.municipality)) {
+    return paginatedResponse(res, [], 1, 20, 0);
   }
+  applyReadScope(filter, req.user, { requestedBarangay: barangay });
 
   const safePage = Math.max(1, parseInt(page) || 1);
   const safeLimit = Math.min(parseInt(limit) || 20, MAX_LIMIT);
@@ -194,10 +357,18 @@ router.get('/', asyncHandler(async (req, res) => {
 router.get('/:id', asyncHandler(async (req, res) => {
   const member = await YouthMember.findById(req.params.id).populate('municipality', 'name').populate('barangay', 'name');
   if (!member || member.deletedAt) return errorResponse(res, 404, 'Youth member not found');
+  /*
+   * Read scope has to be re-asserted per record: the list hides a foreign member, and before the
+   * equivalent fix on `userController.getUser` a direct request by id still returned one.
+   */
   if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    const memberMunId = (member.municipality?._id || member.municipality)?.toString();
-    if (memberMunId !== userMunId) return errorResponse(res, 403, 'Not authorized to view this youth member');
+    const userMunId = idOf(req.user.municipality);
+    if (idOf(member.municipality) !== userMunId) return errorResponse(res, 403, 'Not authorized to view this youth member');
+    const ownBarangay = barangayScopeOf(req.user);
+    const memberBarangay = idOf(member.barangay);
+    if (ownBarangay && memberBarangay && memberBarangay !== ownBarangay) {
+      return errorResponse(res, 403, 'Not authorized to view this youth member');
+    }
   }
   successResponse(res, 200, 'Youth member', member);
 }));
@@ -220,7 +391,7 @@ router.post('/', authorize(...YOUTH_REGISTRARS), youthValidation, asyncHandler(a
    * other check in the system holds. It is scoped everywhere else; it is scoped here now.
    */
   const isCrossMunicipality = CROSS_MUNICIPALITY_WRITE.includes(req.user.role);
-  const userMunId = req.user.municipality?._id || req.user.municipality;
+  const userMunId = idOf(req.user.municipality);
   const targetMunId = isCrossMunicipality ? (req.body.municipality || userMunId) : userMunId;
   if (!targetMunId) return errorResponse(res, 400, 'Municipality is required');
   const data = Object.fromEntries(
@@ -237,7 +408,18 @@ router.post('/', authorize(...YOUTH_REGISTRARS), youthValidation, asyncHandler(a
   if (data.educationalAttainment) data.educationalAttainment = normalizeLabel(data.educationalAttainment);
   data.registeredBy = req.user._id;
   data.municipality = targetMunId;
-  // A barangay, if provided, must belong to the target municipality
+  /*
+   * A barangay-bound officer registers into their OWN barangay, whatever the payload says — the
+   * form no longer asks them to choose one and a hand-built request cannot choose for them. An
+   * unbound account (the admin tiers) may still name a barangay, which is then checked against the
+   * municipality below.
+   *
+   * Overwritten rather than refused, which is this module's established contract for scope fields:
+   * `municipality` in the body is ignored the same way, and three suites pin that. The record can
+   * therefore never land outside the caller's scope, which is the property that matters.
+   */
+  const ownBarangay = barangayScopeOf(req.user);
+  if (ownBarangay) data.barangay = ownBarangay;
   const brgyCheck = await checkBarangay(data.barangay, targetMunId);
   if (brgyCheck !== 'ok') return errorResponse(res, 400, barangayErrorMessage(brgyCheck));
   try {
@@ -255,10 +437,8 @@ router.post('/', authorize(...YOUTH_REGISTRARS), youthValidation, asyncHandler(a
 router.put('/:id', authorize(...YOUTH_EDITORS), asyncHandler(async (req, res) => {
   const member = await YouthMember.findById(req.params.id);
   if (!member || member.deletedAt) return errorResponse(res, 404, 'Youth member not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (member.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this youth member');
-  }
+  const violation = writeScopeViolation(member, req.user);
+  if (violation) return errorResponse(res, 403, 'Not authorized to update this youth member');
   // Non-empty values are set; blank values are unset (clears the field). This avoids
   // casting '' to an ObjectId (barangay) or an empty enum (educationalAttainment),
   // which would otherwise throw a CastError/ValidationError on the whole update.
@@ -269,7 +449,18 @@ router.put('/:id', authorize(...YOUTH_EDITORS), asyncHandler(async (req, res) =>
     if (v === '' || v === null || v === undefined) $unset[k] = '';
     else $set[k] = k === 'educationalAttainment' ? normalizeLabel(v) : v;
   }
-  // A barangay, if being set, must belong to the member's municipality (municipality itself is immutable here)
+  /*
+   * A barangay, if being set, must belong to the member's municipality (municipality itself is
+   * immutable here). A barangay-bound officer cannot re-file a member into a different barangay:
+   * that would be a write into a scope they cannot read, so the value is pinned to their own.
+   */
+  const editorBarangay = barangayScopeOf(req.user);
+  const touchesBarangay = Object.prototype.hasOwnProperty.call($set, 'barangay')
+    || Object.prototype.hasOwnProperty.call($unset, 'barangay');
+  if (editorBarangay && touchesBarangay) {
+    delete $unset.barangay;
+    $set.barangay = editorBarangay;
+  }
   if ($set.barangay) {
     const brgyCheck = await checkBarangay($set.barangay, member.municipality);
     if (brgyCheck !== 'ok') return errorResponse(res, 400, barangayErrorMessage(brgyCheck));
@@ -293,10 +484,7 @@ router.put('/:id', authorize(...YOUTH_EDITORS), asyncHandler(async (req, res) =>
 router.delete('/:id', authorize(...YOUTH_EDITORS), asyncHandler(async (req, res) => {
   const member = await YouthMember.findById(req.params.id);
   if (!member || member.deletedAt) return errorResponse(res, 404, 'Youth member not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (member.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to delete this youth member');
-  }
+  if (writeScopeViolation(member, req.user)) return errorResponse(res, 403, 'Not authorized to delete this youth member');
   member.deletedAt = new Date();
   await member.save();
   await AuditLog.create({ user: req.user._id, action: 'DELETE', resource: 'youth_member', resourceId: member._id, details: { name: `${member.firstName} ${member.lastName}` }, municipality: member.municipality, ipAddress: req.ip });

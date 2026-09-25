@@ -222,6 +222,21 @@ exports.sendExpenseApproved = async (user, expense) => {
   });
 };
 
+exports.sendExpenseRejected = async (user, expense) => {
+  await sendEmail({
+    to: user.email,
+    subject: `SKIMS — Expense Returned: ${expense.referenceNumber}`,
+    html: wrap(`
+      <h2 style="color:#1e3a5f">Expense Returned</h2>
+      <p>Hello ${esc(user.firstName)}, your expense <strong>${esc(expense.title)}</strong> (${esc(expense.referenceNumber)}) was not approved.</p>
+      <p style="color:#555">Amount: <strong>${peso(expense.amount)}</strong></p>
+      <p style="color:#555">Reason: <strong>${esc(expense.rejectionReason || 'No reason given')}</strong></p>
+      <p style="color:#555">You can edit the record and submit it again.</p>
+      ${btn(`${process.env.CLIENT_URL}/expenses`, 'View Expenses')}
+    `),
+  });
+};
+
 exports.sendLiquidationApproved = async (user, liquidation) => {
   await sendEmail({
     to: user.email,

@@ -6,10 +6,13 @@ const Budget = require('../models/Budget');
 const Program = require('../models/Program');
 const AuditLog = require('../models/AuditLog');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 const emailService = require('../services/emailService');
 const { uploadToCloudinary } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
+const { applyReadScope, writeScopeViolation, createScopeViolation, forceScopeOnCreate, barangayScopeOf, idOf } = require('../utils/scope');
+const { checkBarangay, barangayErrorMessage } = require('../utils/barangay');
 
 const MAX_LIMIT = 100;
 const { pickCreatable, pickWritable, toMutation } = require('../utils/writeFields');
@@ -31,10 +34,8 @@ exports.getExpenses = asyncHandler(async (req, res) => {
     if (startDate) filter.transactionDate.$gte = new Date(startDate);
     if (endDate) filter.transactionDate.$lte = new Date(endDate);
   }
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    filter.municipality = munId || { $in: [] };
-  }
+  // Municipality and barangay both come from the account; a supplied barangay can only narrow.
+  applyReadScope(filter, req.user, { requestedBarangay: req.query.barangay });
 
   const { safePage, safeLimit, skip } = parsePagination(req.query, { maxLimit: MAX_LIMIT });
   const [expenses, total] = await Promise.all([
@@ -60,8 +61,12 @@ exports.getExpense = asyncHandler(async (req, res) => {
   if (!expense || expense.deletedAt) return errorResponse(res, 404, 'Expense not found');
 
   if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (expense.municipality?._id?.toString() !== userMunId && expense.municipality?.toString() !== userMunId) {
+    if (idOf(expense.municipality) !== idOf(req.user.municipality)) {
+      return errorResponse(res, 403, 'Not authorized to view this expense');
+    }
+    const ownBarangay = barangayScopeOf(req.user);
+    const expenseBarangay = idOf(expense.barangay);
+    if (ownBarangay && expenseBarangay && expenseBarangay !== ownBarangay) {
       return errorResponse(res, 403, 'Not authorized to view this expense');
     }
   }
@@ -75,14 +80,39 @@ exports.createExpense = asyncHandler(async (req, res) => {
   expenseData.createdBy = req.user._id;
   // Form submits a flat `vendorName` field (FormData); map it onto the nested vendor object
   if (req.body.vendorName) expenseData.vendor = { ...(expenseData.vendor || {}), name: req.body.vendorName };
-  if (!expenseData.municipality) expenseData.municipality = req.user.municipality?._id || req.user.municipality;
+  /*
+   * Municipality and barangay are forced from the account for any scoped role — the body value is
+   * ignored rather than checked, because a whitelist plus a "use mine if absent" fallback still
+   * lets a scoped user file a record somewhere they cannot read.
+   */
+  const tamper = createScopeViolation(req.body, req.user);
+  if (tamper) return errorResponse(res, 403, tamper.replace('records', 'expenses'));
+  forceScopeOnCreate(expenseData, req.user);
+  if (!expenseData.municipality) {
+    return errorResponse(res, 400, 'A municipality is required to record an expense');
+  }
+  const brgyCheck = await checkBarangay(expenseData.barangay, idOf(expenseData.municipality));
+  if (brgyCheck !== 'ok') return errorResponse(res, 400, barangayErrorMessage(brgyCheck));
 
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (expenseData.municipality?.toString() !== userMunId) {
-      return errorResponse(res, 403, 'Cannot create expenses for another municipality');
+  /*
+   * The linked programme must be one the caller may actually see. Without this the programme is a
+   * bare id: the form only offers programmes in scope, but a hand-built request could attach an
+   * expense to another municipality's programme and, through it, to another municipality's budget.
+   */
+  if (expenseData.program) {
+    const linked = await Program.findOne({ _id: expenseData.program, deletedAt: null }).select('municipality barangay');
+    if (!linked) return errorResponse(res, 404, 'Program not found');
+    if (writeScopeViolation(linked, req.user)) {
+      return errorResponse(res, 403, 'That program belongs to another municipality or barangay');
+    }
+    if (idOf(linked.municipality) !== idOf(expenseData.municipality)) {
+      return errorResponse(res, 400, 'The expense and its program must belong to the same municipality');
     }
   }
+
+  // Opt-in draft, for a record being assembled before it goes up for review. Anything else keeps
+  // the schema default of `pending`, so existing callers are unaffected.
+  if (req.body.saveAsDraft === true || req.body.saveAsDraft === 'true') expenseData.status = 'draft';
 
   if (expenseData.budget) {
     const budget = await Budget.findById(expenseData.budget);
@@ -166,17 +196,14 @@ exports.createExpense = asyncHandler(async (req, res) => {
   }
 
   const expense = await Expense.create(expenseData);
-  await AuditLog.create({ user: req.user._id, action: 'CREATE', resource: 'expense', resourceId: expense._id, details: { title: expense.title, amount: expense.amount, type: expense.type }, municipality: req.user.municipality, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'CREATE', resource: 'expense', resourceId: expense._id, details: { title: expense.title, amount: expense.amount, type: expense.type }, municipality: expense.municipality, ipAddress: req.ip });
   successResponse(res, 201, 'Expense created', expense);
 });
 
 exports.updateExpense = asyncHandler(async (req, res) => {
   const expense = await Expense.findById(req.params.id);
   if (!expense || expense.deletedAt) return errorResponse(res, 404, 'Expense not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (expense.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this expense');
-  }
+  if (writeScopeViolation(expense, req.user)) return errorResponse(res, 403, 'Not authorized to update this expense');
   if (['approved', 'liquidated'].includes(expense.status)) {
     return errorResponse(res, 400, 'Approved or liquidated expenses cannot be edited');
   }
@@ -227,11 +254,8 @@ exports.approveExpense = asyncHandler(async (req, res) => {
     return errorResponse(res, 403, 'You cannot approve an expense you created');
   }
 
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (expense.municipality?.toString() !== userMunId) {
-      return errorResponse(res, 403, 'Not authorized to approve expenses for this municipality');
-    }
+  if (writeScopeViolation(expense, req.user)) {
+    return errorResponse(res, 403, 'Not authorized to approve expenses for this municipality');
   }
 
   const approved = await Expense.findOneAndUpdate(
@@ -259,13 +283,102 @@ exports.approveExpense = asyncHandler(async (req, res) => {
     await releaseCommitment(approved.program, approved.amount);
   }
 
-  await AuditLog.create({ user: req.user._id, action: 'APPROVE', resource: 'expense', resourceId: approved._id, details: { amount: approved.amount, referenceNumber: approved.referenceNumber }, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'APPROVE', resource: 'expense', resourceId: approved._id, details: { amount: approved.amount, referenceNumber: approved.referenceNumber }, municipality: approved.municipality, ipAddress: req.ip });
 
   User.findById(approved.createdBy).select('email firstName').then((creator) => {
     if (creator) emailService.sendExpenseApproved(creator, approved).catch(() => {});
   }).catch(() => {});
 
   successResponse(res, 200, 'Expense approved', approved);
+});
+
+/**
+ * draft ──▶ pending. The treasurer's own act of sending a prepared record up for review.
+ *
+ * Separate from approval on purpose: the officer who records money never decides on it.
+ */
+exports.submitExpense = asyncHandler(async (req, res) => {
+  const expense = await Expense.findOne({ _id: req.params.id, deletedAt: null });
+  if (!expense) return errorResponse(res, 404, 'Expense not found');
+  if (writeScopeViolation(expense, req.user)) return errorResponse(res, 403, 'Not authorized to submit this expense');
+
+  // Atomic on the expected state, so two clicks cannot both move it out of draft.
+  const submitted = await Expense.findOneAndUpdate(
+    { _id: req.params.id, status: { $in: ['draft', 'rejected'] } },
+    { status: 'pending', submittedAt: new Date(), $unset: { rejectionReason: '', rejectedBy: '', rejectedAt: '' } },
+    { new: true }
+  );
+  if (!submitted) return errorResponse(res, 409, 'Only a draft or returned expense can be submitted for review');
+
+  await AuditLog.create({
+    user: req.user._id, action: 'SUBMIT', resource: 'expense', resourceId: submitted._id,
+    oldValues: { status: expense.status }, newValues: { status: 'pending' },
+    details: { referenceNumber: submitted.referenceNumber, amount: submitted.amount },
+    municipality: submitted.municipality, ipAddress: req.ip,
+  });
+
+  successResponse(res, 200, 'Expense submitted for review', submitted);
+});
+
+/**
+ * pending ──▶ rejected, with a reason.
+ *
+ * The status existed in the schema from the beginning and nothing ever wrote it: an administrator
+ * reviewing an expense could only approve it, so the only way to refuse one was to leave it pending
+ * for ever — indistinguishable, on screen, from one nobody had looked at yet.
+ *
+ * The reason is required. A returned record with no explanation tells the treasurer nothing about
+ * what to change, and leaves the audit trail unable to show the basis for the decision.
+ */
+exports.rejectExpense = asyncHandler(async (req, res) => {
+  const reason = (req.body.rejectionReason || req.body.reason || '').trim();
+  if (!reason) return errorResponse(res, 400, 'A reason is required when returning an expense');
+
+  const expense = await Expense.findOne({ _id: req.params.id, deletedAt: null });
+  if (!expense) return errorResponse(res, 404, 'Expense not found');
+  if (expense.status !== 'pending') {
+    return errorResponse(res, 400, 'Only a pending expense can be returned');
+  }
+  if (writeScopeViolation(expense, req.user)) {
+    return errorResponse(res, 403, 'Not authorized to review expenses for this municipality');
+  }
+
+  /*
+   * Atomic on the expected state. Approval and rejection race each other through the same screen,
+   * and whichever lands second must be told so rather than overwriting the first silently.
+   */
+  const rejected = await Expense.findOneAndUpdate(
+    { _id: req.params.id, status: 'pending' },
+    { status: 'rejected', rejectionReason: reason, rejectedBy: req.user._id, rejectedAt: new Date() },
+    { new: true }
+  );
+  if (!rejected) return errorResponse(res, 409, 'Expense was already processed by another user');
+
+  /*
+   * No budget or programme figures move. A rejection disburses nothing, so there is nothing to
+   * reverse — which is exactly why it must not be reachable once an expense has been approved.
+   */
+  await AuditLog.create({
+    user: req.user._id, action: 'REJECT', resource: 'expense', resourceId: rejected._id,
+    oldValues: { status: 'pending' }, newValues: { status: 'rejected', rejectionReason: reason },
+    details: { referenceNumber: rejected.referenceNumber, amount: rejected.amount, rejectionReason: reason },
+    municipality: rejected.municipality, ipAddress: req.ip,
+  });
+
+  const creator = await User.findById(rejected.createdBy).select('email firstName');
+  if (creator) {
+    await Notification.create({
+      recipient: creator._id,
+      type: 'approval_rejected',
+      title: 'Expense Returned',
+      message: `Expense "${rejected.title}" (${rejected.referenceNumber}) was returned: ${reason}`,
+      link: '/expenses',
+      priority: 'high',
+    });
+    emailService.sendExpenseRejected(creator, rejected).catch(() => {});
+  }
+
+  successResponse(res, 200, 'Expense returned', rejected);
 });
 
 exports.bulkApproveExpenses = asyncHandler(async (req, res) => {
@@ -279,8 +392,14 @@ exports.bulkApproveExpenses = asyncHandler(async (req, res) => {
     createdBy: { $ne: req.user._id },
     deletedAt: null,
   };
+  /*
+   * Scoped with the same helper as everything else, so a bulk call cannot reach further than the
+   * single-record route it batches. `{ $in: [] }` for an account with no municipality.
+   */
   if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    filter.municipality = req.user.municipality?._id || req.user.municipality;
+    filter.municipality = idOf(req.user.municipality) || { $in: [] };
+    const ownBarangay = barangayScopeOf(req.user);
+    if (ownBarangay) filter.barangay = { $in: [ownBarangay, null] };
   }
 
   const toApprove = await Expense.find(filter).select('_id amount budget program createdBy title referenceNumber');
@@ -363,23 +482,28 @@ exports.bulkApproveExpenses = asyncHandler(async (req, res) => {
 exports.deleteExpense = asyncHandler(async (req, res) => {
   const expense = await Expense.findById(req.params.id);
   if (!expense || expense.deletedAt) return errorResponse(res, 404, 'Expense not found');
+  /*
+   * This route is open to ADMINS, which includes municipal_admin — a scoped role. Without a check a
+   * Boac administrator could delete a Santa Cruz expense: the handler had none at all, while every
+   * other expense mutation guarded it.
+   */
+  if (writeScopeViolation(expense, req.user)) return errorResponse(res, 403, 'Not authorized to delete this expense');
   if (['approved', 'liquidated'].includes(expense.status)) {
     return errorResponse(res, 400, 'Approved or liquidated expenses cannot be deleted');
   }
   expense.deletedAt = new Date();
   await expense.save();
+  await AuditLog.create({ user: req.user._id, action: 'DELETE', resource: 'expense', resourceId: expense._id, details: { title: expense.title, amount: expense.amount, referenceNumber: expense.referenceNumber }, municipality: expense.municipality, ipAddress: req.ip });
   successResponse(res, 200, 'Expense deleted');
 });
 
 exports.getExpenseSummary = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
 
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    filter.municipality = munId || { $in: [] };
-  } else if (req.query.municipality) {
+  if (CROSS_MUNICIPALITY_READ.includes(req.user.role) && req.query.municipality) {
     filter.municipality = req.query.municipality;
   }
+  applyReadScope(filter, req.user, { requestedBarangay: req.query.barangay });
 
   if (req.query.program) filter.program = req.query.program;
 
