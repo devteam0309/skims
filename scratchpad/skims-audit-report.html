@@ -333,12 +333,12 @@
     </div>
 
     <dl class="facts">
-      <div><dt>Branch</dt><dd>feat/barangay-scope<small> · 3 commits</small></dd></div>
+      <div><dt>Branch</dt><dd>feat/barangay-scope<small> · 4 commits</small></dd></div>
       <div><dt>Base</dt><dd class="mono">851e609</dd></div>
-      <div><dt>Backend tests</dt><dd>555 <small>was 473</small></dd></div>
-      <div><dt>Suites</dt><dd>42 <small>was 36</small></dd></div>
+      <div><dt>Backend tests</dt><dd>574 <small>was 473</small></dd></div>
+      <div><dt>Suites</dt><dd>43 <small>was 36</small></dd></div>
       <div><dt>Frontend tests</dt><dd>66 <small>was 59</small></dd></div>
-      <div><dt>Diff</dt><dd>59 files <small>+5,143 / −443</small></dd></div>
+      <div><dt>Diff</dt><dd>66 files <small>+5,600 / −490</small></dd></div>
       <div><dt>Lint / build</dt><dd>clean <small>0 warnings</small></dd></div>
     </dl>
   </header>
@@ -367,11 +367,20 @@
     </p>
 
     <p>
-      Applying it surfaced two live fail-open reads that were nothing to do with barangays:
+      The aggregate views followed in a second pass: dashboard, monitoring, analytics and all three
+      reports use the same helper, so a figure and the rows beneath it now describe the same set of
+      records. Where a collection carries a barangay it narrows on one; budgets and liquidations do not
+      and stay municipality-level, because SK money is drawn per municipality and fiscal year.
+    </p>
+
+    <p>
+      Applying it surfaced three live fail-open reads that were nothing to do with barangays:
       <code>getDocumentStats</code> had <strong>no role check at all</strong> and returned province-wide
       category counts plus the five most recent documents — with uploader names — to any authenticated
-      account; and <code>deleteExpense</code> had no scope check on a route open to <code>municipal_admin</code>,
-      a municipality-scoped role. Both are closed and both have regression tests.
+      account; <code>deleteExpense</code> had no scope check on a route open to <code>municipal_admin</code>,
+      a municipality-scoped role; and the dashboard&rsquo;s <strong>user count was province-wide for every
+      role</strong>, so a Boac chairperson&rsquo;s dashboard reported the province&rsquo;s headcount as their
+      own. All three are closed, all three have regression tests.
     </p>
 
     <h3>Four decisions you made before I started, and what they cost</h3>
@@ -503,6 +512,29 @@
       </table>
     </div>
 
+    <h3>The aggregate pass</h3>
+    <p>
+      <code>dashboardController</code>, <code>monitoringController</code>, <code>routes/analytics.js</code>
+      and <code>reportController</code> each carried their own three-line municipality filter; all four now
+      call <code>applyReadScope</code>. Three needed <em>two</em> filters rather than one, because a single
+      filter across collections that do and do not carry a barangay either leaves half the figures
+      municipality-wide or asks a collection for a field it has no column for — which matches nothing at all
+      rather than narrowing.
+    </p>
+    <p>
+      Youth engagement gained a <code>byBarangay</code> breakdown and the Analytics page a chart for it: for
+      an account inside one municipality the municipality chart is a single bar labelled with its own name,
+      which says nothing, while the barangay split is the comparison that account can act on. Capped at the
+      twelve largest with the remainder stated, because Boac alone has 61 barangays.
+    </p>
+    <p>
+      <strong>Two things were deliberately left municipality-level.</strong>
+      <code>/api/monitoring/municipalities</code> prints one row per municipality, labelled with its name — a
+      barangay figure under that heading would be a wrong number, not a narrower one. And
+      <code>/api/dashboard/municipality-comparison</code> stays province-wide and money-free, by the earlier
+      decision that made it safe to show an SK Chairperson at all.
+    </p>
+
     <h3>Two fixes worth naming</h3>
     <p>
       <strong>Filters are built with real ObjectIds, not strings.</strong> <code>find()</code> casts a string
@@ -552,6 +584,9 @@
         guards; it had been filed next to the audit trail.</li>
       <li><strong>Notifications state their own order</strong> — "Most urgent first, then most recent" —
         because the list is deliberately no longer chronological.</li>
+      <li><strong>The Dashboard names the barangay and says what the figures cover</strong>, including that
+        budget and liquidation totals remain the municipality&rsquo;s. The numbers changed meaning in this
+        round, and a number whose scope changed silently is a number read wrongly.</li>
     </ul>
   </section>
 
@@ -657,7 +692,7 @@
 
     <div class="scroll">
       <table>
-        <caption>Six new suites, 82 new backend tests, 7 new frontend tests. Whole backend run: 555 passing.</caption>
+        <caption>Seven new suites, 101 new backend tests, 7 new frontend tests. Whole backend run: 574 passing.</caption>
         <thead>
           <tr><th>Suite</th><th class="num">Tests</th><th>What it pins</th></tr>
         </thead>
@@ -668,16 +703,18 @@
           <tr><td class="mono">documentRecycleBin.test.js</td><td class="num mono">12</td><td>Delete keeps the file; the bin is scoped; restore works; permanent delete only from the bin, destroys old versions, audits first.</td></tr>
           <tr><td class="mono">emailChangeApproval.test.js</td><td class="num mono">21</td><td>The active address is untouched; the old one still logs in; password required; collisions refused; approve/reject outcomes; barangay assignment; notification ordering.</td></tr>
           <tr><td class="mono">authorizationProbe.test.js</td><td class="num mono">6</td><td>Hand-built unauthorised requests: audit-log immutability, the whole user-management surface, query-parameter widening, fail-closed with no municipality, youth allowlist.</td></tr>
+          <tr><td class="mono">aggregateScope.test.js</td><td class="num mono">19</td><td>Dashboard KPIs, monitoring panels, compliance, timeline, all three analytics endpoints and all three reports — and both halves of the rule: what narrows to a barangay, and what deliberately stays municipality-level.</td></tr>
           <tr><td class="mono">barangayScope.test.jsx <small>(frontend)</small></td><td class="num mono">7</td><td>FormData array handling and the barangay-bound role list.</td></tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      Also run: full backend suite (42 suites, 555 tests), frontend Vitest (9 files, 66 tests),
+      Also run: full backend suite (43 suites, 574 tests), frontend Vitest (9 files, 66 tests),
       <code>npm run lint</code> at <code>--max-warnings 0</code>, and <code>npm run build</code>. All clean.
       <strong>Three of my own tests failed first and changed the code</strong> — the ObjectId casting bug, the
-      FormData flattening, and template notes being read as spreadsheet rows.
+      FormData flattening, and template notes being read as spreadsheet rows. Two more failed on my own wrong
+      assumptions about response shapes, which cost nothing but a corrected assertion.
     </p>
 
     <p>
@@ -692,12 +729,10 @@
     <h2><span class="num">09</span>Remaining issues</h2>
 
     <ul class="notes">
-      <li><strong>Dashboard, Monitoring, Analytics and Reports are still municipality-scoped only.</strong> A
-        barangay-bound officer sees their own barangay's records in every list, but municipality-level totals in
-        the aggregates. No record detail crosses a municipality boundary, and the municipality comparison view
-        was already open by design — but the figures are wider than the lists beneath them. Extending
-        <code>applyReadScope</code> to those four controllers is the obvious next step and I did not take it
-        unasked.</li>
+      <li><strong>Analytics and Reports have no barangay filter of their own.</strong> The figures are
+        correctly scoped and a province-wide reader can still narrow by municipality, but there is no control
+        to pick one barangay out of a municipality the way Programs and Youth now have. The endpoints already
+        accept <code>?barangay=</code>; this is UI only.</li>
       <li><strong>Multi-barangay programmes are not supported.</strong> <code>Program.barangay</code> is a single
         reference; "no barangay" means municipality-wide. Your brief made this conditional on the system already
         supporting several, and it does not — an array would change the scope query, the filter and the column.
@@ -759,7 +794,7 @@
           <tr><td class="req">Phase 14 · Backend authorization</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">every case</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--yes">probe suite</span></td></tr>
           <tr><td class="req">Phase 15 · Database integrity</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">additive</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--yes">yes</span></td></tr>
           <tr><td class="req">Phase 17 · Audit logging</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">8 new actions</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--yes">yes</span></td></tr>
-          <tr><td class="req">Phase 18 · Data visibility</td><td><span class="chip chip--part">partial</span></td><td><span class="chip chip--part">lists yes, aggregates no</span></td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Phase 18 · Data visibility</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">lists + aggregates</span></td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">19</span></td></tr>
         </tbody>
       </table>
     </div>
@@ -767,7 +802,7 @@
 
   <footer>
     <p>SKIMS · Sangguniang Kabataan Integrated Program and Fund Management System · Boac · Gasan · Mogpog · Santa Cruz</p>
-    <p>feat/barangay-scope-and-workflow-round · d06adcd · ee700a7 · 97001d0 · base 851e609</p>
+    <p>feat/barangay-scope-and-workflow-round · d06adcd · ee700a7 · 97001d0 · 2342201 · base 851e609</p>
   </footer>
 
 </div>
