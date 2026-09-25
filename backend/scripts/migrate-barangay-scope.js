@@ -6,6 +6,7 @@
  *   node scripts/migrate-barangay-scope.js                      # report only
  *   node scripts/migrate-barangay-scope.js --map=brgy.json       # report, with the mapping resolved
  *   node scripts/migrate-barangay-scope.js --map=brgy.json --apply
+ *   node scripts/migrate-barangay-scope.js --map=brgy.json --reassign --apply   # also MOVE assigned ones
  *
  * ## Why this does not assign anything on its own
  *
@@ -40,6 +41,13 @@ const Municipality = require('../src/models/Municipality');
 const { BARANGAY_BOUND_ROLES } = require('../src/utils/scope');
 
 const APPLY = process.argv.includes('--apply');
+/*
+ * By default an account that already has a barangay is left alone, so re-running the script is safe
+ * and never silently moves somebody. `--reassign` opts into correcting one — which the first pass
+ * over real accounts needs more often than not, because the barangay an officer actually serves is
+ * usually learned after the first guess, not before it.
+ */
+const REASSIGN = process.argv.includes('--reassign');
 const mapArg = process.argv.find((a) => a.startsWith('--map='));
 
 const loadMapping = () => {
@@ -80,18 +88,31 @@ const run = async () => {
   console.log(`  already assigned : ${assigned.length}`);
   console.log(`  unassigned       : ${unassigned.length}`);
 
-  if (assigned.length > 0) {
-    console.log('\nAlready assigned (left untouched):');
-    assigned.forEach((u) => {
+  /*
+   * With --reassign, an already-assigned account named in the mapping is considered too. One NOT
+   * named is still left alone — the flag widens what the mapping may change, it does not turn the
+   * mapping into the complete picture of who serves where.
+   */
+  const named = (u) => mapping && mapping[u.email] !== undefined && mapping[u.email] !== '';
+  const movable = REASSIGN ? assigned.filter(named) : [];
+  const untouched = assigned.filter((u) => !movable.includes(u));
+
+  if (untouched.length > 0) {
+    console.log(`\nAlready assigned (left untouched${REASSIGN ? ' — not named in the mapping' : ''}):`);
+    untouched.forEach((u) => {
       console.log(`  ${u.email.padEnd(34)} ${u.role.padEnd(16)} ${u.municipality?.name || '—'} / ${u.barangay.name}`);
     });
   }
 
-  // Resolve each unassigned account against the mapping, within its own municipality.
+  if (REASSIGN && movable.length > 0) {
+    console.log(`\nUp for reassignment (--reassign): ${movable.length}`);
+  }
+
+  // Resolve each candidate against the mapping, within its own municipality.
   const planned = [];
   const exceptions = [];
 
-  for (const user of unassigned) {
+  for (const user of [...unassigned, ...movable]) {
     const municipalityName = user.municipality?.name || null;
 
     if (!user.municipality) {
@@ -102,6 +123,13 @@ const run = async () => {
     const wanted = mapping ? mapping[user.email] : undefined;
     if (!wanted) {
       exceptions.push({ user, reason: mapping ? 'not named in the mapping file' : 'no mapping file supplied' });
+      continue;
+    }
+
+    // Already where the mapping wants it: nothing to do, and worth saying so rather than
+    // reporting a write that changes nothing.
+    if (user.barangay && user.barangay.name?.toLowerCase() === wanted.toLowerCase()) {
+      exceptions.push({ user, reason: `already in ${user.barangay.name} — unchanged` });
       continue;
     }
 
@@ -123,7 +151,9 @@ const run = async () => {
   if (planned.length > 0) {
     console.log(`\nTo assign (${planned.length}):`);
     planned.forEach(({ user, barangay }) => {
-      console.log(`  ${user.email.padEnd(34)} → ${user.municipality.name} / ${barangay.name}`);
+      // A move states what it is moving FROM. "→ Boac / Binunga" alone hides whether anything changed.
+      const from = user.barangay ? `${user.barangay.name} → ` : '';
+      console.log(`  ${user.email.padEnd(34)} ${user.municipality.name} / ${from}${barangay.name}`);
     });
   }
 
