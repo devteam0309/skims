@@ -101,6 +101,13 @@ exports.downloadPublicDocument = asyncHandler(async (req, res) => {
     $push: { downloadHistory: { $each: [{ ipAddress: req.ip }], $slice: -100 } },
   });
 
+  /*
+   * A document row can exist with no stored file — seeded demo records when Cloudinary was not
+   * configured, and any future import that registers metadata ahead of the file. Redirecting to an
+   * empty or missing URL sends the browser somewhere that does not resolve, which surfaces as
+   * ERR_INVALID_RESPONSE and reads as a broken download rather than as a document with no file.
+   */
+  if (!doc.fileUrl) return errorResponse(res, 404, 'This document has no file attached');
   res.redirect(302, doc.fileUrl);
 });
 
