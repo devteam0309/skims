@@ -10,11 +10,14 @@ import { PageLoader } from '../../components/shared/LoadingSpinner';
 import StatusBadge from '../../components/shared/StatusBadge';
 import { formatCurrency, formatDate, getRelativeTime } from '../../utils/formatters';
 import useAuthStore from '../../store/authStore';
-import { ROLE_LABELS } from '../../utils/constants';
+import { ROLE_LABELS, BARANGAY_BOUND_ROLES } from '../../utils/constants';
 import { Link } from 'react-router-dom';
 
 export default function Dashboard() {
   const { user } = useAuthStore();
+  // Only for a role a barangay actually scopes; an admin tier with one recorded is still
+  // municipality-wide, so naming it would misdescribe their figures.
+  const barangayScope = BARANGAY_BOUND_ROLES.includes(user?.role) ? user?.barangay?.name : null;
   const { data, isLoading, isError } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => dashboardService.get().then((r) => r.data.data),
@@ -38,8 +41,22 @@ export default function Dashboard() {
       <header>
         <h1 className="page-title">Good {greeting}, {user?.firstName}</h1>
         <p className="page-subtitle">
-          {ROLE_LABELS[user?.role]} · {user?.municipality?.name || 'All Municipalities'} · {formatDate(new Date())}
+          {ROLE_LABELS[user?.role]} · {user?.municipality?.name || 'All Municipalities'}
+          {/*
+            * The barangay is named because the figures below now MEAN it: programme, expense,
+            * document and youth totals cover this barangay, where they used to cover the whole
+            * municipality. A number whose scope changed silently is a number read wrongly.
+            */}
+          {barangayScope && ` · Barangay ${barangayScope}`}
+          {' · '}{formatDate(new Date())}
         </p>
+        {barangayScope && (
+          <p className="field-hint mt-1">
+            Programme, expense, document and youth figures cover Barangay {barangayScope} and anything
+            recorded for the whole municipality. Budget and liquidation totals are the
+            municipality&rsquo;s — SK funds are drawn per municipality and fiscal year.
+          </p>
+        )}
       </header>
 
       {/*

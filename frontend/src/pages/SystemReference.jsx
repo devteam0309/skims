@@ -333,34 +333,34 @@ const API_ENDPOINTS = [
   {
     group: 'Monitoring — /api/monitoring',
     routes: [
-      { method: 'GET', path: '/overview', auth: 'protect', roles: 'STAFF', note: 'Delayed programs, upcoming deadlines (7 days); scoped' },
-      { method: 'GET', path: '/municipalities', auth: 'protect', roles: 'STAFF', note: 'Multi-municipality comparison report' },
-      { method: 'GET', path: '/compliance', auth: 'protect', roles: 'STAFF', note: 'Compliance score based on pending liquidations, overdue programs, missing docs' },
-      { method: 'GET', path: '/timeline', auth: 'protect', roles: 'STAFF', note: 'Program timeline data; scoped' },
+      { method: 'GET', path: '/overview', auth: 'protect', roles: 'STAFF', note: 'Delayed programmes, upcoming deadlines (7 days), over-budget programmes: BARANGAY-scoped. The pending-liquidation panel is municipality-scoped — Liquidation has no barangay field, so two filters are built.' },
+      { method: 'GET', path: '/municipalities', auth: 'protect', roles: 'STAFF', note: 'One row per municipality, scoped to the caller own for a scoped role. NOT barangay-scoped on purpose: each row is labelled with the municipality name, so a barangay figure under that heading would be a wrong number rather than a narrower one.' },
+      { method: 'GET', path: '/compliance', auth: 'protect', roles: 'STAFF', note: 'Compliance score. Programme counts are barangay-scoped; the overdue-liquidation count is municipality-scoped.' },
+      { method: 'GET', path: '/timeline', auth: 'protect', roles: 'STAFF', note: 'Programme timeline; barangay-scoped, and the barangay is populated on each row.' },
     ],
   },
   {
     group: 'Dashboard — /api/dashboard',
     routes: [
-      { method: 'GET', path: '/', auth: 'protect', roles: 'STAFF', note: 'KPIs, recentPrograms, recentExpenses, programsByStatus, monthlyExpenses; scoped' },
+      { method: 'GET', path: '/', auth: 'protect', roles: 'STAFF', note: 'KPIs, recentPrograms, recentExpenses, programsByStatus, monthlyExpenses. TWO filters: programmes, expenses, documents and youth are barangay-scoped; budgets, liquidations and the user count are municipality-scoped. The user count was province-wide for every role until this round.' },
       { method: 'GET', path: '/municipality-comparison', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Cross-municipality by design and deliberately carries NO money - it is open to an SK Chairperson, so summing budgets here would hand each municipality figures to the next one staff.' },
     ],
   },
   {
     group: 'Reports — /api/reports',
     routes: [
-      { method: 'GET', path: '/programs', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel; municipalityScope(); REPORT_LIMIT=1000' },
-      { method: 'GET', path: '/financial', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel; ₱ formatting via formatPHP()' },
-      { method: 'GET', path: '/youth', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel' },
-      { method: 'GET', path: '/template/:name', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Blank document templates (PR, PO, etc.)' },
+      { method: 'GET', path: '/programs', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel; reportScope() — municipality AND barangay; REPORT_LIMIT=1000' },
+      { method: 'GET', path: '/financial', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel; ₱ via formatPHP(). Expense lines are barangay-scoped while budgets and liquidations stay municipality-level — that is the real shape of SK funding, not a mismatch.' },
+      { method: 'GET', path: '/youth', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'PDF + Excel; barangay-scoped' },
+      { method: 'GET', path: '/template/:name', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Blank templates: abyip, cbydp, sk-accomplishment, coa-liquidation, youth-roster. The roster one is the import format, round-tripped through the parser by test.' },
     ],
   },
   {
     group: 'Analytics — /api/analytics',
     routes: [
-      { method: 'GET', path: '/fund-utilization', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Monthly expense aggregation by year; scopeAnalytics()' },
-      { method: 'GET', path: '/program-success', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Success rate by category; avgCompletionRate' },
-      { method: 'GET', path: '/youth-engagement', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'byGender, byEducation, byMunicipality breakdowns' },
+      { method: 'GET', path: '/fund-utilization', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Monthly expense aggregation by year; scopeAnalytics() — municipality AND barangay' },
+      { method: 'GET', path: '/program-success', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'Success rate by category; avgCompletionRate; barangay-scoped' },
+      { method: 'GET', path: '/youth-engagement', auth: 'protect', roles: 'REPORT_VIEWERS', note: 'byGender, byEducation, byMunicipality AND byBarangay breakdowns. The barangay split is the comparison a scoped account can act on — its municipality chart is a single bar labelled with its own name.' },
     ],
   },
   {

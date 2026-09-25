@@ -10,15 +10,22 @@ const Expense = require('../models/Expense');
 const Liquidation = require('../models/Liquidation');
 const YouthMember = require('../models/YouthMember');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
-const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 
 const REPORT_LIMIT = 1000;
+const { applyReadScope } = require('../utils/scope');
 
-const municipalityScope = (req, filter) => {
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    filter.municipality = munId || { $in: [] };
-  }
+/**
+ * Scope a report filter, mutating it.
+ *
+ * `barangay: false` for budgets, which are drawn per municipality and fiscal year and carry no
+ * barangay of their own. Everything else — programmes, expenses, youth members — narrows on it.
+ *
+ * A report is the output most likely to be printed, attached to a submission, or read months later
+ * by someone who was not there when it was generated, so a figure covering more than the person who
+ * produced it is the worst place for the scope to be wrong.
+ */
+const reportScope = (req, filter, { barangay = true } = {}) => {
+  applyReadScope(filter, req.user, { barangay, requestedBarangay: req.query.barangay });
 };
 
 exports.generateProgramReport = asyncHandler(async (req, res) => {
@@ -33,7 +40,7 @@ exports.generateProgramReport = asyncHandler(async (req, res) => {
     if (startDate) filter.startDate.$gte = new Date(startDate);
     if (endDate) filter.startDate.$lte = new Date(endDate);
   }
-  municipalityScope(req, filter);
+  reportScope(req, filter);
 
   const programs = await Program.find(filter)
     .populate('municipality', 'name')
@@ -110,18 +117,29 @@ exports.generateProgramReport = asyncHandler(async (req, res) => {
 
 exports.generateFinancialReport = asyncHandler(async (req, res) => {
   const { municipalityId, fiscalYear, format = 'json' } = req.query;
+  /*
+   * Expenses carry a barangay; budgets and liquidations do not, so the financial report needs both
+   * filters. The consequence is worth stating in the report itself rather than leaving a reader to
+   * infer it: for a barangay-bound officer the expense lines are theirs while the budget they are
+   * drawn against is the municipality's — which is the actual shape of SK funding, not a rounding
+   * error. `scope` below carries that so the PDF and the workbook can say so.
+   */
   const filter = { deletedAt: null };
   if (municipalityId) filter.municipality = municipalityId;
-  municipalityScope(req, filter);
+  reportScope(req, filter);
+
+  const municipalityOnly = { deletedAt: null };
+  if (municipalityId) municipalityOnly.municipality = municipalityId;
+  reportScope(req, municipalityOnly, { barangay: false });
 
   const yr = fiscalYear ? parseInt(fiscalYear) : null;
   const yearStart = yr ? new Date(yr, 0, 1) : null;
   const yearEnd = yr ? new Date(yr, 11, 31, 23, 59, 59) : null;
 
   const [budgets, expenses, liquidations] = await Promise.all([
-    Budget.find({ ...filter, fiscalYear: yr || { $exists: true } }).populate('municipality', 'name').limit(REPORT_LIMIT),
-    Expense.find({ ...filter, ...(yearStart ? { transactionDate: { $gte: yearStart, $lte: yearEnd } } : {}) }).populate('program', 'title').populate('municipality', 'name').limit(REPORT_LIMIT),
-    Liquidation.find({ ...filter, ...(yearStart ? { createdAt: { $gte: yearStart, $lte: yearEnd } } : {}) }).populate('program', 'title').populate('municipality', 'name').limit(REPORT_LIMIT),
+    Budget.find({ ...municipalityOnly, fiscalYear: yr || { $exists: true } }).populate('municipality', 'name').limit(REPORT_LIMIT),
+    Expense.find({ ...filter, ...(yearStart ? { transactionDate: { $gte: yearStart, $lte: yearEnd } } : {}) }).populate('program', 'title').populate('municipality', 'name').populate('barangay', 'name').limit(REPORT_LIMIT),
+    Liquidation.find({ ...municipalityOnly, ...(yearStart ? { createdAt: { $gte: yearStart, $lte: yearEnd } } : {}) }).populate('program', 'title').populate('municipality', 'name').limit(REPORT_LIMIT),
   ]);
 
   const summary = {
@@ -173,7 +191,7 @@ exports.generateYouthReport = asyncHandler(async (req, res) => {
     const yr = parseInt(fiscalYear);
     filter.createdAt = { $gte: new Date(yr, 0, 1), $lte: new Date(yr, 11, 31, 23, 59, 59) };
   }
-  municipalityScope(req, filter);
+  reportScope(req, filter);
 
   const members = await YouthMember.find(filter)
     .populate('municipality', 'name')

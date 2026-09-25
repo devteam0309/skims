@@ -32,6 +32,17 @@ export default function Analytics() {
   const fundChartData = (fundData || []).map((d) => ({ month: MONTH_NAMES[d.month - 1], amount: d.total }));
   const genderData = (youthData?.byGender || []).map((g) => ({ name: g._id || 'Unspecified', value: g.count }));
   const educationData = (youthData?.byEducation || []).filter((d) => d._id);
+  /*
+   * Youth per barangay.
+   *
+   * The municipality breakdown behind it is a single bar for anyone inside one municipality — itself —
+   * which tells that reader nothing. This is the comparison they can act on: which barangays in their
+   * own municipality are under-registered. Capped at the twelve largest, because Boac alone has 61
+   * barangays and a bar chart of 61 rows is a wall, not a chart.
+   */
+  const barangayData = (youthData?.byBarangay || []).slice(0, 12);
+  const barangayTotal = (youthData?.byBarangay || []).reduce((sum, b) => sum + b.count, 0);
+  const barangayShown = barangayData.reduce((sum, b) => sum + b.count, 0);
   const programRows = programData || [];
 
   return (
@@ -116,6 +127,31 @@ export default function Analytics() {
             <Bar dataKey="count" fill="#f5c518" radius={[0, 4, 4, 0]} name="Youth" />
           </BarChart>
         </ResponsiveContainer>
+      </ChartCard>
+
+      <ChartCard
+        title={barangayData.length < (youthData?.byBarangay?.length || 0)
+          ? `Youth by Barangay (top ${barangayData.length} of ${youthData.byBarangay.length})`
+          : 'Youth by Barangay'}
+        isEmpty={!barangayData.length}
+        summary={srSummary('Youth by barangay', barangayData.map((d) => [d.name, d.count]))}
+      >
+        <ResponsiveContainer width="100%" height={Math.max(200, barangayData.length * 26)}>
+          <BarChart data={barangayData} layout="vertical">
+            <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} />
+            <XAxis type="number" tick={theme.tick} stroke={theme.axis} allowDecimals={false} />
+            {/* Barangay names run long — "Barangay II (Poblacion)" — so the track is wider than the
+                education chart's and the label is not truncated into ambiguity. */}
+            <YAxis dataKey="name" type="category" tick={theme.tick} stroke={theme.axis} width={150} />
+            <Tooltip {...theme.tooltip} />
+            <Bar dataKey="count" fill="#1e3a5f" radius={[0, 4, 4, 0]} name="Youth" />
+          </BarChart>
+        </ResponsiveContainer>
+        {barangayShown < barangayTotal && (
+          <p className="field-hint mt-2">
+            {barangayTotal - barangayShown} more registered in barangays outside the top {barangayData.length}.
+          </p>
+        )}
       </ChartCard>
 
       {programRows.length > 0 && (

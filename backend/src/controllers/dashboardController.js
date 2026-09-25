@@ -9,20 +9,37 @@ const Notification = require('../models/Notification');
 const YouthMember = require('../models/YouthMember');
 const { successResponse } = require('../utils/apiResponse');
 const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
+const { applyReadScope } = require('../utils/scope');
 
 exports.getDashboard = asyncHandler(async (req, res) => {
-  const { municipalityId } = req.query;
+  const { municipalityId, barangay } = req.query;
   const user = req.user;
 
-  let municipalityFilter;
-  if (!CROSS_MUNICIPALITY_READ.includes(user.role)) {
-    const munId = user.municipality?._id || user.municipality;
-    municipalityFilter = { municipality: munId || { $in: [] } };
-  } else if (municipalityId) {
-    municipalityFilter = { municipality: municipalityId };
-  } else {
-    municipalityFilter = {};
+  /*
+   * TWO filters, because the collections do not all carry a barangay.
+   *
+   * Programmes, expenses, documents and youth members each have one, so a barangay-bound officer's
+   * figures cover their own barangay plus the municipality-level records that name none. Budgets and
+   * liquidations are municipality-level documents — a budget is drawn per municipality and fiscal
+   * year, which is what its unique index is on — so those stay municipality-scoped and are filtered
+   * with `barangay: false`.
+   *
+   * Until this was split the dashboard totals were municipality-wide for everybody, so a chairperson
+   * read barangay figures in every list and municipality figures in the KPI row above them. The
+   * numbers disagreed with the rows they sat on top of.
+   *
+   * Both are built by the shared helper, which also means the ids in them are real ObjectIds:
+   * `find()` casts a string against the schema but an aggregation `$match` does not, and half of
+   * what follows is an aggregation.
+   */
+  const scopedFilter = {};
+  const municipalityFilter = {};
+  if (CROSS_MUNICIPALITY_READ.includes(user.role) && municipalityId) {
+    scopedFilter.municipality = municipalityId;
+    municipalityFilter.municipality = municipalityId;
   }
+  applyReadScope(scopedFilter, user, { requestedBarangay: barangay });
+  applyReadScope(municipalityFilter, user, { barangay: false });
 
   const [
     totalPrograms,
@@ -38,9 +55,9 @@ exports.getDashboard = asyncHandler(async (req, res) => {
     unreadNotifications,
     monthlyExpenses,
   ] = await Promise.all([
-    Program.countDocuments({ ...municipalityFilter, deletedAt: null }),
+    Program.countDocuments({ ...scopedFilter, deletedAt: null }),
     Program.aggregate([
-      { $match: { ...municipalityFilter, deletedAt: null } },
+      { $match: { ...scopedFilter, deletedAt: null } },
       { $group: { _id: '$status', count: { $sum: 1 } } },
     ]),
     Budget.aggregate([
@@ -55,19 +72,24 @@ exports.getDashboard = asyncHandler(async (req, res) => {
       },
     ]),
     Expense.aggregate([
-      { $match: { ...municipalityFilter, deletedAt: null, status: 'approved' } },
+      { $match: { ...scopedFilter, deletedAt: null, status: 'approved' } },
       { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
     ]),
     Liquidation.countDocuments({ ...municipalityFilter, status: { $in: ['draft', 'submitted', 'under_review'] }, deletedAt: null }),
-    Document.countDocuments({ ...municipalityFilter, deletedAt: null }),
-    User.countDocuments({ deletedAt: null, isActive: true }),
-    YouthMember.countDocuments({ ...municipalityFilter, deletedAt: null }),
-    Program.find({ ...municipalityFilter, deletedAt: null })
+    Document.countDocuments({ ...scopedFilter, deletedAt: null }),
+    /*
+     * Staff serve a municipality, not a barangay, so this is municipality-scoped rather than
+     * barangay-scoped — but scoped it must be: it counted every active account in the province for
+     * everybody, so a Boac chairperson's dashboard reported the province's headcount as their own.
+     */
+    User.countDocuments({ ...municipalityFilter, deletedAt: null, isActive: true }),
+    YouthMember.countDocuments({ ...scopedFilter, deletedAt: null }),
+    Program.find({ ...scopedFilter, deletedAt: null })
       .populate('municipality', 'name')
       .sort({ createdAt: -1 })
       .limit(5)
       .select('title status budget completionRate createdAt'),
-    Expense.find({ ...municipalityFilter, deletedAt: null })
+    Expense.find({ ...scopedFilter, deletedAt: null })
       .populate('program', 'title')
       .sort({ createdAt: -1 })
       .limit(5)
@@ -76,7 +98,7 @@ exports.getDashboard = asyncHandler(async (req, res) => {
     Expense.aggregate([
       {
         $match: {
-          ...municipalityFilter,
+          ...scopedFilter,
           deletedAt: null,
           transactionDate: { $gte: new Date(new Date().getFullYear(), 0, 1) },
         },
