@@ -7,3 +7,7 @@ logs/
 .DS_Store
 Thumbs.db
 coverage/
+
+# Barangay assignment mappings: these carry real officers' email addresses, and the barangay each
+# one serves. The script that reads them documents the format; the files themselves stay local.
+scratchpad/*mapping*.json

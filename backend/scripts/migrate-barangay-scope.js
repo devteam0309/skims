@@ -129,8 +129,11 @@ const run = async () => {
 
   if (exceptions.length > 0) {
     console.log(`\n⚠️  Migration exceptions (${exceptions.length}) — NOT assigned, and nothing is guessed:`);
+    // The municipality is printed because it is what the mapping is filled in against: a barangay
+    // name is only meaningful inside one, and that is where this resolves it.
     exceptions.forEach(({ user, reason }) => {
-      console.log(`  ${user.email.padEnd(34)} ${user.role.padEnd(16)} ${reason}`);
+      const where = user.municipality?.name || 'no municipality';
+      console.log(`  ${user.email.padEnd(34)} ${user.role.padEnd(16)} ${where.padEnd(12)} ${reason}`);
     });
     console.log('\n  These accounts keep municipality-wide scope, which is how they behave today.');
     console.log('  Assign them from Users → Assign barangay, or add them to the mapping file.');
