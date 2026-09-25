@@ -19,6 +19,23 @@ export function toFormData(values) {
     // Skip only genuinely absent fields. The previous truthiness check also discarded 0 and
     // false, which are meaningful values for an amount or a flag.
     if (value === undefined || value === null || value === '') return;
+
+    /*
+     * An array is appended one element at a time, under the same key.
+     *
+     * `fd.append(key, ['a', 'b'])` stringifies it to "a,b" — a single field holding a comma-joined
+     * blob, which arrives at a handler expecting a list and is silently discarded as the wrong type.
+     * Repeating the key is what multer turns back into an array. An empty array appends nothing,
+     * which is the correct representation of "none selected".
+     */
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item === undefined || item === null || item === '') return;
+        fd.append(key, item);
+      });
+      return;
+    }
+
     fd.append(key, value);
   });
   return fd;

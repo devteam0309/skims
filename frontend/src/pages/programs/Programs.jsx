@@ -2,15 +2,14 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Plus, Target, Calendar, Banknote, Users,
-  Eye, Edit, Trash2, ChevronLeft, ChevronRight, X,
+  Plus, Target, Eye, Edit, Trash2, ChevronLeft, ChevronRight, X,
 } from 'lucide-react';
 import { programService } from '../../services/programService';
 import StatusBadge from '../../components/shared/StatusBadge';
 import SearchInput from '../../components/shared/SearchInput';
 import { PaginationBtn } from '../../components/shared/DataTable';
 import { formatCurrency, formatDate } from '../../utils/formatters';
-import { PROGRAM_CATEGORIES, PROGRAM_EDITORS } from '../../utils/constants';
+import { PROGRAM_CATEGORIES, PROGRAM_EDITORS, BARANGAY_BOUND_ROLES } from '../../utils/constants';
 import { municipalityService } from '../../services/documentService';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
@@ -26,7 +25,7 @@ const CROSS_MUNICIPALITY_ROLES = ['super_admin', 'provincial_admin'];
 export default function Programs() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const [filters, setFilters] = useState({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '' });
+  const [filters, setFilters] = useState({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '', barangay: '' });
 
   // Debouncing lives in SearchInput now. This page had the original hand-rolled copy, written
   // before the behaviour was extracted for the funds pages; keeping it meant two implementations
@@ -47,6 +46,7 @@ export default function Programs() {
     ).then((r) => r.data.data),
   });
   const statusCounts = Object.fromEntries((stats?.byStatus || []).map((s) => [s._id, s.count]));
+
 
   /*
    * Built from the categories that actually exist in the data rather than the fixed constant.
@@ -75,7 +75,7 @@ export default function Programs() {
   const canCreate = PROGRAM_EDITORS.includes(user?.role);
   const isCrossMunicipality = CROSS_MUNICIPALITY_ROLES.includes(user?.role);
   const hasFilters = Boolean(
-    filters.search || filters.status || filters.approvalStatus || filters.category || filters.municipality
+    filters.search || filters.status || filters.approvalStatus || filters.category || filters.municipality || filters.barangay
   );
 
   // Only fetched for the roles that can act on it.
@@ -84,10 +84,34 @@ export default function Programs() {
     queryFn: () => municipalityService.getAll().then((r) => r.data.data),
     enabled: isCrossMunicipality,
   });
+  /*
+   * Barangay filter options.
+   *
+   * Scoped to the municipality in play: a province-wide account gets the barangays of whichever
+   * municipality it has filtered to (and every barangay in the province, grouped, when it has not),
+   * while everyone else gets their own municipality's. Offering all 178 barangays of the province to
+   * a Boac officer would be a list in which almost every choice returns nothing.
+   *
+   * An account already confined to one barangay is not offered the filter at all — the server pins
+   * it, so a control whose every other option is silently discarded would be a lie.
+   */
+  const ownBarangayId = user?.barangay?._id || user?.barangay || null;
+  const isBarangayBound = BARANGAY_BOUND_ROLES.includes(user?.role) && Boolean(ownBarangayId);
+  const barangayMunicipalityId = isCrossMunicipality
+    ? filters.municipality
+    : (user?.municipality?._id || user?.municipality);
+
+  const { data: barangayOptions = [] } = useQuery({
+    queryKey: ['barangays', barangayMunicipalityId || 'province'],
+    queryFn: () => (barangayMunicipalityId
+      ? municipalityService.getBarangays(barangayMunicipalityId).then((r) => r.data.data)
+      : municipalityService.getAllBarangays().then((r) => r.data.data)),
+    enabled: !isBarangayBound,
+  });
 
   // SearchInput mirrors `value`, so clearing the filter clears the box — no separate reset needed.
   const clearFilters = () => {
-    setFilters({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '' });
+    setFilters({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '', barangay: '' });
   };
 
   return (
@@ -186,6 +210,42 @@ export default function Programs() {
             </div>
           )}
 
+          {/*
+            * Barangay filter. Hidden for an account already confined to one — the server pins that
+            * value, so every option but their own would be discarded without explanation.
+            *
+            * The options follow the municipality filter above: pick Mogpog and the list becomes
+            * Mogpog's barangays. A province-wide account with no municipality chosen gets every
+            * barangay in the province, grouped by municipality, because a flat list of 178 names
+            * with four "Poblacion" entries in it cannot be read.
+            */}
+          {!isBarangayBound && (
+            <div>
+              <label htmlFor="filter-barangay" className="sr-only">Filter by barangay</label>
+              <select
+                id="filter-barangay"
+                value={filters.barangay}
+                onChange={(e) => setFilters({ ...filters, barangay: e.target.value, page: 1 })}
+                className="max-w-[12rem] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+              >
+                <option value="">All barangays</option>
+                {barangayMunicipalityId || !isCrossMunicipality
+                  ? barangayOptions.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)
+                  : Object.entries(
+                    barangayOptions.reduce((groups, b) => {
+                      const name = b.municipality?.name || 'Other';
+                      (groups[name] = groups[name] || []).push(b);
+                      return groups;
+                    }, {})
+                  ).map(([municipalityName, list]) => (
+                    <optgroup key={municipalityName} label={municipalityName}>
+                      {list.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+                    </optgroup>
+                  ))}
+              </select>
+            </div>
+          )}
+
           {/* There was no way out of a filter combination that returned nothing. */}
           {hasFilters && (
             <button
@@ -256,85 +316,122 @@ export default function Programs() {
         </div>
       ) : (
         <>
-          <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {data?.data?.map((program) => (
-              <li
-                key={program._id}
-                className="flex flex-col rounded-xl border border-gray-200 bg-white p-5 transition-colors hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:hover:border-gray-600"
-              >
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <StatusBadge status={program.status} />
-                    {/* Lifecycle and approval are different facts. A program can be approved and
-                        ongoing at once, so both chips show rather than one standing in for the
-                        other. Approved is the unremarkable case and stays quiet. */}
-                    {program.approvalStatus && program.approvalStatus !== 'approved' && (
-                      <StatusBadge status={program.approvalStatus} />
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    {/* Icon-only controls previously announced as bare "link" / "button".
-                        Names include the program title so they are unambiguous in a list. */}
-                    <IconAction as={Link} to={`/programs/${program._id}`} label={`View ${program.title}`}>
-                      <Eye size={14} aria-hidden="true" />
-                    </IconAction>
-                    {canCreate && (
-                      <>
-                        <IconAction as={Link} to={`/programs/${program._id}/edit`} label={`Edit ${program.title}`} hover="hover:text-blue-600">
-                          <Edit size={14} aria-hidden="true" />
-                        </IconAction>
-                        <IconAction onClick={() => handleDelete(program._id, program.title)} label={`Delete ${program.title}`} hover="hover:text-red-600">
-                          <Trash2 size={14} aria-hidden="true" />
-                        </IconAction>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                <h2 className="mb-1 line-clamp-2 font-semibold text-gray-900 dark:text-white">
-                  <Link to={`/programs/${program._id}`} className="hover:text-navy-700 dark:hover:text-navy-300">
-                    {program.title}
-                  </Link>
-                </h2>
-                <p className="mb-4 line-clamp-2 text-xs text-gray-600 dark:text-gray-400">{program.description}</p>
-
-                <dl className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-400">
-                  <Fact icon={Banknote} label="Budget"><span className="numeric">{formatCurrency(program.budget)}</span></Fact>
-                  <Fact icon={Users} label="Participants">
-                    <span className="numeric">{program.actualParticipants}/{program.targetParticipants}</span>
-                  </Fact>
-                  <Fact icon={Calendar} label="Start date">{formatDate(program.startDate)}</Fact>
-                  <Fact icon={Target} label="Category">
-                    <span className="capitalize">{program.category?.replace(/_/g, ' ')}</span>
-                  </Fact>
-                </dl>
-
-                <div className="mt-4">
-                  <div className="mb-1 flex justify-between text-xs">
-                    <span className="text-gray-600 dark:text-gray-400">Completion</span>
-                    <span className="numeric font-medium text-gray-900 dark:text-white">{program.completionRate || 0}%</span>
-                  </div>
-                  <div
-                    className="h-1.5 rounded-full bg-gray-100 dark:bg-gray-700"
-                    role="progressbar"
-                    aria-valuenow={program.completionRate || 0}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-label={`${program.title} completion`}
-                  >
-                    <div
-                      className={`h-full rounded-full ${program.status === 'delayed' ? 'bg-red-500' : 'bg-navy-700 dark:bg-navy-400'}`}
-                      style={{ width: `${Math.min(program.completionRate || 0, 100)}%` }}
-                    />
-                  </div>
-                </div>
-
-                {program.municipality && (
-                  <p className="meta-text mt-3">{program.municipality.name}</p>
-                )}
-              </li>
-            ))}
-          </ul>
+          {/*
+            * A table, not a grid of cards.
+            *
+            * Every programme carries the same eight facts, and as cards they were laid out as prose:
+            * the municipality in small text at the bottom, the category behind an unlabelled icon,
+            * dates and participants in a 2x2 block. Nothing lined up between cards, so the list could
+            * not be scanned down a column — which is what someone comparing twelve programmes is
+            * trying to do. The target barangay had no place at all, and it is now a column.
+            *
+            * The table scrolls inside its own container on a narrow screen; the page never scrolls
+            * sideways. Progress keeps its bar, because a percentage is read faster as a length.
+            */}
+          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div className="overflow-x-auto">
+              <table className="data-table w-full min-w-[64rem]">
+                <caption className="sr-only">
+                  Programs, with municipality, target barangay, status, dates, budget and progress
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Program</th>
+                    <th scope="col">Municipality</th>
+                    <th scope="col">Barangay</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Dates</th>
+                    <th scope="col" className="cell-numeric">Budget</th>
+                    <th scope="col" className="cell-numeric">Participants</th>
+                    <th scope="col">Progress</th>
+                    <th scope="col">Created by</th>
+                    <th scope="col" className="w-[6.5rem]">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data?.data?.map((program) => (
+                    <tr key={program._id}>
+                      <td className="max-w-[18rem]">
+                        <Link
+                          to={`/programs/${program._id}`}
+                          className="text-sm font-medium text-gray-900 hover:text-navy-700 dark:text-white dark:hover:text-navy-300"
+                        >
+                          {program.title}
+                        </Link>
+                        <p className="meta-text capitalize">{program.category?.replace(/_/g, ' ')}</p>
+                      </td>
+                      <td className="whitespace-nowrap">{program.municipality?.name || '—'}</td>
+                      {/*
+                        * No barangay means municipality-wide, which is a real and common state — not
+                        * missing data, so it is not shown as a dash.
+                        */}
+                      <td className="whitespace-nowrap">
+                        {program.barangay?.name || <span className="meta-text">All barangays</span>}
+                      </td>
+                      <td>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StatusBadge status={program.status} />
+                          {/* Lifecycle and approval are different facts: a programme can be approved
+                              and ongoing at once. Approved is unremarkable and stays quiet. */}
+                          {program.approvalStatus && program.approvalStatus !== 'approved' && (
+                            <StatusBadge status={program.approvalStatus} />
+                          )}
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap text-xs">
+                        {formatDate(program.startDate)}
+                        <span className="meta-text"> to {formatDate(program.endDate)}</span>
+                      </td>
+                      <td className="cell-numeric">{formatCurrency(program.budget)}</td>
+                      <td className="cell-numeric">
+                        {program.actualParticipants}/{program.targetParticipants}
+                      </td>
+                      <td className="min-w-[7rem]">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="h-1.5 w-16 shrink-0 rounded-full bg-gray-100 dark:bg-gray-700"
+                            role="progressbar"
+                            aria-valuenow={program.completionRate || 0}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-label={`${program.title} completion`}
+                          >
+                            <div
+                              className={`h-full rounded-full ${program.status === 'delayed' ? 'bg-red-500' : 'bg-navy-700 dark:bg-navy-400'}`}
+                              style={{ width: `${Math.min(program.completionRate || 0, 100)}%` }}
+                            />
+                          </div>
+                          <span className="numeric text-xs text-gray-700 dark:text-gray-300">{program.completionRate || 0}%</span>
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap text-xs">
+                        {program.createdBy ? `${program.createdBy.firstName} ${program.createdBy.lastName}` : '—'}
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-0.5">
+                          {/* Names carry the programme title, so the controls are unambiguous in a
+                              list read one row at a time by a screen reader. */}
+                          <IconAction as={Link} to={`/programs/${program._id}`} label={`View ${program.title}`}>
+                            <Eye size={14} aria-hidden="true" />
+                          </IconAction>
+                          {canCreate && (
+                            <>
+                              <IconAction as={Link} to={`/programs/${program._id}/edit`} label={`Edit ${program.title}`} hover="hover:text-blue-600">
+                                <Edit size={14} aria-hidden="true" />
+                              </IconAction>
+                              <IconAction onClick={() => handleDelete(program._id, program.title)} label={`Delete ${program.title}`} hover="hover:text-red-600">
+                                <Trash2 size={14} aria-hidden="true" />
+                              </IconAction>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
           {/*
             Previously one button per page, which runs off the screen once the dataset grows and
@@ -360,16 +457,6 @@ export default function Programs() {
           )}
         </>
       )}
-    </div>
-  );
-}
-
-function Fact({ icon: Icon, label, children }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <Icon size={12} aria-hidden="true" className="shrink-0 text-gray-400 dark:text-gray-500" />
-      <dt className="sr-only">{label}</dt>
-      <dd className="truncate">{children}</dd>
     </div>
   );
 }

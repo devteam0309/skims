@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import { Camera, Save, Key, X } from 'lucide-react';
+import { Camera, Save, Key, X, Mail } from 'lucide-react';
 import { authService } from '../../services/authService';
 import useAuthStore from '../../store/authStore';
 import { ROLE_LABELS, PASSWORD_PATTERN, PASSWORD_RULE_TEXT } from '../../utils/constants';
@@ -53,6 +53,50 @@ export default function UserProfile() {
     },
     onError: (e) => toast.error(e.message || 'Update failed'),
   });
+
+  const [changingEmail, setChangingEmail] = useState(false);
+  const [emailForm, setEmailForm] = useState({ email: '', currentPassword: '' });
+
+  const requestEmailMutation = useMutation({
+    mutationFn: (payload) => authService.requestEmailChange(payload),
+    onSuccess: (res) => {
+      // The server's wording says the important part — the current address stays active.
+      toast.success(res.data.message || 'Email change submitted for approval');
+      setChangingEmail(false);
+      setEmailForm({ email: '', currentPassword: '' });
+      queryClient.invalidateQueries(['profile']);
+    },
+    onError: (e) => toast.error(e.message || 'Could not submit the request'),
+  });
+
+  const cancelEmailMutation = useMutation({
+    mutationFn: () => authService.cancelEmailChange(),
+    onSuccess: () => {
+      toast.success('Request withdrawn');
+      queryClient.invalidateQueries(['profile']);
+    },
+    onError: (e) => toast.error(e.message || 'Could not withdraw the request'),
+  });
+
+  const handleRequestEmailChange = async () => {
+    if (!emailForm.email.trim()) return toast.error('Enter the new email address');
+    if (!emailForm.currentPassword) return toast.error('Enter your current password');
+    const result = await confirm.save({
+      title: 'Request this email change?',
+      text: `An administrator reviews it. You keep signing in with your current address until they approve ${emailForm.email.trim()}.`,
+      confirmText: 'Send the request',
+    });
+    if (result.isConfirmed) requestEmailMutation.mutate({ ...emailForm, email: emailForm.email.trim() });
+  };
+
+  const handleCancelEmailChange = async () => {
+    const result = await confirm.delete({
+      title: 'Withdraw the request?',
+      text: 'Your email address is unchanged either way.',
+      confirmText: 'Withdraw it',
+    });
+    if (result.isConfirmed) cancelEmailMutation.mutate();
+  };
 
   const passwordMutation = useMutation({
     mutationFn: (d) => authService.updatePassword(d),
@@ -188,7 +232,20 @@ export default function UserProfile() {
                 </Field>
               </div>
 
-              <Field id="email" label="Email Address" hint="Contact an administrator to change your email.">
+              {/*
+                * The address stays read-only in this form on purpose: it is not a profile field that
+                * saves with the others. It identifies the account — it is the login and the password
+                * reset destination — so a change is a REQUEST an administrator approves, and the
+                * current address keeps working until they do. The hint used to send the user off to
+                * find an administrator themselves; now there is a route.
+                */}
+              <Field
+                id="email"
+                label="Email Address"
+                hint={profile?.pendingEmail
+                  ? 'A change is awaiting approval. This address stays active until it is approved.'
+                  : 'Changing this needs an administrator’s approval.'}
+              >
                 <input
                   value={profile?.email || ''}
                   disabled
@@ -196,6 +253,85 @@ export default function UserProfile() {
                   className="mt-1 w-full cursor-not-allowed rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-400"
                 />
               </Field>
+
+              {profile?.pendingEmail ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+                  <p className="text-amber-900 dark:text-amber-200">
+                    Waiting for approval: <strong>{profile.pendingEmail}</strong>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleCancelEmailChange}
+                    disabled={cancelEmailMutation.isPending}
+                    className="text-sm font-medium text-amber-900 underline hover:no-underline disabled:opacity-60 dark:text-amber-200"
+                  >
+                    Withdraw
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {profile?.pendingEmailRejectionReason && (
+                    <p className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-700/40 dark:text-gray-200">
+                      Your last request was declined: {profile.pendingEmailRejectionReason}
+                    </p>
+                  )}
+                  {changingEmail ? (
+                    /*
+                     * Its own form, not part of the profile submit — it posts to a different endpoint
+                     * with a different outcome, and mixing them would make "Save Changes" sometimes
+                     * mean "ask an administrator for something".
+                     */
+                    <div className="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+                      <Field id="newEmail" label="New email address" required>
+                        <input
+                          type="email"
+                          value={emailForm.email}
+                          onChange={(e) => setEmailForm((f) => ({ ...f, email: e.target.value }))}
+                          className={control}
+                          autoComplete="email"
+                        />
+                      </Field>
+                      {/* Required by the route as well. A session alone must not be enough to start
+                          moving an account to a new address. */}
+                      <Field id="emailChangePassword" label="Your current password" required>
+                        <input
+                          type="password"
+                          value={emailForm.currentPassword}
+                          onChange={(e) => setEmailForm((f) => ({ ...f, currentPassword: e.target.value }))}
+                          className={control}
+                          autoComplete="current-password"
+                        />
+                      </Field>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={handleRequestEmailChange}
+                          disabled={requestEmailMutation.isPending}
+                          className="rounded-xl bg-navy-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+                        >
+                          {requestEmailMutation.isPending ? 'Sending…' : 'Request approval'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setChangingEmail(false); setEmailForm({ email: '', currentPassword: '' }); }}
+                          className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setChangingEmail(true)}
+                      className="flex items-center gap-2 text-sm font-medium text-navy-700 transition-colors hover:text-navy-900 dark:text-navy-300 dark:hover:text-navy-200"
+                    >
+                      <Mail size={14} aria-hidden="true" />
+                      Request an email change
+                    </button>
+                  )}
+                </>
+              )}
 
               <Field id="contactNumber" label="Contact Number" optional error={errors.contactNumber}>
                 <input

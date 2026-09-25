@@ -15,6 +15,15 @@ const navGroups = [
     items: [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
       { to: '/notifications', icon: Bell, label: 'Notifications' },
+      /*
+       * Announcements sits next to Notifications, not under Admin.
+       *
+       * The two are the same kind of thing to the person reading them — messages addressed to you —
+       * and they were three groups apart, with announcements filed beside User Management and the
+       * audit trail as though writing one were an administrative act. Only the placement changes:
+       * the role list is exactly the one it carried before, and the backend guards are untouched.
+       */
+      { to: '/announcements', icon: Megaphone, label: 'Announcements', roles: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_secretary'] },
     ],
   },
   {
@@ -48,9 +57,9 @@ const navGroups = [
   },
   {
     label: 'Admin',
-    roles: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_secretary'],
+    // Announcements left this group; what remains is super_admin only, so the group is too.
+    roles: ['super_admin'],
     items: [
-      { to: '/announcements', icon: Megaphone, label: 'Announcements', roles: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_secretary'] },
       { to: '/users', icon: Users, label: 'User Management', roles: ['super_admin'] },
       { to: '/audit-logs', icon: Shield, label: 'Audit Logs', roles: ['super_admin'] },
     ],

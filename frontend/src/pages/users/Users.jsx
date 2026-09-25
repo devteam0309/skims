@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { UserCheck, Shield } from 'lucide-react';
+import { UserCheck, Shield, Mail, MapPin } from 'lucide-react';
 import Swal from 'sweetalert2';
-import { userService } from '../../services/documentService';
+import { userService, municipalityService } from '../../services/documentService';
 import DataTable from '../../components/shared/DataTable';
 import StatusBadge from '../../components/shared/StatusBadge';
 import Modal from '../../components/shared/Modal';
 import SearchInput from '../../components/shared/SearchInput';
 import { Field, control } from '../../components/shared/FormField';
 import { formatDate } from '../../utils/formatters';
-import { ROLE_LABELS } from '../../utils/constants';
+import { ROLE_LABELS, BARANGAY_BOUND_ROLES } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 import { confirm } from '../../utils/confirm';
 import useAuthStore from '../../store/authStore';
@@ -31,10 +31,25 @@ export default function Users() {
   const [filters, setFilters] = useState({ page: 1, limit: 10, search: '', role: '', isApproved: '' });
   const [roleTarget, setRoleTarget] = useState(null); // { id, name, currentRole }
   const [selectedRole, setSelectedRole] = useState('');
+  // { id, name, municipality, currentBarangay } — the account being given a barangay.
+  const [barangayTarget, setBarangayTarget] = useState(null);
+  const [selectedBarangay, setSelectedBarangay] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['users', filters],
     queryFn: () => userService.getAll(filters).then((r) => r.data),
+  });
+
+  /*
+   * Pending email changes, kept as their own queue rather than folded into pending approvals.
+   *
+   * They need a different decision: one is "may this person in at all", the other "is this the right
+   * address for an account that already exists". Listing an established officer under "awaiting
+   * approval to join" would misdescribe both.
+   */
+  const { data: emailChanges } = useQuery({
+    queryKey: ['users-email-changes'],
+    queryFn: () => userService.getPendingEmailChanges().then((r) => r.data.data),
   });
 
   const { data: pending } = useQuery({
@@ -45,6 +60,7 @@ export default function Users() {
   const invalidateUsers = () => {
     queryClient.invalidateQueries(['users']);
     queryClient.invalidateQueries(['users-pending']);
+    queryClient.invalidateQueries(['users-email-changes']);
   };
 
   const approveMutation = useMutation({
@@ -125,6 +141,65 @@ export default function Users() {
   const assignableRoles = ROLE_ASSIGNABLE_MAP[currentUser?.role] || [];
   const canChangeRoles = assignableRoles.length > 0;
 
+  const approveEmailMutation = useMutation({
+    mutationFn: (id) => userService.approveEmailChange(id),
+    onSuccess: () => { toast.success('Email change approved'); invalidateUsers(); },
+    onError: (e) => toast.error(e.message || 'Could not approve the change'),
+  });
+
+  const rejectEmailMutation = useMutation({
+    mutationFn: ({ id, reason }) => userService.rejectEmailChange(id, reason),
+    onSuccess: () => { toast.success('Email change declined'); invalidateUsers(); },
+    onError: (e) => toast.error(e.message || 'Could not decline the change'),
+  });
+
+  const barangayMutation = useMutation({
+    mutationFn: ({ id, barangay }) => userService.assignBarangay(id, barangay),
+    onSuccess: () => {
+      toast.success('Barangay updated');
+      setBarangayTarget(null);
+      setSelectedBarangay('');
+      invalidateUsers();
+    },
+    onError: (e) => toast.error(e.message || 'Could not update the barangay'),
+  });
+
+  /*
+   * Barangay options for whichever account is being assigned — from THAT user's municipality, not the
+   * administrator's. A super_admin has no municipality of their own, so keying this off the signed-in
+   * account would leave the list empty for every assignment.
+   */
+  const { data: assignableBarangays = [] } = useQuery({
+    queryKey: ['barangays', barangayTarget?.municipalityId],
+    queryFn: () => municipalityService.getBarangays(barangayTarget.municipalityId).then((r) => r.data.data),
+    enabled: !!barangayTarget?.municipalityId,
+  });
+
+  const handleApproveEmail = async (u) => {
+    const result = await confirm.approve({
+      title: 'Approve this email change?',
+      text: `${u.firstName} ${u.lastName} will sign in with ${u.pendingEmail} from now on. Their current address stops working.`,
+      confirmText: 'Approve the change',
+    });
+    if (result.isConfirmed) approveEmailMutation.mutate(u._id);
+  };
+
+  const handleRejectEmail = async (u) => {
+    const result = await confirm.rejectWithReason({
+      title: 'Decline this email change?',
+      text: `${u.firstName} ${u.lastName} keeps ${u.email}. They will see the reason you give.`,
+      inputLabel: 'Reason',
+      placeholder: 'e.g. use your official government address',
+      confirmText: 'Decline with this reason',
+    });
+    if (result.isConfirmed) rejectEmailMutation.mutate({ id: u._id, reason: result.value });
+  };
+
+  const handleAssignBarangay = () => {
+    if (!barangayTarget) return;
+    barangayMutation.mutate({ id: barangayTarget.id, barangay: selectedBarangay });
+  };
+
   const columns = [
     {
       key: 'firstName',
@@ -156,7 +231,25 @@ export default function Users() {
       },
     },
     { key: 'role', header: 'Role', render: (v) => <span className="text-xs">{ROLE_LABELS[v] || v}</span> },
-    { key: 'municipality', header: 'Municipality', render: (v) => v?.name || '—' },
+    {
+      key: 'municipality',
+      header: 'Municipality',
+      /*
+       * The barangay sits under the municipality because that is the hierarchy it belongs to, and
+       * because an unassigned SK account is worth seeing: it is municipality-wide until somebody
+       * assigns one, which is a scope decision, not a blank field.
+       */
+      render: (v, row) => (
+        <div className="text-xs">
+          {v?.name || '—'}
+          {BARANGAY_BOUND_ROLES.includes(row.role) && (
+            <p className={row.barangay ? 'meta-text' : 'meta-text italic'}>
+              {row.barangay?.name || 'no barangay — municipality-wide'}
+            </p>
+          )}
+        </div>
+      ),
+    },
     {
       key: 'isEmailVerified',
       header: 'Email',
@@ -200,6 +293,27 @@ export default function Users() {
             {canChangeRoles && !isSelf && (
               <ActionButton onClick={() => openRoleChange(row)} label={`Change role for ${name}`} tone="neutral">
                 <Shield size={10} aria-hidden="true" />Role
+              </ActionButton>
+            )}
+
+            {/* Only for the roles a barangay actually scopes. On an admin tier the field would be
+                stored and never consulted, which is worse than not offering it. */}
+            {BARANGAY_BOUND_ROLES.includes(row.role) && (
+              <ActionButton
+                onClick={() => {
+                  setBarangayTarget({
+                    id: row._id,
+                    name,
+                    municipalityId: row.municipality?._id || row.municipality || null,
+                    municipalityName: row.municipality?.name || null,
+                    currentBarangay: row.barangay?._id || row.barangay || '',
+                  });
+                  setSelectedBarangay(row.barangay?._id || row.barangay || '');
+                }}
+                label={`Assign barangay for ${name}`}
+                tone="info"
+              >
+                <MapPin size={10} aria-hidden="true" />{row.barangay ? 'Barangay' : 'Assign barangay'}
               </ActionButton>
             )}
 
@@ -271,6 +385,57 @@ export default function Users() {
                 Show all {pendingCount} pending accounts
               </button>
             )}
+          </div>
+        </section>
+      )}
+
+      {/*
+        * Pending email changes.
+        *
+        * Its own banner beside pending approvals, because the decision is different: the account
+        * already exists and works, and what is being asked is whether its identity may move. Both
+        * addresses are shown — the decision is meaningless without seeing what it is changing from.
+        */}
+      {emailChanges?.length > 0 && (
+        <section
+          aria-label="Pending email changes"
+          className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20"
+        >
+          <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/40">
+            <Mail size={16} className="text-blue-600 dark:text-blue-400" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">
+              <span className="numeric">{emailChanges.length}</span> email change{emailChanges.length !== 1 ? 's' : ''} awaiting approval
+            </p>
+            <p className="mt-0.5 text-xs text-blue-800 dark:text-blue-300">
+              Each account keeps its current address until you approve the new one.
+            </p>
+            <ul className="mt-2 space-y-2">
+              {emailChanges.map((u) => (
+                <li
+                  key={u._id}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-2 dark:border-blue-700 dark:bg-gray-800"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-gray-900 dark:text-white">
+                      {u.firstName} {u.lastName}
+                      <span className="meta-text"> · {ROLE_LABELS[u.role] || u.role}</span>
+                    </p>
+                    <p className="meta-text truncate">
+                      {u.email} <span aria-hidden="true">→</span>{' '}
+                      <span className="font-medium text-gray-700 dark:text-gray-200">{u.pendingEmail}</span>
+                    </p>
+                  </div>
+                  <ActionButton onClick={() => handleApproveEmail(u)} label={`Approve email change for ${u.firstName} ${u.lastName}`} tone="success" size="xs">
+                    Approve
+                  </ActionButton>
+                  <ActionButton onClick={() => handleRejectEmail(u)} label={`Decline email change for ${u.firstName} ${u.lastName}`} tone="danger" size="xs">
+                    Decline
+                  </ActionButton>
+                </li>
+              ))}
+            </ul>
           </div>
         </section>
       )}
@@ -366,6 +531,83 @@ export default function Users() {
               <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400">
                 Changing from <strong>{ROLE_LABELS[roleTarget.currentRole]}</strong> to{' '}
                 <strong>{ROLE_LABELS[selectedRole]}</strong>. This affects what the user can access.
+              </p>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/*
+        * Barangay assignment.
+        *
+        * This is what makes barangay scope usable: the field has existed on the model from the start
+        * and nothing ever set it, so every SK account is municipality-wide until an administrator
+        * assigns one here. Nothing is guessed on anyone's behalf — there is no fact in the data from
+        * which the right barangay could be derived, which is why the migration script reports
+        * unassigned accounts instead of filling them in.
+        */}
+      <Modal
+        isOpen={!!barangayTarget}
+        onClose={() => { setBarangayTarget(null); setSelectedBarangay(''); }}
+        title="Assign barangay"
+        size="sm"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => { setBarangayTarget(null); setSelectedBarangay(''); }}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleAssignBarangay}
+              disabled={barangayMutation.isPending}
+              className="rounded-xl bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-50"
+            >
+              {barangayMutation.isPending ? 'Saving…' : 'Save barangay'}
+            </button>
+          </div>
+        }
+      >
+        {barangayTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Setting the barangay for{' '}
+              <span className="font-semibold text-gray-900 dark:text-white">{barangayTarget.name}</span>
+              {barangayTarget.municipalityName && ` in ${barangayTarget.municipalityName}`}
+            </p>
+
+            {barangayTarget.municipalityId ? (
+              <Field
+                id="assign-barangay"
+                label="Barangay"
+                optional
+                hint="Leave empty to keep the account municipality-wide."
+              >
+                <select
+                  id="assign-barangay"
+                  value={selectedBarangay}
+                  onChange={(e) => setSelectedBarangay(e.target.value)}
+                  className={control}
+                >
+                  <option value="">No barangay — municipality-wide</option>
+                  {assignableBarangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+                </select>
+              </Field>
+            ) : (
+              /* Barangays belong to a municipality, so there is nothing to choose from until the
+                 account has one. Saying so beats an empty dropdown. */
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400">
+                This account has no municipality, so it cannot be given a barangay yet.
+              </p>
+            )}
+
+            {selectedBarangay && (
+              <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400">
+                From then on this account sees only its own barangay&rsquo;s youth, programmes,
+                expenses and documents — plus records that belong to no barangay.
               </p>
             )}
           </div>

@@ -82,6 +82,47 @@ export const confirm = {
       confirmButtonText: opts.confirmText || 'Yes, Reject',
     }),
 
+  /*
+   * Rejection that COLLECTS the reason, rather than asking for confirmation and leaving the reason to
+   * be gathered somewhere else. The routes that return an expense or a liquidation require one, so a
+   * dialog without an input can only produce a 422 the user cannot act on.
+   *
+   * Resolves like any other confirm; `result.value` carries the trimmed reason.
+   */
+  rejectWithReason: (opts = {}) =>
+    Swal.fire({
+      ...dangerBase,
+      title: opts.title || 'Return this record?',
+      html: opts.text ? `<span>${opts.text}</span>` : null,
+      icon: 'warning',
+      input: 'textarea',
+      inputLabel: opts.inputLabel || 'Reason',
+      inputPlaceholder: opts.placeholder || 'Say what needs to change before this can be approved…',
+      inputAttributes: { 'aria-label': opts.inputLabel || 'Reason', maxlength: 500 },
+      confirmButtonText: opts.confirmText || 'Return with this reason',
+      // Validated here as well as on the server: catching it in the dialog keeps the text the user
+      // already typed, where a round trip would discard it.
+      inputValidator: (value) => (value && value.trim() ? undefined : 'A reason is required'),
+      preConfirm: (value) => value.trim(),
+    }),
+
+  /*
+   * Cancelling a programme is not an ordinary status change. It stops the work, and the other four
+   * statuses describe progress that can be revised afterwards — so it gets the danger styling and
+   * says plainly what it means, rather than the generic "Change status to X?".
+   */
+  cancelProgram: (opts = {}) =>
+    Swal.fire({
+      ...dangerBase,
+      title: opts.title || 'Cancel this program?',
+      html: opts.text
+        ? `<span>${opts.text}</span>`
+        : 'The program will be marked <strong>cancelled</strong>. Participants and reports keep it on record.',
+      icon: 'warning',
+      confirmButtonText: opts.confirmText || 'Yes, cancel it',
+      cancelButtonText: opts.cancelText || 'Keep the program',
+    }),
+
   archive: (opts = {}) =>
     Swal.fire({
       ...warningBase,

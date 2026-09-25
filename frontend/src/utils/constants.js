@@ -148,7 +148,6 @@ export const LOGIN_NOTICES = {
 export const ADMIN_ROLES = ['super_admin', 'provincial_admin', 'municipal_admin'];
 export const EDITOR_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];
 export const FINANCE_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'dilg_representative'];
-export const FINANCE_STAFF = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer'];
 export const STAFF = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'];
 /*
  * Mirrors backend constants/roles.js. Opening Reports is a view; approving money is not, and the
@@ -156,11 +155,33 @@ export const STAFF = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secr
  * why adding the Secretary to Reports would have handed them expense approval.
  */
 export const REPORT_VIEWERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'dilg_representative'];
-export const FINANCE_APPROVERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer'];
+/*
+ * Writing a finance record and deciding on one are different privileges held by different officers.
+ *
+ * `FINANCE_EDITORS` replaces `FINANCE_STAFF`, which included `sk_chairperson`. The chairperson is
+ * view-only across Fund Management now: they read budgets, expenses and liquidations and write none
+ * of them. The treasurer records money; the administrator tiers approve and return it, and the
+ * treasurer is deliberately absent from the approver list so the two acts stay in different hands.
+ *
+ * Mirrors backend/src/constants/roles.js. Hiding a button is not what enforces any of this — every
+ * one of these lists exists on a route guard as well, and the guard is what a change is judged on.
+ */
+export const FINANCE_EDITORS = [...ADMIN_ROLES, 'sk_treasurer'];
+export const FINANCE_APPROVERS = [...ADMIN_ROLES];
 export const BUDGET_APPROVERS = [...ADMIN_ROLES];
 // Account administration and the audit trail are super_admin only.
 export const USER_ADMINS = ['super_admin'];
 export const PROGRAM_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];
+/*
+ * Roles whose scope narrows to a single barangay when their account names one.
+ *
+ * Mirrors BARANGAY_BOUND_ROLES in backend/src/utils/scope.js. Used to decide whether to OFFER a
+ * barangay control at all: for a bound account the server pins the value, so a picker would be a
+ * control whose selection is silently discarded — the same mistake the municipality picker made for
+ * municipal_admin. The admin tiers and DILG are not bound even if a barangay is recorded on them.
+ */
+export const BARANGAY_BOUND_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad'];
+
 export const YOUTH_REGISTRARS = [...ADMIN_ROLES, 'sk_chairperson'];
 export const YOUTH_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary', 'sk_kagawad'];
 export const DOC_UPLOADERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad'];

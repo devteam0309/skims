@@ -14,7 +14,7 @@ import { toFormData } from '../../utils/formData';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
-import { FINANCE_STAFF, FINANCE_APPROVERS } from '../../utils/constants';
+import { FINANCE_EDITORS, FINANCE_APPROVERS } from '../../utils/constants';
 
 const EXPENSE_TYPES = [
   { value: 'purchase_request', label: 'Purchase Request' },
@@ -26,7 +26,7 @@ const EXPENSE_TYPES = [
   { value: 'official_receipt', label: 'Official Receipt' },
 ];
 
-const EXPENSE_STATUSES = ['pending', 'approved', 'rejected', 'liquidated'];
+const EXPENSE_STATUSES = ['draft', 'pending', 'approved', 'rejected', 'liquidated'];
 
 const emptyForm = () => ({
   type: '', title: '', description: '', amount: '',
@@ -108,25 +108,73 @@ export default function Expenses() {
     onError: (e) => toast.error(e.message || 'Bulk approval failed'),
   });
 
-  const canCreate = FINANCE_STAFF.includes(user?.role);
-  const canApprove = FINANCE_APPROVERS.includes(user?.role);
+  const submitMutation = useMutation({
+    mutationFn: (id) => expenseService.submit(id),
+    onSuccess: () => {
+      toast.success('Expense submitted for review');
+      queryClient.invalidateQueries(['expenses']);
+    },
+    onError: (e) => toast.error(e.message || 'Could not submit the expense'),
+  });
 
-  const handleRecordExpense = async () => {
+  const rejectMutation = useMutation({
+    mutationFn: ({ id, reason }) => expenseService.reject(id, reason),
+    onSuccess: () => {
+      toast.success('Expense returned to its author');
+      queryClient.invalidateQueries(['expenses']);
+      queryClient.invalidateQueries(['expense-summary']);
+    },
+    onError: (e) => toast.error(e.message || 'Could not return the expense'),
+  });
+
+  const canCreate = FINANCE_EDITORS.includes(user?.role);
+  const canApprove = FINANCE_APPROVERS.includes(user?.role);
+  // The author submits; the reviewer decides. Both controls are role-gated here AND on the route.
+  const canSubmit = FINANCE_EDITORS.includes(user?.role);
+
+  /*
+   * `asDraft` decides whether the record goes straight into review or is kept back for the author to
+   * finish. Sending it for review is the default, because that is what recording an expense meant
+   * before the draft state existed.
+   */
+  const handleRecordExpense = async (asDraft = false) => {
     if (!form.type) return toast.error('Please select an expense type');
     if (!form.title.trim()) return toast.error('Expense title is required');
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Amount must be greater than zero');
     if (!form.transactionDate) return toast.error('Transaction date is required');
 
+    const amount = formatCurrency(parseFloat(form.amount));
     const result = await confirm.financial({
-      title: 'Record Expense?',
-      text: `You are about to record an expense of ${formatCurrency(parseFloat(form.amount))}.`,
+      title: asDraft ? 'Save as draft?' : 'Record Expense?',
+      text: asDraft
+        ? `${amount} will be saved as a draft. Nobody reviews it until you submit it.`
+        : `You are about to record an expense of ${amount}. It goes to the municipal administrator for approval.`,
+      confirmText: asDraft ? 'Save draft' : 'Confirm',
     });
-    if (result.isConfirmed) createMutation.mutate(form);
+    if (result.isConfirmed) createMutation.mutate({ ...form, saveAsDraft: asDraft });
   };
 
   const handleApproveExpense = async (id) => {
     const result = await confirm.approve({ title: 'Approve Expense?', text: 'This expense will be marked as approved and deducted from the budget.' });
     if (result.isConfirmed) approveMutation.mutate(id);
+  };
+
+  const handleRejectExpense = async (id, row) => {
+    const result = await confirm.rejectWithReason({
+      title: 'Return this expense?',
+      text: `${row.title} — ${formatCurrency(row.amount)}. It goes back to its author, who can correct it and submit it again.`,
+      inputLabel: 'Reason for returning it',
+    });
+    if (result.isConfirmed) rejectMutation.mutate({ id, reason: result.value });
+  };
+
+  const handleSubmitExpense = async (id, row) => {
+    const result = await confirm.financial({
+      title: 'Submit for review?',
+      text: `${row.title} — ${formatCurrency(row.amount)} will be sent to the municipal administrator for approval.`,
+      confirmText: 'Submit',
+    });
+    if (result.isConfirmed) submitMutation.mutate(id);
   };
 
   const handleBulkApprove = async () => {
@@ -208,22 +256,62 @@ export default function Expenses() {
       render: (v) => <span className="font-semibold text-gray-900 dark:text-white">{formatCurrency(v)}</span>,
     },
     { key: 'transactionDate', header: 'Date', render: (v) => formatDate(v) },
-    { key: 'status', header: 'Status', render: (v) => <StatusBadge status={v} /> },
+    {
+      key: 'status',
+      header: 'Status',
+      // A returned expense carries the reason with it. Without this the author sees only the word
+      // "rejected" and has to ask someone what to change.
+      render: (v, row) => (
+        <div>
+          <StatusBadge status={v} />
+          {v === 'rejected' && row.rejectionReason && (
+            <p className="meta-text mt-1 max-w-[16rem] whitespace-normal">{row.rejectionReason}</p>
+          )}
+        </div>
+      ),
+    },
     {
       key: '_id',
       header: 'Actions',
       render: (id, row) => (
-        row.status === 'pending' && canApprove ? (
-          <button
-            type="button"
-            onClick={() => handleApproveExpense(id)}
-            disabled={approveMutation.isPending}
-            aria-label={`Approve ${row.title}`}
-            className="rounded-lg bg-green-50 px-2 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-100 disabled:opacity-60 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25"
-          >
-            Approve
-          </button>
-        ) : null
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* A reviewer sees both decisions side by side. Approve alone left "not approved" with no
+              expression but silence — the expense simply stayed pending for ever. */}
+          {row.status === 'pending' && canApprove && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleApproveExpense(id)}
+                disabled={approveMutation.isPending}
+                aria-label={`Approve ${row.title}`}
+                className="rounded-lg bg-green-50 px-2 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-100 disabled:opacity-60 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRejectExpense(id, row)}
+                disabled={rejectMutation.isPending}
+                aria-label={`Return ${row.title}`}
+                className="rounded-lg bg-red-50 px-2 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25"
+              >
+                Return
+              </button>
+            </>
+          )}
+          {/* A draft is the author's to send up; a returned one can be corrected and sent again. */}
+          {['draft', 'rejected'].includes(row.status) && canSubmit && (
+            <button
+              type="button"
+              onClick={() => handleSubmitExpense(id, row)}
+              disabled={submitMutation.isPending}
+              aria-label={`Submit ${row.title} for review`}
+              className="rounded-lg bg-navy-50 px-2 py-1 text-xs font-medium text-navy-700 transition-colors hover:bg-navy-100 disabled:opacity-60 dark:bg-navy-500/15 dark:text-navy-200 dark:hover:bg-navy-500/25"
+            >
+              {row.status === 'rejected' ? 'Resubmit' : 'Submit'}
+            </button>
+          )}
+        </div>
       ),
     },
   ];
@@ -371,13 +459,22 @@ export default function Expenses() {
             >
               Cancel
             </button>
+            {/* Two ways out of the form: keep working on it, or send it up for review. */}
             <button
               type="button"
-              onClick={handleRecordExpense}
+              onClick={() => handleRecordExpense(true)}
+              disabled={createMutation.isPending}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              Save as draft
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRecordExpense(false)}
               disabled={createMutation.isPending}
               className="rounded-xl bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
             >
-              {createMutation.isPending ? 'Saving...' : 'Record Expense'}
+              {createMutation.isPending ? 'Saving...' : 'Submit for review'}
             </button>
           </div>
         }

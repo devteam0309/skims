@@ -11,7 +11,7 @@ import { formatCurrency } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
-import { FINANCE_STAFF, PROGRAM_CATEGORIES, BUDGET_APPROVERS } from '../../utils/constants';
+import { FINANCE_EDITORS, PROGRAM_CATEGORIES, BUDGET_APPROVERS } from '../../utils/constants';
 
 const emptyForm = () => ({
   title: '',
@@ -263,7 +263,7 @@ export default function Budgets() {
     if (result.isConfirmed) reopenMutation.mutate(id);
   };
 
-  const canCreate = FINANCE_STAFF.includes(user?.role);
+  const canCreate = FINANCE_EDITORS.includes(user?.role);
   // DILG is provincial oversight and observes rather than decides — see constants.js.
   const canApprove = BUDGET_APPROVERS.includes(user?.role);
 

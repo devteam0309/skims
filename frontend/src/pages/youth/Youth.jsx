@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, ChevronDown } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronDown, MapPin, Upload } from 'lucide-react';
 import { youthService, municipalityService } from '../../services/documentService';
 import DataTable from '../../components/shared/DataTable';
 import Modal from '../../components/shared/Modal';
+import YouthImportModal from './YouthImportModal';
 import SearchInput from '../../components/shared/SearchInput';
 import StatusBadge from '../../components/shared/StatusBadge';
 import ComboInput from '../../components/shared/ComboInput';
@@ -13,7 +14,7 @@ import { formatDate, calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } from '../../ut
 import { toast } from '../../components/ui/toaster';
 import { confirm } from '../../utils/confirm';
 import useAuthStore from '../../store/authStore';
-import { YOUTH_EDITORS, YOUTH_REGISTRARS } from '../../utils/constants';
+import { YOUTH_EDITORS, YOUTH_REGISTRARS, BARANGAY_BOUND_ROLES } from '../../utils/constants';
 
 const EMPTY_FORM = {
   firstName: '', lastName: '', birthDate: '', gender: '',
@@ -264,11 +265,27 @@ export default function Youth() {
   const canRegister = YOUTH_REGISTRARS.includes(user?.role);
   const canEdit = YOUTH_EDITORS.includes(user?.role);
 
+  /*
+   * The signed-in officer's own barangay, when they have one.
+   *
+   * An SK Chairperson serves one barangay, so the registry they manage is that barangay's — and the
+   * server resolves it from the account, ignoring anything the request says. Asking them to pick it
+   * from a list of 61 on every visit was work with exactly one right answer, and the picker implied
+   * a choice they do not have.
+   *
+   * Accounts without a barangay (every admin tier, and any SK account not yet assigned one) keep the
+   * picker and the filter: their scope really is the whole municipality.
+   */
+  const ownBarangay = BARANGAY_BOUND_ROLES.includes(user?.role) ? (user?.barangay || null) : null;
+  const ownBarangayId = ownBarangay?._id || ownBarangay || null;
+  const isBarangayBound = Boolean(ownBarangayId);
+
   const [filters, setFilters] = useState({
     page: 1, limit: 20, search: '', gender: '', educationalAttainment: '', isActive: '',
     barangay: '', municipality: '', skEligible: '',
   });
   const [showModal, setShowModal] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
 
@@ -523,13 +540,24 @@ export default function Youth() {
         </p>
         </div>
         {canRegister && (
-          <button
-            type="button"
-            onClick={openCreate}
-            className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
-          >
-            <Plus size={16} aria-hidden="true" />Register on behalf
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {/* Importing a roster is the bulk counterpart of registering one member, so it sits beside
+                it rather than somewhere else. Same permission: whoever may add one may add many. */}
+            <button
+              type="button"
+              onClick={() => setShowImport(true)}
+              className="flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              <Upload size={16} aria-hidden="true" />Import from Excel
+            </button>
+            <button
+              type="button"
+              onClick={openCreate}
+              className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
+            >
+              <Plus size={16} aria-hidden="true" />Register on behalf
+            </button>
+          </div>
         )}
       </div>
 
@@ -573,23 +601,39 @@ export default function Youth() {
             </>
           )}
 
-          <label htmlFor="filter-barangay" className="sr-only">Filter by barangay</label>
-          <select
-            id="filter-barangay"
-            value={filters.barangay}
-            onChange={(e) => setFilters({ ...filters, barangay: e.target.value, page: 1 })}
-            disabled={!filterMunId && !isCrossMunicipality}
-            className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-60`}
-          >
-            <option value="">All Barangays</option>
-            {groupedFilterBarangays
-              ? Object.entries(groupedFilterBarangays).map(([mun, list]) => (
-                <optgroup key={mun} label={mun}>
-                  {list.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
-                </optgroup>
-              ))
-              : filterBarangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
-          </select>
+          {/*
+            * The barangay filter is only offered to an account that spans more than one.
+            *
+            * For a bound officer the server pins the barangay and discards anything else, so every
+            * option but one would do nothing — the failure mode this page has already had twice with
+            * the municipality picker. They get a plain statement of their scope instead.
+            */}
+          {isBarangayBound ? (
+            <p className="flex items-center gap-1.5 rounded-lg bg-navy-50 px-3 py-2 text-sm font-medium text-navy-800 dark:bg-navy-500/15 dark:text-navy-200">
+              <MapPin size={14} aria-hidden="true" />
+              Barangay {ownBarangay?.name || 'assigned to you'}
+            </p>
+          ) : (
+            <>
+              <label htmlFor="filter-barangay" className="sr-only">Filter by barangay</label>
+              <select
+                id="filter-barangay"
+                value={filters.barangay}
+                onChange={(e) => setFilters({ ...filters, barangay: e.target.value, page: 1 })}
+                disabled={!filterMunId && !isCrossMunicipality}
+                className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-60`}
+              >
+                <option value="">All Barangays</option>
+                {groupedFilterBarangays
+                  ? Object.entries(groupedFilterBarangays).map(([mun, list]) => (
+                    <optgroup key={mun} label={mun}>
+                      {list.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+                    </optgroup>
+                  ))
+                  : filterBarangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+              </select>
+            </>
+          )}
 
           {/* Type-or-pick, matching the registration form and the gender filter beside it. A level
               typed into the form has to be reachable from the filter, or the custom entry is
@@ -772,13 +816,29 @@ export default function Youth() {
               )}
             </Field>
 
-            <Field id="youth-barangay" label="Barangay" optional>
-              <BarangaySelect
-                barangays={formBarangays}
-                value={form.barangay}
-                onChange={(val) => set('barangay', val)}
-                disabled={!formMunId}
-              />
+            {/*
+              * Shown, not asked. The server files the member into the officer's own barangay whatever
+              * this form sends, so a picker here would be a control whose selection is discarded.
+              * Displaying it read-only still tells them where the record is going, which a hidden
+              * field would not.
+              */}
+            <Field id="youth-barangay" label="Barangay" optional={!isBarangayBound}>
+              {isBarangayBound ? (
+                <input
+                  id="youth-barangay"
+                  value={ownBarangay?.name || 'Your barangay'}
+                  readOnly
+                  disabled
+                  className={`${control} cursor-not-allowed bg-gray-50 text-gray-500 dark:bg-gray-700 dark:text-gray-400`}
+                />
+              ) : (
+                <BarangaySelect
+                  barangays={formBarangays}
+                  value={form.barangay}
+                  onChange={(val) => set('barangay', val)}
+                  disabled={!formMunId}
+                />
+              )}
             </Field>
           </div>
 
@@ -823,6 +883,15 @@ export default function Youth() {
           </div>
         </div>
       </Modal>
+
+      {/* Mounted alongside the single-member modal; both write to the same registry, so a successful
+          import invalidates the same query the form does. */}
+      <YouthImportModal
+        isOpen={showImport}
+        onClose={() => setShowImport(false)}
+        onImported={() => queryClient.invalidateQueries(['youth'])}
+        barangayName={ownBarangay?.name}
+      />
     </div>
   );
 }

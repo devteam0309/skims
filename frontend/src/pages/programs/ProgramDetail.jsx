@@ -50,7 +50,19 @@ export default function ProgramDetail() {
   };
 
   const handleStatusChange = async (newStatus) => {
-    const result = await confirm.statusChange({ text: `Change status to "${newStatus}"?` });
+    /*
+     * Cancelling is not an ordinary status change, so it does not get the ordinary dialog.
+     *
+     * The other four statuses describe how far along the work is and can be revised freely.
+     * Cancelling stops it — participants, milestones and any committed budget are all affected —
+     * and "Change status to cancelled?" in a neutral question box did not say so. Danger styling,
+     * plain words, and "Keep the program" as the way out.
+     */
+    const result = newStatus === 'cancelled'
+      ? await confirm.cancelProgram({
+        text: `"${program.title}" will be marked <strong>cancelled</strong>. It stays on record for reports and for anyone already signed up.`,
+      })
+      : await confirm.statusChange({ text: `Change status to "${newStatus}"?` });
     if (result.isConfirmed) statusMutation.mutate(newStatus);
   };
 
@@ -352,20 +364,70 @@ export default function ProgramDetail() {
 
           {program.milestones?.length > 0 && (
             <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
-              <h2 className="section-heading mb-4">Milestones</h2>
-              <ul className="space-y-3">
-                {program.milestones.map((m) => (
-                  <li key={m._id} className="flex items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                    <MilestoneIcon status={m.status} />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white">{m.title}</p>
-                      {m.targetDate && <p className="meta-text">Target: {formatDate(m.targetDate)}</p>}
-                      {m.notes && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{m.notes}</p>}
-                    </div>
-                    <StatusBadge status={m.status} />
-                  </li>
-                ))}
-              </ul>
+              <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="section-heading">Program parts</h2>
+                {/* The context every part shares, stated once instead of repeated per row. */}
+                <p className="meta-text">
+                  {program.municipality?.name || 'N/A'}
+                  {' · '}
+                  {program.barangay?.name || 'All barangays'}
+                </p>
+              </div>
+              {/*
+               * A table, not a stack of cards.
+               *
+               * Each part carries a status, a target date, a completion date and a completion rate,
+               * and as stacked prose ("Target: …" under a title, a badge floated right) none of those
+               * lined up between rows — the reader could not scan down a column to find the part that
+               * had slipped. Scrolls inside its own container on a narrow screen rather than making
+               * the page scroll sideways.
+               */}
+              <div className="overflow-x-auto">
+                <table className="data-table w-full min-w-[42rem]">
+                  <caption className="sr-only">
+                    Parts of {program.title}, with status, dates, progress and who is responsible
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Program part</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Target date</th>
+                      <th scope="col">Completed</th>
+                      <th scope="col" className="cell-numeric">Progress</th>
+                      <th scope="col">Responsible</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {program.milestones.map((m) => (
+                      <tr key={m._id}>
+                        <td>
+                          <div className="flex items-start gap-2">
+                            <MilestoneIcon status={m.status} />
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-gray-900 dark:text-white">{m.title}</p>
+                              {m.description && <p className="meta-text whitespace-normal">{m.description}</p>}
+                              {m.notes && <p className="mt-1 whitespace-normal text-xs text-gray-500 dark:text-gray-400">{m.notes}</p>}
+                            </div>
+                          </div>
+                        </td>
+                        <td><StatusBadge status={m.status} /></td>
+                        <td className="whitespace-nowrap">{m.targetDate ? formatDate(m.targetDate) : '—'}</td>
+                        <td className="whitespace-nowrap">{m.completedAt ? formatDate(m.completedAt) : '—'}</td>
+                        <td className="cell-numeric">{typeof m.completionRate === 'number' ? `${m.completionRate}%` : '—'}</td>
+                        {/*
+                          * Parts have no owner of their own on the schema, so this is the programme's
+                          * assigned officers — stated rather than left blank, and never invented.
+                          */}
+                        <td className="whitespace-normal">
+                          {program.assignedOfficers?.length
+                            ? program.assignedOfficers.map((o) => `${o.firstName} ${o.lastName}`).join(', ')
+                            : (program.createdBy ? `${program.createdBy.firstName} ${program.createdBy.lastName}` : '—')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </section>
           )}
         </div>

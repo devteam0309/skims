@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { liquidationService, budgetService } from '../../services/budgetService';
 import { programService } from '../../services/programService';
+import { documentService } from '../../services/documentService';
 import DataTable from '../../components/shared/DataTable';
 import StatusBadge from '../../components/shared/StatusBadge';
 import Modal from '../../components/shared/Modal';
@@ -13,9 +14,10 @@ import { toFormData } from '../../utils/formData';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
-import { FINANCE_STAFF, FINANCE_APPROVERS } from '../../utils/constants';
+import { FINANCE_EDITORS, FINANCE_APPROVERS } from '../../utils/constants';
 
-const EMPTY_FORM = { title: '', program: '', budget: '', totalAmount: '', liquidatedAmount: '', dueDate: '', remarks: '' };
+// supportingDocuments holds ids of documents ALREADY in Document Management — see the field below.
+const EMPTY_FORM = { title: '', program: '', budget: '', totalAmount: '', liquidatedAmount: '', dueDate: '', remarks: '', supportingDocuments: [] };
 
 const STATUS_FILTERS = ['', 'draft', 'submitted', 'under_review', 'approved', 'rejected'];
 
@@ -34,6 +36,17 @@ export default function Liquidations() {
   const [filters, setFilters] = useState({ page: 1, limit: 10, status: '', search: '' });
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
+
+  /*
+   * Documents that can back this report. Loaded only while the form is open, and only the active,
+   * unarchived ones — the server also refuses anything outside the caller's own scope, so this list
+   * can never offer a document the request would then be rejected for naming.
+   */
+  const { data: documentOptions } = useQuery({
+    queryKey: ['documents', 'for-liquidation'],
+    queryFn: () => documentService.getAll({ limit: 100, isArchived: false }).then((r) => r.data.data),
+    enabled: showModal,
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ['liquidations', filters],
@@ -76,7 +89,7 @@ export default function Liquidations() {
     onError: (e) => toast.error(e.message || 'Submission failed'),
   });
 
-  const canCreate = FINANCE_STAFF.includes(user?.role);
+  const canCreate = FINANCE_EDITORS.includes(user?.role);
   // DILG is provincial oversight and observes rather than decides — see constants.js.
   const canApprove = FINANCE_APPROVERS.includes(user?.role);
 
@@ -388,6 +401,58 @@ export default function Liquidations() {
               rows={2}
               className={`${control} resize-y`}
             />
+          </Field>
+
+          {/*
+            * Supporting documents, LINKED rather than uploaded again.
+            *
+            * Attachments uploaded with a report are just a filename and a URL: they cannot say which
+            * registered document they are, so a reviewer could not tell whether the receipt attached
+            * here was the one already filed against the expense. Linking keeps one document, with its
+            * own category, version history and access rules, referenced from wherever it is needed.
+            */}
+          <Field
+            id="liq-documents"
+            label="Supporting documents"
+            optional
+            hint="Documents already in Document Management. Tick the ones this report is evidenced by."
+          >
+            {documentOptions?.length ? (
+              <div className="mt-1 max-h-44 space-y-1 overflow-y-auto rounded-xl border border-gray-200 p-2 dark:border-gray-600">
+                {documentOptions.map((doc) => {
+                  const checked = form.supportingDocuments.includes(doc._id);
+                  return (
+                    <label
+                      key={doc._id}
+                      className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setForm((f) => ({
+                          ...f,
+                          supportingDocuments: checked
+                            ? f.supportingDocuments.filter((id) => id !== doc._id)
+                            : [...f.supportingDocuments, doc._id],
+                        }))}
+                        className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-navy-700"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm text-gray-800 dark:text-gray-100">{doc.title}</span>
+                        <span className="meta-text capitalize">
+                          {doc.category?.replace(/_/g, ' ')}
+                          {doc.originalName ? ` · ${doc.originalName}` : ''}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="field-hint mt-1">
+                No documents available to link yet. Upload them in Document Management first.
+              </p>
+            )}
           </Field>
         </div>
       </Modal>

@@ -99,6 +99,14 @@ exports.createLiquidation = asyncHandler(async (req, res) => {
    * report could name another municipality's document by id and publish its title and category to
    * everyone who opens the report — a read across the boundary, arriving through a write.
    */
+  /*
+   * Normalised before it is used. A multipart body carrying one linked document arrives as a bare
+   * string rather than an array of one — multer only produces an array when the field repeats — so
+   * checking `Array.isArray` alone would silently ignore a single selection.
+   */
+  if (typeof liqData.supportingDocuments === 'string' && liqData.supportingDocuments) {
+    liqData.supportingDocuments = [liqData.supportingDocuments];
+  }
   if (Array.isArray(liqData.supportingDocuments) && liqData.supportingDocuments.length > 0) {
     const ids = [...new Set(liqData.supportingDocuments.map(String))];
     if (ids.length > 20) return errorResponse(res, 400, 'A liquidation can link at most 20 supporting documents');

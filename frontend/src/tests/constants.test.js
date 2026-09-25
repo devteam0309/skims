@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MUNICIPALITIES, ADMIN_ROLES, FINANCE_STAFF, YOUTH_EDITORS, ROLE_LABELS, ROLES, SELF_ASSIGNABLE_ROLES, PROGRAM_CATEGORIES, DOCUMENT_CATEGORIES, homeFor } from '../utils/constants';
+import { MUNICIPALITIES, ADMIN_ROLES, FINANCE_EDITORS, FINANCE_APPROVERS, YOUTH_EDITORS, ROLE_LABELS, ROLES, SELF_ASSIGNABLE_ROLES, PROGRAM_CATEGORIES, DOCUMENT_CATEGORIES, homeFor } from '../utils/constants';
 
 describe('MUNICIPALITIES', () => {
   it('lists all four Marinduque municipalities', () => {
@@ -16,9 +16,20 @@ describe('role groups', () => {
     expect(ADMIN_ROLES).toEqual(['super_admin', 'provincial_admin', 'municipal_admin']);
   });
 
-  it('FINANCE_STAFF extends admins with chairperson and treasurer', () => {
-    expect(FINANCE_STAFF).toEqual(expect.arrayContaining([...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer']));
-    expect(FINANCE_STAFF).not.toContain('sk_secretary');
+  /*
+   * The chairperson was in both of these and is now in neither: view-only across Fund Management.
+   * The treasurer records money and approves none of it. Asserted here because the lists mirror
+   * backend/src/constants/roles.js, and a silent drift between them would show the wrong buttons.
+   */
+  it('FINANCE_EDITORS is the admin tiers plus the treasurer, and excludes the chairperson', () => {
+    expect(FINANCE_EDITORS).toEqual([...ADMIN_ROLES, 'sk_treasurer']);
+    expect(FINANCE_EDITORS).not.toContain('sk_chairperson');
+  });
+
+  it('FINANCE_APPROVERS is the admin tiers alone', () => {
+    expect(FINANCE_APPROVERS).toEqual([...ADMIN_ROLES]);
+    expect(FINANCE_APPROVERS).not.toContain('sk_treasurer');
+    expect(FINANCE_APPROVERS).not.toContain('sk_chairperson');
   });
 
   it('YOUTH_EDITORS includes kagawad but excludes treasurer', () => {
