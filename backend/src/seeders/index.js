@@ -159,17 +159,30 @@ const seed = async () => {
      * Santa Cruz's chairperson and Gasan's secretary are left UNASSIGNED on purpose. That is the
      * state every existing account is in, and it has to keep working: they stay municipality-wide.
      */
-    const boacBarangays = (barangays.filter((b) => b.municipality.toString() === munMap['BOA']._id.toString()));
-    const chairBarangay = boacBarangays[0];
-    const treasurerBarangay = boacBarangays[1];
+    /*
+     * Two demo barangays per municipality, not just Boac's.
+     *
+     * Every SK officer the seeder creates gets one, and that municipality's ten youth are split
+     * between the two — so each officer opens a registry with five members instead of one, and any
+     * pair of officers in the same municipality demonstrates that neither sees the other's roster.
+     *
+     * Assigning them HERE rather than through the migration script matters: a re-seed recreates
+     * every user, so an assignment made afterwards is destroyed by the next seed. This survives.
+     */
+    const demoBarangays = {};
+    for (const code of Object.keys(munMap)) {
+      const own = barangays.filter((b) => b.municipality.toString() === munMap[code]._id.toString());
+      demoBarangays[code] = [own[0], own[1]];
+    }
+    const [chairBarangay, treasurerBarangay] = demoBarangays['BOA'];
 
     const usersData = [
       { firstName: 'Admin', lastName: 'Super', email: 'superadmin@skims.gov.ph', password: 'Admin@123', role: 'super_admin', isApproved: true, isEmailVerified: true },
       { firstName: 'Provincial', lastName: 'Admin', email: 'provincial@skims.gov.ph', password: 'Admin@123', role: 'provincial_admin', isApproved: true, isEmailVerified: true },
       { firstName: 'Juan', lastName: 'dela Cruz', email: 'juan@boac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['BOA']._id, barangay: chairBarangay._id, isApproved: true, isEmailVerified: true },
       { firstName: 'Maria', lastName: 'Santos', email: 'maria@boac.gov.ph', password: 'Admin@123', role: 'sk_treasurer', municipality: munMap['BOA']._id, barangay: treasurerBarangay._id, isApproved: true, isEmailVerified: true },
-      { firstName: 'Pedro', lastName: 'Garcia', email: 'pedro@stac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['STC']._id, isApproved: true, isEmailVerified: true },
-      { firstName: 'Ana', lastName: 'Reyes', email: 'ana@gasan.gov.ph', password: 'Admin@123', role: 'sk_secretary', municipality: munMap['GAS']._id, isApproved: true, isEmailVerified: true },
+      { firstName: 'Pedro', lastName: 'Garcia', email: 'pedro@stac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['STC']._id, barangay: demoBarangays['STC'][0]._id, isApproved: true, isEmailVerified: true },
+      { firstName: 'Ana', lastName: 'Reyes', email: 'ana@gasan.gov.ph', password: 'Admin@123', role: 'sk_secretary', municipality: munMap['GAS']._id, barangay: demoBarangays['GAS'][0]._id, isApproved: true, isEmailVerified: true },
       { firstName: 'DILG', lastName: 'Officer', email: 'dilg@marinduque.gov.ph', password: 'Admin@123', role: 'dilg_representative', isApproved: true, isEmailVerified: true },
       { firstName: 'Carlos', lastName: 'Munoz', email: 'municipal@boac.gov.ph', password: 'Admin@123', role: 'municipal_admin', municipality: munMap['BOA']._id, isApproved: true, isEmailVerified: true },
     ];
@@ -695,17 +708,19 @@ const seed = async () => {
       const munBarangays = barangaysByMun[mun._id.toString()] || [];
 
       /*
-       * A stride coprime with most barangay counts, so members land across the whole list instead of
-       * clustering on the first few.
+       * Each municipality's ten members are split between its two demo barangays, so every officer
+       * opens a registry with five in it.
        *
-       * Boac is the exception: its ten members are split between the chairperson's barangay and the
-       * treasurer's, so each of those accounts opens a registry with five members in it. Spread over
-       * all 61 Boac barangays they would each have seen one member and read the barangay scope as a
-       * broken filter — thin demo data has been misdiagnosed as a defect on this project four times.
+       * Spread evenly instead — a stride across all 61 Boac barangays — each officer saw exactly one
+       * member and read correct barangay scoping as a broken filter. Thin demo data has been
+       * misdiagnosed as a defect on this project four times; this is the fifth avoided.
+       *
+       * The fallback stride remains for any municipality with no demo pair.
        */
-      const isBoac = mun._id.toString() === munMap['BOA']._id.toString();
-      const barangay = isBoac
-        ? [chairBarangay, treasurerBarangay][Math.floor(i / municipalities.length) % 2]
+      const code = Object.keys(munMap).find((c) => munMap[c]._id.toString() === mun._id.toString());
+      const pair = demoBarangays[code];
+      const barangay = pair && pair[0] && pair[1]
+        ? pair[Math.floor(i / municipalities.length) % 2]
         : (munBarangays.length ? munBarangays[(i * 7) % munBarangays.length] : undefined);
 
       /*

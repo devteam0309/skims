@@ -11,3 +11,6 @@ coverage/
 # Barangay assignment mappings: these carry real officers' email addresses, and the barangay each
 # one serves. The script that reads them documents the format; the files themselves stay local.
 scratchpad/*mapping*.json
+
+# Database dumps taken before a re-seed: password hashes and real email addresses.
+scratchpad/dump-*/
