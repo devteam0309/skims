@@ -5,6 +5,7 @@ require('dotenv').config();
 const User = require('../models/User');
 const Municipality = require('../models/Municipality');
 const Barangay = require('../models/Barangay');
+const { uploadToCloudinary } = require('../config/cloudinary');
 const Program = require('../models/Program');
 const Budget = require('../models/Budget');
 const Expense = require('../models/Expense');
@@ -138,6 +139,57 @@ const seed = async () => {
       console.log('\n=== SEEDING COMPLETE (reference data only) ===');
       console.log('Demo dataset skipped. Set SEED_DEMO=true to include sample users/programs/etc.');
       process.exit(0);
+    }
+
+    /*
+     * One real file behind every seeded document.
+     *
+     * The seeder used to fabricate `fileUrl`s under Cloudinary's public `demo` cloud —
+     * `res.cloudinary.com/demo/raw/upload/skims/documents/seed-*.pdf` — for files that were never
+     * uploaded anywhere. The metadata, filters and counts all worked, so it looked fine until
+     * somebody pressed Download and got ERR_INVALID_RESPONSE from a 404 at Cloudinary. It reads as
+     * a broken feature; it was fake data, in both the portal and the authenticated Documents page.
+     *
+     * So: generate a real one-page PDF, upload it ONCE, and point every seeded document at it. A
+     * fixed public_id with overwrite means re-seeding replaces the same asset instead of leaving a
+     * new orphan behind on each run.
+     *
+     * If Cloudinary is not configured, seeded documents get NO fileUrl rather than a dead one — the
+     * download routes now say "no file attached", which is true, instead of redirecting the browser
+     * somewhere that does not exist.
+     */
+    const samplePdf = () => {
+      const body = [
+        '%PDF-1.4',
+        '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
+        '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+        '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 120]/Contents 4 0 R'
+          + '/Resources<</Font<</F1 5 0 R>>>>>>endobj',
+        '4 0 obj<</Length 92>>stream',
+        'BT /F1 11 Tf 20 70 Td (SKIMS sample document) Tj 0 -20 Td (Seeded demo data) Tj ET',
+        'endstream endobj',
+        '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj',
+        'trailer<</Root 1 0 R>>',
+        '%%EOF',
+      ].join('\n');
+      return Buffer.from(body, 'utf8');
+    };
+
+    let sampleFileUrl = null;
+    let sampleFileName = null;
+    try {
+      const uploaded = await uploadToCloudinary(samplePdf(), {
+        folder: 'skims/documents',
+        resource_type: 'raw',
+        public_id: 'seed-sample-document',
+        overwrite: true,
+      });
+      sampleFileUrl = uploaded.secure_url;
+      sampleFileName = uploaded.public_id;
+      console.log('Uploaded the sample document that seeded records point at');
+    } catch (err) {
+      // Not fatal. A seed without Cloudinary is still a useful seed; it just has no downloadable file.
+      console.log(`No Cloudinary upload (${err?.message || 'not configured'}) — seeded documents will have no file attached`);
     }
 
     // Seed users
@@ -961,9 +1013,9 @@ const seed = async () => {
         title: 'SK Resolution No. 001 - Series of 2026',
         description: 'Resolution adopting the Annual Barangay Youth Investment Program (ABYIP) for FY 2026.',
         category: 'resolution',
-        fileName: 'skims/documents/seed-resolution-001',
+        fileName: sampleFileName,
         originalName: 'SK-Resolution-001-2026.pdf',
-        fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-resolution-001.pdf',
+        fileUrl: sampleFileUrl,
         fileType: 'application/pdf',
         fileSize: 245678,
         municipality: munMap['BOA']._id,
@@ -976,9 +1028,9 @@ const seed = async () => {
         title: 'Annual Barangay Youth Investment Program (ABYIP) 2026',
         description: 'Approved ABYIP detailing youth programs and budget allocations for the fiscal year.',
         category: 'abyip',
-        fileName: 'skims/documents/seed-abyip-2026',
+        fileName: sampleFileName,
         originalName: 'ABYIP-Boac-2026.pdf',
-        fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-abyip-2026.pdf',
+        fileUrl: sampleFileUrl,
         fileType: 'application/pdf',
         fileSize: 512340,
         municipality: munMap['BOA']._id,
@@ -992,9 +1044,9 @@ const seed = async () => {
         title: 'SK Boac Annual Budget 2026',
         description: 'Approved annual budget document for SK Boac, fiscal year 2026.',
         category: 'annual_budget',
-        fileName: 'skims/documents/seed-budget-2026',
+        fileName: sampleFileName,
         originalName: 'SK-Boac-Annual-Budget-2026.xlsx',
-        fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-budget-2026.xlsx',
+        fileUrl: sampleFileUrl,
         fileType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         fileSize: 89012,
         municipality: munMap['BOA']._id,
@@ -1006,9 +1058,9 @@ const seed = async () => {
         title: 'Liquidation Report — Health Campaign',
         description: 'Complete liquidation report with receipts for the Kabataan Malusog Health Campaign.',
         category: 'liquidation_report',
-        fileName: 'skims/documents/seed-liq-health',
+        fileName: sampleFileName,
         originalName: 'Liquidation-Health-Campaign.pdf',
-        fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-liq-health.pdf',
+        fileUrl: sampleFileUrl,
         fileType: 'application/pdf',
         fileSize: 334455,
         municipality: munMap['BOA']._id,
@@ -1021,9 +1073,9 @@ const seed = async () => {
         title: 'Q1 2026 DILG Compliance Report',
         description: 'First-quarter compliance report submitted to DILG.',
         category: 'compliance_report',
-        fileName: 'skims/documents/seed-compliance-q1',
+        fileName: sampleFileName,
         originalName: 'DILG-Compliance-Q1-2026.pdf',
-        fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-compliance-q1.pdf',
+        fileUrl: sampleFileUrl,
         fileType: 'application/pdf',
         fileSize: 156789,
         municipality: munMap['BOA']._id,
@@ -1038,9 +1090,9 @@ const seed = async () => {
         title: 'Barangay Assembly Minutes — January 2026',
         description: 'Minutes of the SK Boac barangay assembly held January 2026.',
         category: 'barangay_assembly_minutes',
-        fileName: 'skims/documents/seed-minutes-jan',
+        fileName: sampleFileName,
         originalName: 'SK-Minutes-January-2026.docx',
-        fileUrl: 'https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-minutes-jan.docx',
+        fileUrl: sampleFileUrl,
         fileType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         fileSize: 45678,
         municipality: munMap['STC']._id,
@@ -1078,9 +1130,9 @@ const seed = async () => {
           title: `${d.title} — ${mun.name}`,
           description: d.description,
           category: d.category,
-          fileName: `skims/documents/seed-${slug}`,
+          fileName: sampleFileName,
           originalName: `${slug}.${d.ext}`,
-          fileUrl: `https://res.cloudinary.com/demo/raw/upload/skims/documents/seed-${slug}.${d.ext}`,
+          fileUrl: sampleFileUrl,
           fileType: d.type,
           fileSize: d.size,
           municipality: mun._id,
