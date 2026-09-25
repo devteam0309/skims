@@ -138,6 +138,41 @@ describe('POST /api/youth/import/preview', () => {
   });
 });
 
+describe('GET /api/reports/template/youth-roster', () => {
+  /*
+   * The template and the parser have to agree, or the file we hand out is the file we reject. This
+   * round-trips the generated workbook straight back through the import — the only assertion that
+   * actually proves the two sides match.
+   */
+  it('produces a workbook the importer reads with no errors', async () => {
+    const { token } = await createUser({ role: 'sk_chairperson' });
+    // Collected as raw bytes: superagent parses an unrecognised body into an object, which is not
+    // something a spreadsheet can be reconstructed from.
+    const res = await request(app)
+      .get('/api/reports/template/youth-roster')
+      .set(authHeader(token))
+      .buffer()
+      .parse((response, cb) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBeGreaterThan(1000);
+
+    const preview = await request(app)
+      .post('/api/youth/import/preview')
+      .set(authHeader(token))
+      .attach('file', res.body, { filename: 'template.xlsx', contentType: XLSX_MIME });
+
+    expect(preview.status).toBe(200);
+    // Exactly the one example row: the blank rows are skipped, and the instructions live on a second
+    // worksheet so they are not read as data.
+    expect(preview.body.data.totals).toMatchObject({ rows: 1, valid: 1, invalid: 0 });
+    expect(preview.body.data.recognisedColumns).toContain('Birth Date');
+  });
+});
+
 describe('POST /api/youth/import', () => {
   it('imports only the valid rows, and says what it skipped', async () => {
     const { token, municipalityId } = await createUser({ role: 'sk_chairperson' });

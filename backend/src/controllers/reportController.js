@@ -209,7 +209,13 @@ exports.generateYouthReport = asyncHandler(async (req, res) => {
   successResponse(res, 200, 'Youth report', { members, total: members.length, genderBreakdown, educationBreakdown });
 });
 
-const TEMPLATE_NAMES = ['abyip', 'cbydp', 'sk-accomplishment', 'coa-liquidation'];
+/*
+ * `youth-roster` is the import counterpart of the four report templates: a sheet whose headers are
+ * exactly the ones POST /api/youth/import recognises. The most likely reason an import is rejected is
+ * a header row the parser cannot read, and handing over a correctly shaped file removes that failure
+ * rather than explaining it afterwards.
+ */
+const TEMPLATE_NAMES = ['abyip', 'cbydp', 'sk-accomplishment', 'coa-liquidation', 'youth-roster'];
 
 const styleHeader = (row) => {
   row.eachCell((cell) => {
@@ -399,6 +405,81 @@ exports.generateTemplate = asyncHandler(async (req, res) => {
       { width: 5 }, { width: 30 }, { width: 14 }, { width: 20 },
       { width: 14 }, { width: 16 }, { width: 30 },
     ];
+
+  } else if (name === 'youth-roster') {
+    const sheet = workbook.addWorksheet('Youth Roster');
+
+    /*
+     * Row 1 IS the header row — no merged title above it.
+     *
+     * The parser looks for the headers within the first ten rows, so a decorative banner would not
+     * break it, but a template whose first row is the header is also a template a user can paste an
+     * existing roster straight into.
+     */
+    const headerRow = sheet.addRow([
+      'First Name', 'Last Name', 'Birth Date', 'Gender', 'Email',
+      'Contact Number', 'Address', 'Educational Attainment', 'Occupation', 'Registered Voter',
+    ]);
+    styleHeader(headerRow);
+
+    sheet.columns = [
+      { key: 'firstName', width: 18 },
+      { key: 'lastName', width: 18 },
+      { key: 'birthDate', width: 14 },
+      { key: 'gender', width: 14 },
+      { key: 'email', width: 26 },
+      { key: 'contactNumber', width: 18 },
+      { key: 'address', width: 28 },
+      { key: 'education', width: 24 },
+      { key: 'occupation', width: 18 },
+      { key: 'voter', width: 16 },
+    ];
+
+    /*
+     * One example row, marked as such and removable.
+     *
+     * A blank template leaves the date format to guesswork, and a mis-typed date silently shifts
+     * someone's SK eligibility — so the expected shape is shown rather than described.
+     */
+    const example = sheet.addRow([
+      'Juan', 'dela Cruz', '2006-04-05', 'Male', 'juan.delacruz@example.com',
+      '09171234567', 'Purok 1', 'High School', 'Student', 'Yes',
+    ]);
+    example.eachCell((cell) => {
+      cell.font = { italic: true, color: { argb: 'FF888888' } };
+    });
+    // Text, not a date cell: the point is to show the format that will be read back.
+    example.getCell(3).numFmt = '@';
+
+    for (let i = 0; i < 30; i += 1) {
+      const row = sheet.addRow(['', '', '', '', '', '', '', '', '', '']);
+      row.getCell(3).numFmt = '@';
+    }
+
+    /*
+     * The instructions go on a SECOND worksheet, not below the data.
+     *
+     * The importer reads the first sheet and treats any row with content as a row of data, so notes
+     * underneath the table would come back as seven invalid rows in the preview of an untouched
+     * template — the file's own help text reported as errors in the user's roster.
+     */
+    const notes = workbook.addWorksheet('How to fill this in');
+    notes.columns = [{ width: 110 }];
+    const notesTitle = notes.addRow(['HOW TO FILL IN THE YOUTH ROSTER']);
+    notesTitle.font = { bold: true, size: 12 };
+    [
+      '',
+      'First Name, Last Name, Birth Date and Gender are required. Everything else is optional.',
+      'Birth Date: use YYYY-MM-DD (for example 2006-04-05). Members must be aged 15 to 30.',
+      'Gender is recorded exactly as typed — write what the member tells you, not a fixed option.',
+      'Contact Number: 09XXXXXXXXX or +639XXXXXXXXX.',
+      'Registered Voter: Yes or No.',
+      'Educational Attainment is free text; typed values are grouped with the existing ones.',
+      '',
+      'Delete the grey example row on the first sheet before importing.',
+      'Municipality and barangay come from your account, not from this file — there is no column for them.',
+      'The import shows you every row and what will happen to it before anything is saved.',
+    ].forEach((line) => notes.addRow([line]));
 
   } else if (name === 'coa-liquidation') {
     const sheet = workbook.addWorksheet('Liquidation Report');

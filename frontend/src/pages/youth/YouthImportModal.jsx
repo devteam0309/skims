@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, Copy, X } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, Copy, X, Download } from 'lucide-react';
 import Modal from '../../components/shared/Modal';
-import { youthService } from '../../services/documentService';
+import { youthService, reportService } from '../../services/documentService';
 import { toast } from '../../components/ui/toaster';
 import { confirm } from '../../utils/confirm';
 
@@ -30,6 +30,31 @@ const STATUS_LABELS = { valid: 'Will import', invalid: 'Has errors', duplicate: 
 export default function YouthImportModal({ isOpen, onClose, onImported, barangayName }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
+
+  const [downloading, setDownloading] = useState(false);
+
+  const downloadTemplate = async () => {
+    setDownloading(true);
+    try {
+      const res = await reportService.downloadTemplate('youth-roster');
+      // Same shape as the reports page: an object URL and a programmatic click. The API is
+      // authenticated, so a plain <a href> to the endpoint would 401.
+      const url = URL.createObjectURL(new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'skims-template-youth-roster.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (err) {
+      toast.error(err.message || 'Could not download the template');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const reset = () => {
     setFile(null);
@@ -148,6 +173,20 @@ export default function YouthImportModal({ isOpen, onClose, onImported, barangay
               ? ` Every member is filed under Barangay ${barangayName}, from your account.`
               : ''}
           </p>
+          {/*
+            * A correctly shaped file to start from. The likeliest reason an import is refused is a
+            * header row the parser cannot read, and this removes that failure instead of explaining
+            * it afterwards. Uses the same template endpoint as the four report forms.
+            */}
+          <button
+            type="button"
+            onClick={downloadTemplate}
+            disabled={downloading}
+            className="mt-2 flex items-center gap-1.5 text-sm font-medium text-navy-700 hover:underline disabled:opacity-60 dark:text-navy-300"
+          >
+            <Download size={14} aria-hidden="true" />
+            {downloading ? 'Preparing…' : 'Download the blank template'}
+          </button>
         </div>
 
         <label
