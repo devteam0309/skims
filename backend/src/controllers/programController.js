@@ -10,6 +10,8 @@ const { successResponse, errorResponse, paginatedResponse, parsePagination } = r
 const { escapeRegex } = require('../utils/regex');
 const { pickCreatable, pickWritable, toMutation } = require('../utils/writeFields');
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
+const { applyReadScope, writeScopeViolation, barangayScopeOf, idOf } = require('../utils/scope');
+const { checkBarangay, barangayErrorMessage } = require('../utils/barangay');
 
 const MAX_LIMIT = 100;
 
@@ -21,7 +23,6 @@ exports.getPrograms = asyncHandler(async (req, res) => {
   if (status) filter.status = status;
   if (approvalStatus) filter.approvalStatus = approvalStatus;
   if (category) filter.category = normalizeCategory(category);
-  if (barangay) filter.barangay = barangay;
   /*
    * A substring match, as on every other list page. This was `$text`, which matches only whole
    * indexed words: searching "Lead" or "Youth Lead" returned nothing while "Leadership" worked,
@@ -38,12 +39,13 @@ exports.getPrograms = asyncHandler(async (req, res) => {
     if (endDate) filter.startDate.$lte = new Date(endDate);
   }
 
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user?.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    filter.municipality = munId || { $in: [] };
-  } else if (municipality) {
-    filter.municipality = municipality;
-  }
+  /*
+   * Municipality and barangay are both resolved from the account. A chairperson bound to Barangay A
+   * gets Barangay A plus the municipality-wide programmes that target no single barangay, and a
+   * `?barangay=` pointing anywhere else is discarded rather than obeyed — see utils/scope.js.
+   */
+  if (CROSS_MUNICIPALITY_READ.includes(req.user?.role) && municipality) filter.municipality = municipality;
+  applyReadScope(filter, req.user, { requestedBarangay: barangay });
 
   const { safePage, safeLimit, skip } = parsePagination(req.query, { maxLimit: MAX_LIMIT });
   const [programs, total] = await Promise.all([
@@ -70,10 +72,19 @@ exports.getProgram = asyncHandler(async (req, res) => {
 
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
 
+  /*
+   * Re-asserted per record, because the list hiding a programme is not the same as the API refusing
+   * it: `userController.getUser` scoped its list correctly and returned a foreign record by id.
+   */
   if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    const programMunId = (program.municipality?._id || program.municipality)?.toString();
-    if (programMunId !== userMunId) return errorResponse(res, 403, 'Not authorized to view this program');
+    if (idOf(program.municipality) !== idOf(req.user.municipality)) {
+      return errorResponse(res, 403, 'Not authorized to view this program');
+    }
+    const ownBarangay = barangayScopeOf(req.user);
+    const programBarangay = idOf(program.barangay);
+    if (ownBarangay && programBarangay && programBarangay !== ownBarangay) {
+      return errorResponse(res, 403, 'Not authorized to view this program');
+    }
   }
 
   successResponse(res, 200, 'Program', program);
@@ -105,6 +116,21 @@ exports.createProgram = asyncHandler(async (req, res) => {
     return errorResponse(res, 400, 'A municipality is required to create a program');
   }
 
+  /*
+   * Target barangay. A barangay-bound officer's programme is filed against their own barangay
+   * whatever the payload says; an admin tier may target one, and it is checked against the
+   * programme's municipality first — Mongoose only validates that a ref is a well-formed
+   * ObjectId, never that it belongs to the right parent.
+   *
+   * Overwritten rather than refused, matching how `municipality` is handled directly above and the
+   * suites that pin it. Expenses refuse instead; that difference is pre-existing, and each module's
+   * own contract is left as its callers already expect it.
+   */
+  const ownBarangay = barangayScopeOf(req.user);
+  if (ownBarangay) programData.barangay = ownBarangay;
+  const brgyCheck = await checkBarangay(programData.barangay, idOf(programData.municipality));
+  if (brgyCheck !== 'ok') return errorResponse(res, 400, barangayErrorMessage(brgyCheck));
+
   if (programData.startDate && programData.endDate && new Date(programData.endDate) <= new Date(programData.startDate)) {
     return errorResponse(res, 400, 'End date must be after start date');
   }
@@ -125,10 +151,7 @@ exports.createProgram = asyncHandler(async (req, res) => {
 exports.updateProgram = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (program.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this program');
-  }
+  if (writeScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to update this program');
 
   const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'objectives', 'category', 'status', 'barangay', 'budget', 'budgetRef', 'startDate', 'endDate', 'targetParticipants', 'actualParticipants', 'assignedOfficers', 'milestones', 'accomplishmentReport', 'isPublic', 'tags', 'location', 'attachments'];
   /*
@@ -140,6 +163,22 @@ exports.updateProgram = asyncHandler(async (req, res) => {
   const { set: updates, unset: cleared } = pickWritable(Program, req.body, ALLOWED_UPDATE_FIELDS);
 
   if (updates.category) updates.category = normalizeCategory(updates.category);
+
+  /*
+   * Re-targeting a programme at another barangay would move it out of the editor's own scope — it
+   * would vanish from their list the moment they saved. A bound officer's edit is pinned to their
+   * barangay; an admin tier may change it, checked against the municipality as on create.
+   */
+  const editorBarangay = barangayScopeOf(req.user);
+  if (editorBarangay && (Object.prototype.hasOwnProperty.call(updates, 'barangay') || cleared.includes('barangay'))) {
+    const keep = cleared.indexOf('barangay');
+    if (keep !== -1) cleared.splice(keep, 1);
+    updates.barangay = editorBarangay;
+  }
+  if (updates.barangay) {
+    const brgyCheck = await checkBarangay(updates.barangay, idOf(program.municipality));
+    if (brgyCheck !== 'ok') return errorResponse(res, 400, barangayErrorMessage(brgyCheck));
+  }
 
   const start = updates.startDate || program.startDate;
   const end = updates.endDate || program.endDate;
@@ -166,12 +205,8 @@ exports.updateProgram = asyncHandler(async (req, res) => {
  * ------------------------------------------------------------------------------------------- */
 
 // Shared ownership guard. Returns an error message, or null when the caller may act.
-const denyIfForeign = (req, program, verb) => {
-  if (CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) return null;
-  const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-  if (program.municipality?.toString() !== userMunId) return `Not authorized to ${verb} this program`;
-  return null;
-};
+const denyIfForeign = (req, program, verb) =>
+  (writeScopeViolation(program, req.user) ? `Not authorized to ${verb} this program` : null);
 
 exports.submitProgram = asyncHandler(async (req, res) => {
   const program = await Program.findOne({ _id: req.params.id, deletedAt: null });
@@ -494,10 +529,7 @@ exports.updateProgramStatus = asyncHandler(async (req, res) => {
 
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (program.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this program');
-  }
+  if (writeScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to update this program');
   const updated = await Program.findByIdAndUpdate(req.params.id, { status }, { new: true });
 
   // Notify the program creator and assigned officers of the status change
@@ -520,10 +552,7 @@ exports.updateProgramStatus = asyncHandler(async (req, res) => {
 exports.addMilestone = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (program.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this program');
-  }
+  if (writeScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to update this program');
   const ALLOWED_MILESTONE_FIELDS = ['title', 'description', 'targetDate', 'completedAt', 'status', 'completionRate'];
   const milestoneData = Object.fromEntries(Object.entries(req.body).filter(([k]) => ALLOWED_MILESTONE_FIELDS.includes(k)));
   program.milestones.push(milestoneData);
@@ -534,10 +563,7 @@ exports.addMilestone = asyncHandler(async (req, res) => {
 exports.updateMilestone = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (program.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this program');
-  }
+  if (writeScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to update this program');
   const milestone = program.milestones.id(req.params.milestoneId);
   if (!milestone) return errorResponse(res, 404, 'Milestone not found');
   const ALLOWED_MILESTONE_FIELDS = ['title', 'description', 'targetDate', 'completedAt', 'status', 'completionRate'];
@@ -549,12 +575,12 @@ exports.updateMilestone = asyncHandler(async (req, res) => {
 
 exports.getProgramStats = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    filter.municipality = munId || { $in: [] };
-  } else if (req.query.municipality) {
+  // Scoped exactly like the list it sits above, or the headline counts describe a different set of
+  // programmes than the rows underneath them.
+  if (CROSS_MUNICIPALITY_READ.includes(req.user.role) && req.query.municipality) {
     filter.municipality = req.query.municipality;
   }
+  applyReadScope(filter, req.user, { requestedBarangay: req.query.barangay });
 
   const stats = await Program.aggregate([
     { $match: filter },

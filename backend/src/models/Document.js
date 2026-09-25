@@ -14,7 +14,6 @@ const DOCUMENT_CATEGORIES = [
   'minutes',
   'ordinance',
   'certificate',
-  'other',
 ];
 
 const documentSchema = new mongoose.Schema(
@@ -38,6 +37,13 @@ const documentSchema = new mongoose.Schema(
     isPublic: { type: Boolean, default: false },
     isArchived: { type: Boolean, default: false },
     archivedAt: Date,
+    /*
+     * Recycle bin. `deletedAt` was already a soft delete — the record survived, but the Cloudinary
+     * asset was destroyed in the same breath, so there was nothing to restore it to and no way to
+     * ask for it back. Deleting now keeps the file; destroying it is the separate, explicit act of
+     * permanent deletion.
+     */
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     archivedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     version: { type: Number, default: 1 },
     previousVersions: [

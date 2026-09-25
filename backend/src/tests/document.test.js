@@ -3,6 +3,8 @@ const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
 const { createUser, authHeader } = require('./helpers');
 const Document = require('../models/Document');
+// Exported off the model, as in routes/documents.js.
+const { DOCUMENT_CATEGORIES } = Document;
 
 beforeAll(connect);
 afterAll(disconnect);
@@ -196,5 +198,38 @@ describe('GET /api/documents/stats', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.data.byCategory)).toBe(true);
     expect(Array.isArray(res.body.data.recent)).toBe(true);
+  });
+});
+
+describe('document categories', () => {
+  /*
+   * The suggested list, not an enum — `category` is free text on the schema. "Other" was dropped
+   * because the control offering it is a type-or-pick combobox: a filer who means "Barangay
+   * Assembly" should record that, not a placeholder that erases it.
+   */
+  it('suggests no "other" category', () => {
+    expect(DOCUMENT_CATEGORIES).not.toContain('other');
+  });
+
+  it('accepts a category the list does not name', async () => {
+    const { user, municipalityId } = await createUser({ role: 'municipal_admin' });
+    const doc = await createDoc(municipalityId, user._id, { category: 'barangay_assembly_minutes' });
+    expect(doc.category).toBe('barangay_assembly_minutes');
+  });
+
+  /*
+   * Removing the suggestion must not orphan what is already filed under it. Documents stored as
+   * `other` predate the change, and the filter is free text on the same canonical form, so typing
+   * "Other" still finds them.
+   */
+  it('still filters documents already stored as "other"', async () => {
+    const { token, user, municipalityId } = await createUser({ role: 'municipal_admin' });
+    await createDoc(municipalityId, user._id, { category: 'other' });
+    await createDoc(municipalityId, user._id, { category: 'minutes' });
+
+    const res = await request(app).get('/api/documents?category=Other').set(authHeader(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].category).toBe('other');
   });
 });

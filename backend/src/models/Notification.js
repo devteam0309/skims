@@ -26,6 +26,12 @@ const notificationSchema = new mongoose.Schema(
     isRead: { type: Boolean, default: false },
     readAt: Date,
     data: { type: mongoose.Schema.Types.Mixed },
+    /*
+     * urgent > high > medium > low. The values are unchanged — 'medium' is this project's word for
+     * a normal notification and is used by ~20 call sites — but they sort alphabetically, which puts
+     * "urgent" last and "high" second. Ordering is therefore done on PRIORITY_RANK below rather than
+     * on the string, so the list can be sorted by urgency in the database instead of per page.
+     */
     priority: { type: String, enum: ['low', 'medium', 'high', 'urgent'], default: 'medium' },
     expiresAt: Date,
   },
@@ -34,6 +40,8 @@ const notificationSchema = new mongoose.Schema(
 
 notificationSchema.index({ recipient: 1, isRead: 1 });
 notificationSchema.index({ createdAt: -1 });
+// Serves the default listing: highest priority first, newest first within a priority.
+notificationSchema.index({ recipient: 1, priority: 1, createdAt: -1 });
 notificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Auto-set 90-day expiry so the TTL index actually fires
@@ -51,4 +59,11 @@ notificationSchema.statics.createWithExpiry = function (docs) {
   return this.insertMany(normalized.map((d) => ({ ...d, expiresAt: d.expiresAt || expiry })));
 };
 
+/**
+ * Sort weight per priority, highest first. Exported so the controller and any future consumer
+ * cannot disagree about what "most urgent" means.
+ */
+const PRIORITY_RANK = { urgent: 4, high: 3, medium: 2, low: 1 };
+
 module.exports = mongoose.model('Notification', notificationSchema);
+module.exports.PRIORITY_RANK = PRIORITY_RANK;

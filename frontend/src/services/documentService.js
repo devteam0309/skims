@@ -12,7 +12,12 @@ export const documentService = {
   trackDownload: (id) => api.post(`/documents/${id}/download`),
   serve: (id) => api.get(`/documents/${id}/serve`, { responseType: 'blob' }),
   serveVersion: (id, version) => api.get(`/documents/${id}/versions/${version}/serve`, { responseType: 'blob' }),
+  // Moves the document to the recycle bin; the stored file is kept so a restore is real.
   delete: (id) => api.delete(`/documents/${id}`),
+  getDeleted: (params) => api.get('/documents/recycle-bin', { params }),
+  restore: (id) => api.patch(`/documents/${id}/restore`),
+  // Irreversible, and the only call that destroys the stored file.
+  permanentDelete: (id) => api.delete(`/documents/${id}/permanent`),
   getStats: (params) => api.get('/documents/stats', { params }),
 };
 
@@ -76,6 +81,20 @@ export const youthService = {
   // The signed-in youth's own record. /youth itself is closed to the role.
   getMine: () => api.get('/youth/me'),
   updateMine: (data) => api.put('/youth/me', data),
+  /*
+   * Excel import, in two steps. The FILE is sent both times: the server re-parses on confirmation
+   * rather than trusting the preview back, so there is no row list to keep in the client.
+   */
+  importPreview: (file) => {
+    const body = new FormData();
+    body.append('file', file);
+    return api.post('/youth/import/preview', body, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  importConfirm: (file) => {
+    const body = new FormData();
+    body.append('file', file);
+    return api.post('/youth/import', body, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
 };
 
 export const userService = {
@@ -87,4 +106,10 @@ export const userService = {
   toggleStatus: (id) => api.put(`/users/${id}/toggle-status`),
   delete: (id) => api.delete(`/users/${id}`),
   getPending: () => api.get('/users/pending'),
+  // Email changes are decided here; a user's address never changes any other way.
+  getPendingEmailChanges: () => api.get('/users/email-changes'),
+  approveEmailChange: (id) => api.put(`/users/${id}/email-change/approve`),
+  rejectEmailChange: (id, reason) => api.put(`/users/${id}/email-change/reject`, { reason }),
+  // Barangay assignment: what makes barangay-level scope usable for an SK account.
+  assignBarangay: (id, barangay) => api.put(`/users/${id}/barangay`, { barangay }),
 };

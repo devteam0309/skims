@@ -10,15 +10,22 @@ const Expense = require('../models/Expense');
 const Liquidation = require('../models/Liquidation');
 const YouthMember = require('../models/YouthMember');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
-const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 
 const REPORT_LIMIT = 1000;
+const { applyReadScope } = require('../utils/scope');
 
-const municipalityScope = (req, filter) => {
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    filter.municipality = munId || { $in: [] };
-  }
+/**
+ * Scope a report filter, mutating it.
+ *
+ * `barangay: false` for budgets, which are drawn per municipality and fiscal year and carry no
+ * barangay of their own. Everything else — programmes, expenses, youth members — narrows on it.
+ *
+ * A report is the output most likely to be printed, attached to a submission, or read months later
+ * by someone who was not there when it was generated, so a figure covering more than the person who
+ * produced it is the worst place for the scope to be wrong.
+ */
+const reportScope = (req, filter, { barangay = true } = {}) => {
+  applyReadScope(filter, req.user, { barangay, requestedBarangay: req.query.barangay });
 };
 
 exports.generateProgramReport = asyncHandler(async (req, res) => {
@@ -33,7 +40,7 @@ exports.generateProgramReport = asyncHandler(async (req, res) => {
     if (startDate) filter.startDate.$gte = new Date(startDate);
     if (endDate) filter.startDate.$lte = new Date(endDate);
   }
-  municipalityScope(req, filter);
+  reportScope(req, filter);
 
   const programs = await Program.find(filter)
     .populate('municipality', 'name')
@@ -110,18 +117,29 @@ exports.generateProgramReport = asyncHandler(async (req, res) => {
 
 exports.generateFinancialReport = asyncHandler(async (req, res) => {
   const { municipalityId, fiscalYear, format = 'json' } = req.query;
+  /*
+   * Expenses carry a barangay; budgets and liquidations do not, so the financial report needs both
+   * filters. The consequence is worth stating in the report itself rather than leaving a reader to
+   * infer it: for a barangay-bound officer the expense lines are theirs while the budget they are
+   * drawn against is the municipality's — which is the actual shape of SK funding, not a rounding
+   * error. `scope` below carries that so the PDF and the workbook can say so.
+   */
   const filter = { deletedAt: null };
   if (municipalityId) filter.municipality = municipalityId;
-  municipalityScope(req, filter);
+  reportScope(req, filter);
+
+  const municipalityOnly = { deletedAt: null };
+  if (municipalityId) municipalityOnly.municipality = municipalityId;
+  reportScope(req, municipalityOnly, { barangay: false });
 
   const yr = fiscalYear ? parseInt(fiscalYear) : null;
   const yearStart = yr ? new Date(yr, 0, 1) : null;
   const yearEnd = yr ? new Date(yr, 11, 31, 23, 59, 59) : null;
 
   const [budgets, expenses, liquidations] = await Promise.all([
-    Budget.find({ ...filter, fiscalYear: yr || { $exists: true } }).populate('municipality', 'name').limit(REPORT_LIMIT),
-    Expense.find({ ...filter, ...(yearStart ? { transactionDate: { $gte: yearStart, $lte: yearEnd } } : {}) }).populate('program', 'title').populate('municipality', 'name').limit(REPORT_LIMIT),
-    Liquidation.find({ ...filter, ...(yearStart ? { createdAt: { $gte: yearStart, $lte: yearEnd } } : {}) }).populate('program', 'title').populate('municipality', 'name').limit(REPORT_LIMIT),
+    Budget.find({ ...municipalityOnly, fiscalYear: yr || { $exists: true } }).populate('municipality', 'name').limit(REPORT_LIMIT),
+    Expense.find({ ...filter, ...(yearStart ? { transactionDate: { $gte: yearStart, $lte: yearEnd } } : {}) }).populate('program', 'title').populate('municipality', 'name').populate('barangay', 'name').limit(REPORT_LIMIT),
+    Liquidation.find({ ...municipalityOnly, ...(yearStart ? { createdAt: { $gte: yearStart, $lte: yearEnd } } : {}) }).populate('program', 'title').populate('municipality', 'name').limit(REPORT_LIMIT),
   ]);
 
   const summary = {
@@ -173,7 +191,7 @@ exports.generateYouthReport = asyncHandler(async (req, res) => {
     const yr = parseInt(fiscalYear);
     filter.createdAt = { $gte: new Date(yr, 0, 1), $lte: new Date(yr, 11, 31, 23, 59, 59) };
   }
-  municipalityScope(req, filter);
+  reportScope(req, filter);
 
   const members = await YouthMember.find(filter)
     .populate('municipality', 'name')
@@ -209,7 +227,13 @@ exports.generateYouthReport = asyncHandler(async (req, res) => {
   successResponse(res, 200, 'Youth report', { members, total: members.length, genderBreakdown, educationBreakdown });
 });
 
-const TEMPLATE_NAMES = ['abyip', 'cbydp', 'sk-accomplishment', 'coa-liquidation'];
+/*
+ * `youth-roster` is the import counterpart of the four report templates: a sheet whose headers are
+ * exactly the ones POST /api/youth/import recognises. The most likely reason an import is rejected is
+ * a header row the parser cannot read, and handing over a correctly shaped file removes that failure
+ * rather than explaining it afterwards.
+ */
+const TEMPLATE_NAMES = ['abyip', 'cbydp', 'sk-accomplishment', 'coa-liquidation', 'youth-roster'];
 
 const styleHeader = (row) => {
   row.eachCell((cell) => {
@@ -399,6 +423,81 @@ exports.generateTemplate = asyncHandler(async (req, res) => {
       { width: 5 }, { width: 30 }, { width: 14 }, { width: 20 },
       { width: 14 }, { width: 16 }, { width: 30 },
     ];
+
+  } else if (name === 'youth-roster') {
+    const sheet = workbook.addWorksheet('Youth Roster');
+
+    /*
+     * Row 1 IS the header row — no merged title above it.
+     *
+     * The parser looks for the headers within the first ten rows, so a decorative banner would not
+     * break it, but a template whose first row is the header is also a template a user can paste an
+     * existing roster straight into.
+     */
+    const headerRow = sheet.addRow([
+      'First Name', 'Last Name', 'Birth Date', 'Gender', 'Email',
+      'Contact Number', 'Address', 'Educational Attainment', 'Occupation', 'Registered Voter',
+    ]);
+    styleHeader(headerRow);
+
+    sheet.columns = [
+      { key: 'firstName', width: 18 },
+      { key: 'lastName', width: 18 },
+      { key: 'birthDate', width: 14 },
+      { key: 'gender', width: 14 },
+      { key: 'email', width: 26 },
+      { key: 'contactNumber', width: 18 },
+      { key: 'address', width: 28 },
+      { key: 'education', width: 24 },
+      { key: 'occupation', width: 18 },
+      { key: 'voter', width: 16 },
+    ];
+
+    /*
+     * One example row, marked as such and removable.
+     *
+     * A blank template leaves the date format to guesswork, and a mis-typed date silently shifts
+     * someone's SK eligibility — so the expected shape is shown rather than described.
+     */
+    const example = sheet.addRow([
+      'Juan', 'dela Cruz', '2006-04-05', 'Male', 'juan.delacruz@example.com',
+      '09171234567', 'Purok 1', 'High School', 'Student', 'Yes',
+    ]);
+    example.eachCell((cell) => {
+      cell.font = { italic: true, color: { argb: 'FF888888' } };
+    });
+    // Text, not a date cell: the point is to show the format that will be read back.
+    example.getCell(3).numFmt = '@';
+
+    for (let i = 0; i < 30; i += 1) {
+      const row = sheet.addRow(['', '', '', '', '', '', '', '', '', '']);
+      row.getCell(3).numFmt = '@';
+    }
+
+    /*
+     * The instructions go on a SECOND worksheet, not below the data.
+     *
+     * The importer reads the first sheet and treats any row with content as a row of data, so notes
+     * underneath the table would come back as seven invalid rows in the preview of an untouched
+     * template — the file's own help text reported as errors in the user's roster.
+     */
+    const notes = workbook.addWorksheet('How to fill this in');
+    notes.columns = [{ width: 110 }];
+    const notesTitle = notes.addRow(['HOW TO FILL IN THE YOUTH ROSTER']);
+    notesTitle.font = { bold: true, size: 12 };
+    [
+      '',
+      'First Name, Last Name, Birth Date and Gender are required. Everything else is optional.',
+      'Birth Date: use YYYY-MM-DD (for example 2006-04-05). Members must be aged 15 to 30.',
+      'Gender is recorded exactly as typed — write what the member tells you, not a fixed option.',
+      'Contact Number: 09XXXXXXXXX or +639XXXXXXXXX.',
+      'Registered Voter: Yes or No.',
+      'Educational Attainment is free text; typed values are grouped with the existing ones.',
+      '',
+      'Delete the grey example row on the first sheet before importing.',
+      'Municipality and barangay come from your account, not from this file — there is no column for them.',
+      'The import shows you every row and what will happen to it before anything is saved.',
+    ].forEach((line) => notes.addRow([line]));
 
   } else if (name === 'coa-liquidation') {
     const sheet = workbook.addWorksheet('Liquidation Report');

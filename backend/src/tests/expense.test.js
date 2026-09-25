@@ -105,8 +105,14 @@ describe('POST /api/expenses', () => {
 });
 
 describe('PATCH /api/expenses/:id/approve', () => {
+  /*
+   * The self-approval guard is now the SECOND line of defence, not the first: `sk_treasurer` is no
+   * longer in FINANCE_APPROVERS at all, so a treasurer is refused by role before the guard is
+   * reached. It still matters for the admin tiers, which may both create and approve — this asserts
+   * it against the role that can actually get that far.
+   */
   it('blocks self-approval with 403', async () => {
-    const { token, user, municipalityId } = await createUser({ role: 'sk_treasurer' });
+    const { token } = await createUser({ role: 'municipal_admin' });
 
     const createRes = await request(app)
       .post('/api/expenses')
@@ -120,6 +126,24 @@ describe('PATCH /api/expenses/:id/approve', () => {
       .set(authHeader(token));
     expect(approveRes.status).toBe(403);
     expect(approveRes.body.message).toMatch(/cannot approve/i);
+  });
+
+  // The role-level half of the same rule: the officer who records money cannot decide on it, even
+  // for an expense somebody else created.
+  it('refuses a treasurer approving an expense created by someone else (403)', async () => {
+    const { token: creatorToken, municipalityId } = await createUser({ role: 'municipal_admin' });
+    const { token: treasurerToken } = await createUser({ role: 'sk_treasurer', municipality: municipalityId });
+
+    const createRes = await request(app)
+      .post('/api/expenses')
+      .set(authHeader(creatorToken))
+      .send(EXPENSE_PAYLOAD());
+    const id = createRes.body.data._id;
+
+    const res = await request(app)
+      .patch(`/api/expenses/${id}/approve`)
+      .set(authHeader(treasurerToken));
+    expect(res.status).toBe(403);
   });
 
   it('approves an expense created by someone else', async () => {

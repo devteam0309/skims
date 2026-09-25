@@ -7,6 +7,7 @@ const { successResponse, errorResponse, paginatedResponse, parsePagination } = r
 const { normalizeLabel } = require('../utils/labels');
 const { escapeRegex } = require('../utils/regex');
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
+const { applyReadScope, writeScopeViolation, readScopeViolation, idOf } = require('../utils/scope');
 
 const MAX_LIMIT = 100;
 const { pickCreatable, pickWritable, toMutation } = require('../utils/writeFields');
@@ -42,10 +43,8 @@ exports.getDocuments = asyncHandler(async (req, res) => {
    * "match nothing" outright does not depend on it, and matches the rule the rest of the codebase
    * states explicitly.
    */
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user?.role)) {
-    const munId = req.user?.municipality?._id || req.user?.municipality;
-    filter.municipality = munId || { $in: [] };
-  }
+  // Municipality and barangay from the account, via the shared helper.
+  applyReadScope(filter, req.user, { requestedBarangay: req.query.barangay });
 
   const { safePage, safeLimit, skip } = parsePagination(req.query, { maxLimit: MAX_LIMIT });
   const [documents, total] = await Promise.all([
@@ -67,11 +66,10 @@ exports.getDocument = asyncHandler(async (req, res) => {
     .populate('municipality', 'name')
     .populate('uploadedBy', 'firstName lastName');
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) {
-      return errorResponse(res, 403, 'Not authorized to view this document');
-    }
+  // Re-asserted per record: a list that hides a foreign document is not the same as the API
+  // refusing one requested directly by id.
+  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role) && readScopeViolation(doc, req.user)) {
+    return errorResponse(res, 403, 'Not authorized to view this document');
   }
   successResponse(res, 200, 'Document', doc);
 });
@@ -115,10 +113,7 @@ exports.uploadDocument = asyncHandler(async (req, res) => {
 exports.updateDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to update this document');
-  }
+  if (writeScopeViolation(doc, req.user)) return errorResponse(res, 403, 'Not authorized to update this document');
 
   const allowed = ['title', 'description', 'category', 'tags', 'isPublic', 'fiscalYear'];
   if (req.body.category) req.body.category = normalizeLabel(req.body.category);
@@ -133,10 +128,7 @@ exports.updateDocument = asyncHandler(async (req, res) => {
 exports.archiveDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to archive this document');
-  }
+  if (writeScopeViolation(doc, req.user)) return errorResponse(res, 403, 'Not authorized to archive this document');
   const archived = await Document.findByIdAndUpdate(
     req.params.id,
     { isArchived: true, archivedAt: new Date(), archivedBy: req.user._id },
@@ -153,11 +145,8 @@ exports.trackDownload = asyncHandler(async (req, res) => {
   // Non-public documents require authentication and municipality membership
   if (!doc.isPublic) {
     if (!req.user) return errorResponse(res, 401, 'Authentication required to access this document');
-    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-      const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-      if (doc.municipality?.toString() !== userMunId) {
-        return errorResponse(res, 403, 'Not authorized to access this document');
-      }
+    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role) && readScopeViolation(doc, req.user)) {
+      return errorResponse(res, 403, 'Not authorized to access this document');
     }
   }
 
@@ -175,11 +164,8 @@ exports.serveFile = asyncHandler(async (req, res) => {
 
   if (!doc.isPublic) {
     if (!req.user) return errorResponse(res, 401, 'Authentication required to access this document');
-    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-      const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-      if (doc.municipality?.toString() !== userMunId) {
-        return errorResponse(res, 403, 'Not authorized to access this document');
-      }
+    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role) && readScopeViolation(doc, req.user)) {
+      return errorResponse(res, 403, 'Not authorized to access this document');
     }
   }
 
@@ -196,10 +182,7 @@ exports.serveFile = asyncHandler(async (req, res) => {
 exports.unarchiveDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to restore this document');
-  }
+  if (writeScopeViolation(doc, req.user)) return errorResponse(res, 403, 'Not authorized to restore this document');
   const restored = await Document.findByIdAndUpdate(
     req.params.id,
     { isArchived: false, archivedAt: null, archivedBy: null },
@@ -214,10 +197,7 @@ exports.replaceFile = asyncHandler(async (req, res) => {
 
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to replace this document');
-  }
+  if (writeScopeViolation(doc, req.user)) return errorResponse(res, 403, 'Not authorized to replace this document');
 
   const isImage = req.file.mimetype.startsWith('image/');
   const result = await uploadToCloudinary(req.file.buffer, {
@@ -269,11 +249,8 @@ exports.serveVersion = asyncHandler(async (req, res) => {
 
   if (!doc.isPublic) {
     if (!req.user) return errorResponse(res, 401, 'Authentication required to access this document');
-    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-      const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-      if (doc.municipality?.toString() !== userMunId) {
-        return errorResponse(res, 403, 'Not authorized to access this document');
-      }
+    if (!CROSS_MUNICIPALITY_READ.includes(req.user.role) && readScopeViolation(doc, req.user)) {
+      return errorResponse(res, 403, 'Not authorized to access this document');
     }
   }
 
@@ -291,9 +268,9 @@ exports.bulkArchiveDocuments = asyncHandler(async (req, res) => {
   if (!Array.isArray(ids) || ids.length === 0) return errorResponse(res, 400, 'No document IDs provided');
   if (ids.length > 50) return errorResponse(res, 400, 'Cannot bulk archive more than 50 documents at once');
   const filter = { _id: { $in: ids }, isArchived: false, deletedAt: null };
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    filter.municipality = req.user.municipality?._id || req.user.municipality;
-  }
+  // Scoped with the same helper as the single-record route it batches — fails closed for an
+  // account with no municipality rather than dropping the key from the filter.
+  applyReadScope(filter, req.user);
   const toArchive = await Document.find(filter).select('_id title');
   if (toArchive.length === 0) {
     return errorResponse(res, 400, 'No eligible documents found. Documents may already be archived or outside your municipality.');
@@ -317,24 +294,114 @@ exports.bulkArchiveDocuments = asyncHandler(async (req, res) => {
 exports.deleteDocument = asyncHandler(async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc || doc.deletedAt) return errorResponse(res, 404, 'Document not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if ((doc.municipality?._id || doc.municipality)?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to delete this document');
-  }
+  if (writeScopeViolation(doc, req.user)) return errorResponse(res, 403, 'Not authorized to delete this document');
   doc.deletedAt = new Date();
+  doc.deletedBy = req.user._id;
   await doc.save();
-  // Clean up file from Cloudinary
-  if (doc.fileName) {
-    const resourceType = doc.fileType?.startsWith('image/') ? 'image' : 'raw';
-    destroyQuietly(doc.fileName, { resource_type: resourceType });
+  /*
+   * The Cloudinary asset is deliberately NOT destroyed here.
+   *
+   * This used to soft-delete the record and destroy the file in the same call, which made the
+   * surviving record worthless: restoring it would have produced a document whose every download
+   * 404s. Deletion is now reversible, and the file is destroyed only by permanent deletion below.
+   */
+  await AuditLog.create({ user: req.user._id, action: 'DELETE', resource: 'document', resourceId: doc._id, details: { title: doc.title, category: doc.category, recoverable: true }, municipality: doc.municipality, ipAddress: req.ip });
+  successResponse(res, 200, 'Document moved to the recycle bin');
+});
+
+/**
+ * The recycle bin: documents with a `deletedAt`, which every other read excludes.
+ *
+ * Scoped exactly like the active list, so a deleted document is no more visible across a boundary
+ * than a live one — and it is a separate endpoint rather than a flag on `getDocuments`, so a
+ * deleted document can never appear in an ordinary listing by accident.
+ */
+exports.getDeletedDocuments = asyncHandler(async (req, res) => {
+  const filter = { deletedAt: { $ne: null } };
+  if (req.query.search) {
+    const rx = { $regex: escapeRegex(req.query.search), $options: 'i' };
+    filter.$or = [{ title: rx }, { description: rx }, { tags: rx }];
   }
-  await AuditLog.create({ user: req.user._id, action: 'DELETE', resource: 'document', resourceId: doc._id, details: { title: doc.title, category: doc.category }, municipality: req.user.municipality, ipAddress: req.ip });
-  successResponse(res, 200, 'Document deleted');
+  applyReadScope(filter, req.user);
+
+  const { safePage, safeLimit, skip } = parsePagination(req.query, { maxLimit: MAX_LIMIT });
+  const [documents, total] = await Promise.all([
+    Document.find(filter)
+      .populate('municipality', 'name code')
+      .populate('barangay', 'name')
+      .populate('uploadedBy', 'firstName lastName')
+      .populate('deletedBy', 'firstName lastName')
+      .sort({ deletedAt: -1 })
+      .skip(skip)
+      .limit(safeLimit)
+      .select('-downloadHistory'),
+    Document.countDocuments(filter),
+  ]);
+  paginatedResponse(res, documents, safePage, safeLimit, total);
+});
+
+/** Back out of the recycle bin. The file was never destroyed, so the document returns intact. */
+exports.restoreDocument = asyncHandler(async (req, res) => {
+  const doc = await Document.findById(req.params.id);
+  if (!doc) return errorResponse(res, 404, 'Document not found');
+  if (!doc.deletedAt) return errorResponse(res, 400, 'This document is not in the recycle bin');
+  if (writeScopeViolation(doc, req.user)) return errorResponse(res, 403, 'Not authorized to restore this document');
+
+  doc.deletedAt = null;
+  doc.deletedBy = undefined;
+  await doc.save();
+
+  await AuditLog.create({ user: req.user._id, action: 'RESTORE', resource: 'document', resourceId: doc._id, details: { title: doc.title, category: doc.category }, municipality: doc.municipality, ipAddress: req.ip });
+  successResponse(res, 200, 'Document restored', doc);
+});
+
+/**
+ * Permanent deletion: destroys the stored file and the record together.
+ *
+ * Only reachable for a document already in the recycle bin, so nothing can be destroyed in a single
+ * step — the two-stage path is the point. ADMINS only, and audited before the record disappears,
+ * because afterwards the audit entry is the only remaining trace that the document ever existed.
+ */
+exports.permanentlyDeleteDocument = asyncHandler(async (req, res) => {
+  const doc = await Document.findById(req.params.id);
+  if (!doc) return errorResponse(res, 404, 'Document not found');
+  if (!doc.deletedAt) {
+    return errorResponse(res, 400, 'Move the document to the recycle bin before deleting it permanently');
+  }
+  if (writeScopeViolation(doc, req.user)) return errorResponse(res, 403, 'Not authorized to delete this document');
+
+  await AuditLog.create({
+    user: req.user._id, action: 'PERMANENT_DELETE', resource: 'document', resourceId: doc._id,
+    oldValues: { title: doc.title, category: doc.category, originalName: doc.originalName, fileName: doc.fileName },
+    details: { title: doc.title, category: doc.category, irreversible: true },
+    municipality: doc.municipality, ipAddress: req.ip,
+  });
+
+  // Now the file goes, along with every stored version of it.
+  const destroy = (fileName, fileType) => {
+    if (!fileName) return;
+    destroyQuietly(fileName, { resource_type: fileType?.startsWith('image/') ? 'image' : 'raw' });
+  };
+  destroy(doc.fileName, doc.fileType);
+  // Superseded files are stored separately and would otherwise be orphaned in Cloudinary for ever.
+  (doc.previousVersions || []).forEach((v) => destroy(v.fileName, doc.fileType));
+
+  await Document.deleteOne({ _id: doc._id });
+  successResponse(res, 200, 'Document permanently deleted');
 });
 
 exports.getDocumentStats = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
-  if (req.query.municipality) filter.municipality = req.query.municipality;
+  /*
+   * This had no role scoping at all: it took `?municipality` when given and otherwise counted the
+   * whole province, so any authenticated account could read every municipality's category counts
+   * and the five most recent documents anywhere — with uploader names attached. The list handler
+   * twenty lines above scopes correctly; this one was simply never given the same treatment.
+   */
+  if (CROSS_MUNICIPALITY_READ.includes(req.user?.role) && req.query.municipality) {
+    filter.municipality = req.query.municipality;
+  }
+  applyReadScope(filter, req.user, { requestedBarangay: req.query.barangay });
 
   const byCategory = await Document.aggregate([
     { $match: filter },

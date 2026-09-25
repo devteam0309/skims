@@ -44,6 +44,20 @@ const liquidationSchema = new mongoose.Schema(
         uploadedAt: { type: Date, default: Date.now },
       },
     ],
+    /*
+     * Supporting documents that already live in Document Management, linked rather than re-uploaded.
+     *
+     * The embedded array above holds a filename and a URL and nothing else: it cannot say which
+     * registered document an attachment IS, so a reviewer cannot tell whether the receipt attached
+     * here is the same one filed against the expense. A ref carries the document's own category,
+     * municipality, version history and access rules with it, and one document can back several
+     * reports without being uploaded twice.
+     *
+     * This completes Expense → Supporting Document → Liquidation: the expenses are already linked
+     * on this model, and their paperwork now has a place to be named. The embedded array is
+     * untouched — every existing liquidation stores its attachments there.
+     */
+    supportingDocuments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Document' }],
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true }

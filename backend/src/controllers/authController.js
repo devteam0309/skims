@@ -320,6 +320,83 @@ exports.updateProfile = asyncHandler(async (req, res) => {
   successResponse(res, 200, 'Profile updated', user);
 });
 
+/**
+ * Request a change of email address. Nothing on the account changes yet.
+ *
+ * `updateProfile` above deliberately does not accept `email` — it never did, so there is no existing
+ * behaviour to preserve here, only a gap: a user who moved address had to ask an administrator to
+ * edit the record directly. This gives them a route that an administrator then reviews.
+ *
+ * The requested address is checked for collisions the same way registration is, and normalised the
+ * same way, because a Gmail address with dots stored unnormalised is an address its owner can never
+ * log in with — this project has already shipped that bug once.
+ */
+exports.requestEmailChange = asyncHandler(async (req, res) => {
+  const requested = (req.body.email || '').trim().toLowerCase();
+  if (!requested) return errorResponse(res, 400, 'A new email address is required');
+
+  const user = await User.findById(req.user._id).select('+password');
+  if (!user) return errorResponse(res, 404, 'User not found');
+
+  /*
+   * The current password is required. Without it, a borrowed session is enough to start a takeover
+   * of the account, and the approving administrator has no way to tell that from a genuine request.
+   */
+  const { currentPassword } = req.body;
+  if (!currentPassword) return errorResponse(res, 400, 'Your current password is required to change your email');
+  if (!(await user.matchPassword(currentPassword))) return errorResponse(res, 401, 'Current password is incorrect');
+
+  if (requested === user.email) return errorResponse(res, 400, 'That is already your email address');
+
+  // Taken by a live account, or already claimed by somebody else's outstanding request.
+  const clash = await User.findOne({
+    _id: { $ne: user._id },
+    $or: [{ email: requested }, { pendingEmail: requested }],
+  }).select('_id');
+  if (clash) return errorResponse(res, 409, 'That email address is not available');
+
+  user.pendingEmail = requested;
+  user.pendingEmailRequestedAt = new Date();
+  user.pendingEmailRejectedAt = undefined;
+  user.pendingEmailRejectionReason = undefined;
+  await user.save({ validateBeforeSave: false });
+
+  await AuditLog.create({
+    user: user._id, action: 'EMAIL_CHANGE_REQUEST', resource: 'user', resourceId: user._id,
+    oldValues: { email: user.email }, newValues: { pendingEmail: requested },
+    details: { pendingEmail: requested },
+    municipality: user.municipality, ipAddress: req.ip,
+  });
+
+  // Only super_admin administers accounts, so only super_admin is told — the other tiers cannot
+  // open the page the notification would link to.
+  const admins = await User.find({ role: 'super_admin', isActive: true, deletedAt: null }).select('_id').lean();
+  if (admins.length > 0) {
+    await Notification.createWithExpiry(admins.map((a) => ({
+      recipient: a._id,
+      type: 'approval_request',
+      title: 'Email Change Awaiting Approval',
+      message: `${user.firstName} ${user.lastName} asked to change their email address to ${requested}.`,
+      link: '/users?tab=email-changes',
+      priority: 'high',
+    })));
+  }
+
+  successResponse(res, 200, 'Email change submitted for approval. Your current address stays active until it is approved.', {
+    pendingEmail: requested,
+  });
+});
+
+/** Withdraw an outstanding request. Costs nothing and saves an administrator a decision. */
+exports.cancelEmailChange = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user?.pendingEmail) return errorResponse(res, 400, 'You have no pending email change');
+  user.pendingEmail = null;
+  user.pendingEmailRequestedAt = undefined;
+  await user.save({ validateBeforeSave: false });
+  successResponse(res, 200, 'Email change request withdrawn');
+});
+
 exports.updatePassword = asyncHandler(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const user = await User.findById(req.user._id).select('+password');

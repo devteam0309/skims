@@ -6,6 +6,7 @@ const emailService = require('../services/emailService');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { escapeRegex } = require('../utils/regex');
 const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
+const { checkBarangay, barangayErrorMessage } = require('../utils/barangay');
 
 const MAX_LIMIT = 100;
 
@@ -146,6 +147,145 @@ const ASSIGNABLE_ROLES = {
  * the endpoints are reachable directly.
  */
 const isSelf = (req) => req.user._id.equals(req.params.id);
+
+/**
+ * Accounts with an outstanding email change, for the administrator's queue.
+ *
+ * Alongside `getPendingApprovals` rather than folded into it: a pending registration and a pending
+ * email change need different decisions and different columns, and conflating them would put an
+ * existing user in a list captioned "awaiting approval to join".
+ */
+exports.getPendingEmailChanges = asyncHandler(async (req, res) => {
+  const filter = { pendingEmail: { $ne: null }, deletedAt: null };
+  const { safePage, safeLimit, skip } = parsePagination(req.query, { maxLimit: MAX_LIMIT });
+  const [users, total] = await Promise.all([
+    User.find(filter)
+      .select('firstName lastName email pendingEmail pendingEmailRequestedAt role municipality barangay')
+      .populate('municipality', 'name')
+      .populate('barangay', 'name')
+      .sort({ pendingEmailRequestedAt: 1 })
+      .skip(skip)
+      .limit(safeLimit),
+    User.countDocuments(filter),
+  ]);
+  paginatedResponse(res, users, safePage, safeLimit, total);
+});
+
+/**
+ * Approve the change: the pending address becomes the active one.
+ *
+ * The account is NOT asked to verify the new address again. `isEmailVerified` is what the login gate
+ * reads, and on this deployment verification mail cannot reach an arbitrary recipient at all — so
+ * requiring re-verification would lock the user out of the account they still own, by way of a
+ * mailbox nothing can deliver to. An administrator reviewing the request is the check that replaces
+ * it, which is the whole point of the workflow.
+ */
+exports.approveEmailChange = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) return errorResponse(res, 404, 'User not found');
+  if (!user.pendingEmail) return errorResponse(res, 400, 'This user has no pending email change');
+
+  const previous = user.email;
+  const approved = user.pendingEmail;
+
+  // Re-checked at the moment of approval: the address may have been claimed since the request.
+  const clash = await User.findOne({ _id: { $ne: user._id }, email: approved }).select('_id');
+  if (clash) return errorResponse(res, 409, 'That email address has since been taken');
+
+  user.email = approved;
+  user.pendingEmail = null;
+  user.pendingEmailRequestedAt = undefined;
+  await user.save({ validateBeforeSave: false });
+
+  await AuditLog.create({
+    user: req.user._id, action: 'EMAIL_CHANGE_APPROVE', resource: 'user', resourceId: user._id,
+    oldValues: { email: previous }, newValues: { email: approved },
+    details: { previousEmail: previous, newEmail: approved },
+    municipality: user.municipality, ipAddress: req.ip,
+  });
+
+  await Notification.create({
+    recipient: user._id,
+    type: 'approval_granted',
+    title: 'Email Address Updated',
+    message: `Your email address has been changed to ${approved}. Use it the next time you sign in.`,
+    priority: 'high',
+  });
+
+  successResponse(res, 200, 'Email change approved', { email: user.email });
+});
+
+/** Reject it: the existing address stays active, and the reason is recorded and shown. */
+exports.rejectEmailChange = asyncHandler(async (req, res) => {
+  const reason = (req.body.reason || req.body.rejectionReason || '').trim();
+  const user = await User.findById(req.params.id);
+  if (!user) return errorResponse(res, 404, 'User not found');
+  if (!user.pendingEmail) return errorResponse(res, 400, 'This user has no pending email change');
+
+  const refused = user.pendingEmail;
+  user.pendingEmail = null;
+  user.pendingEmailRequestedAt = undefined;
+  user.pendingEmailRejectedAt = new Date();
+  user.pendingEmailRejectionReason = reason || undefined;
+  await user.save({ validateBeforeSave: false });
+
+  await AuditLog.create({
+    user: req.user._id, action: 'EMAIL_CHANGE_REJECT', resource: 'user', resourceId: user._id,
+    oldValues: { pendingEmail: refused }, newValues: { email: user.email },
+    details: { refusedEmail: refused, reason: reason || null, activeEmailUnchanged: user.email },
+    municipality: user.municipality, ipAddress: req.ip,
+  });
+
+  await Notification.create({
+    recipient: user._id,
+    type: 'approval_rejected',
+    title: 'Email Change Declined',
+    message: reason
+      ? `Your request to change your email to ${refused} was declined: ${reason}`
+      : `Your request to change your email to ${refused} was declined. Your current address is unchanged.`,
+    priority: 'high',
+  });
+
+  successResponse(res, 200, 'Email change declined', { email: user.email });
+});
+
+/**
+ * Assign or clear a user's barangay.
+ *
+ * The field existed on the model from the beginning and nothing ever set it, so no SK account has
+ * one — which is why barangay scope narrows only where a barangay is recorded. This is the route
+ * that makes the scoping usable, and it refuses a barangay from outside the user's own municipality
+ * rather than storing a reference that every per-municipality dropdown would then fail to resolve.
+ */
+exports.updateUserBarangay = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) return errorResponse(res, 404, 'User not found');
+
+  const { barangay } = req.body;
+  const previous = user.barangay?.toString() || null;
+
+  if (!barangay) {
+    user.barangay = undefined;
+  } else {
+    if (!user.municipality) {
+      return errorResponse(res, 400, 'Assign the user a municipality before assigning a barangay');
+    }
+    const check = await checkBarangay(barangay, user.municipality.toString());
+    if (check !== 'ok') return errorResponse(res, 400, barangayErrorMessage(check));
+    user.barangay = barangay;
+  }
+  await user.save({ validateBeforeSave: false });
+
+  await AuditLog.create({
+    user: req.user._id, action: 'UPDATE', resource: 'user', resourceId: user._id,
+    oldValues: { barangay: previous }, newValues: { barangay: user.barangay?.toString() || null },
+    details: { field: 'barangay' },
+    municipality: user.municipality, ipAddress: req.ip,
+  });
+
+  const updated = await User.findById(user._id).populate('municipality', 'name').populate('barangay', 'name');
+  successResponse(res, 200, barangay ? 'Barangay assigned' : 'Barangay cleared', updated);
+});
 
 exports.updateUserRole = asyncHandler(async (req, res) => {
   const { role, municipality, barangay } = req.body;

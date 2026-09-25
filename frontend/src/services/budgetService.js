@@ -18,7 +18,11 @@ export const expenseService = {
   getById: (id) => api.get(`/expenses/${id}`),
   create: (data) => api.post('/expenses', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   update: (id, data) => api.put(`/expenses/${id}`, data),
+  // The treasurer's act: send a prepared draft up for review.
+  submit: (id) => api.patch(`/expenses/${id}/submit`),
   approve: (id) => api.patch(`/expenses/${id}/approve`),
+  // The administrator's act. A reason is required by the route, not merely encouraged by the form.
+  reject: (id, rejectionReason) => api.patch(`/expenses/${id}/reject`, { rejectionReason }),
   bulkApprove: (ids) => api.patch('/expenses/bulk-approve', { ids }),
   delete: (id) => api.delete(`/expenses/${id}`),
   getSummary: (params) => api.get('/expenses/summary', { params }),

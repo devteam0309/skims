@@ -36,7 +36,7 @@ export default function PublicLayout({ children }) {
         */}
       <header className="sticky top-0 z-30 bg-navy-900 text-white shadow-lg">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-4">
-          <Link to="/portal" className="flex items-center gap-3">
+          <Link to="/" className="flex items-center gap-3">
             {/* alt="" because the wordmark beside it already says SKIMS — otherwise a screen
                 reader announces the name twice in a row. */}
             <span className="h-10 w-10 overflow-hidden rounded-lg bg-white">
@@ -51,7 +51,7 @@ export default function PublicLayout({ children }) {
           </Link>
 
           <nav aria-label="Portal sections" className="hidden items-center gap-6 text-sm md:flex">
-            <Link to="/portal" className="text-navy-200 transition-colors hover:text-white">Home</Link>
+            <Link to="/" className="text-navy-200 transition-colors hover:text-white">Home</Link>
             {SECTIONS.map(([href, label]) => (
               <a key={href} href={href} className="text-navy-200 transition-colors hover:text-white">{label}</a>
             ))}

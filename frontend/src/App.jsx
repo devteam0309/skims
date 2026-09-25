@@ -102,7 +102,20 @@ export default function App() {
         <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
         <Route path="/verify-email/:token" element={<VerifyEmail />} />
 
-        {/* Public portal */}
+        {/*
+          * The Public Portal is the landing page.
+          *
+          * `/` used to be the authenticated shell, so opening the system sent an anonymous visitor
+          * straight to a login form — the transparency portal, which needs no account at all, was
+          * reachable only by knowing the `/portal` URL. Now `/` IS the portal, for signed-in and
+          * anonymous visitors alike; the header offers "Dashboard" (or "My pages") to whoever is
+          * signed in, so nobody loses a route into the application.
+          *
+          * `/portal` is kept as an alias because the youth nav, emails and existing links point at
+          * it. Both render the same component rather than one redirecting, so neither is a second
+          * implementation that can drift.
+          */}
+        <Route path="/" element={<PublicLayout><PublicPortal /></PublicLayout>} />
         <Route path="/portal" element={<PublicLayout><PublicPortal /></PublicLayout>} />
 
         {/* Youth members. Their own small surface — the staff sidebar carries budgets, expenses
@@ -114,27 +127,32 @@ export default function App() {
           <ProtectedRoute roles={['youth']}><YouthLayout><MyDetails /></YouthLayout></ProtectedRoute>
         } />
 
-        {/* Protected dashboard routes — anyone outside STAFF goes to their own home */}
-        <Route path="/" element={<ProtectedRoute roles={STAFF}><DashboardLayout /></ProtectedRoute>}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="programs" element={<Programs />} />
-          <Route path="programs/new" element={<ProtectedRoute roles={PROGRAM_EDITORS}><ProgramCreate /></ProtectedRoute>} />
-          <Route path="programs/:id" element={<ProgramDetail />} />
-          <Route path="programs/:id/edit" element={<ProtectedRoute roles={PROGRAM_EDITORS}><ProgramEdit /></ProtectedRoute>} />
-          <Route path="budgets" element={<Budgets />} />
-          <Route path="expenses" element={<Expenses />} />
-          <Route path="liquidations" element={<Liquidations />} />
-          <Route path="documents" element={<Documents />} />
-          <Route path="reports" element={<ProtectedRoute roles={REPORT_VIEWERS}><Reports /></ProtectedRoute>} />
-          <Route path="monitoring" element={<Monitoring />} />
-          <Route path="analytics" element={<ProtectedRoute roles={REPORT_VIEWERS}><Analytics /></ProtectedRoute>} />
-          <Route path="users" element={<ProtectedRoute roles={USER_ADMINS}><Users /></ProtectedRoute>} />
-          <Route path="profile" element={<UserProfile />} />
-          <Route path="notifications" element={<Notifications />} />
-          <Route path="youth" element={<Youth />} />
-          <Route path="announcements" element={<ProtectedRoute roles={CONTENT_EDITORS}><Announcements /></ProtectedRoute>} />
-          <Route path="audit-logs" element={<ProtectedRoute roles={USER_ADMINS}><AuditLogs /></ProtectedRoute>} />
+        {/*
+          * Protected dashboard routes — anyone outside STAFF goes to their own home.
+          *
+          * A PATHLESS layout route with absolute child paths, because `/` now belongs to the portal.
+          * Every URL below is unchanged (`/dashboard`, `/programs`, `/budgets`, …) — the layout is
+          * still applied to all of them, it simply no longer claims `/` for itself.
+          */}
+        <Route element={<ProtectedRoute roles={STAFF}><DashboardLayout /></ProtectedRoute>}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/programs" element={<Programs />} />
+          <Route path="/programs/new" element={<ProtectedRoute roles={PROGRAM_EDITORS}><ProgramCreate /></ProtectedRoute>} />
+          <Route path="/programs/:id" element={<ProgramDetail />} />
+          <Route path="/programs/:id/edit" element={<ProtectedRoute roles={PROGRAM_EDITORS}><ProgramEdit /></ProtectedRoute>} />
+          <Route path="/budgets" element={<Budgets />} />
+          <Route path="/expenses" element={<Expenses />} />
+          <Route path="/liquidations" element={<Liquidations />} />
+          <Route path="/documents" element={<Documents />} />
+          <Route path="/reports" element={<ProtectedRoute roles={REPORT_VIEWERS}><Reports /></ProtectedRoute>} />
+          <Route path="/monitoring" element={<Monitoring />} />
+          <Route path="/analytics" element={<ProtectedRoute roles={REPORT_VIEWERS}><Analytics /></ProtectedRoute>} />
+          <Route path="/users" element={<ProtectedRoute roles={USER_ADMINS}><Users /></ProtectedRoute>} />
+          <Route path="/profile" element={<UserProfile />} />
+          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/youth" element={<Youth />} />
+          <Route path="/announcements" element={<ProtectedRoute roles={CONTENT_EDITORS}><Announcements /></ProtectedRoute>} />
+          <Route path="/audit-logs" element={<ProtectedRoute roles={USER_ADMINS}><AuditLogs /></ProtectedRoute>} />
         </Route>
 
         {/* Hidden system reference — dev/QA builds only; excluded from public production bundle */}
@@ -154,7 +172,9 @@ export default function App() {
               <p className="text-6xl font-black text-navy-900">404</p>
               <p className="text-xl font-semibold text-gray-700 mt-2">Page not found</p>
               <p className="text-sm text-gray-400 mt-1">The page you&rsquo;re looking for doesn&rsquo;t exist.</p>
-              <a href="/dashboard" className="mt-6 inline-block px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors">Go to Dashboard</a>
+              {/* The portal, not the dashboard: an anonymous visitor sent to /dashboard is bounced
+                  to a login form, which is not an answer to "this page does not exist". */}
+              <a href="/" className="mt-6 inline-block px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors">Go to the portal</a>
             </div>
           </div>
         } />

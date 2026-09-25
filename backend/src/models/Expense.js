@@ -28,13 +28,30 @@ const expenseSchema = new mongoose.Schema(
       tin: String,
     },
     transactionDate: { type: Date, required: true },
+    /*
+     * draft ──submit──▶ pending ──approve──▶ approved ──▶ liquidated
+     *                      └─────reject────▶ rejected ──(edit, resubmit)──▶ pending
+     *
+     * `pending` means "submitted, awaiting the administrator's review" and remains the DEFAULT, so
+     * every record written before this workflow existed keeps its meaning and no migration is
+     * required. `draft` is opt-in at creation, for a treasurer assembling a record before sending
+     * it up; it mirrors the draft/submitted pair budgets and liquidations already use.
+     *
+     * The officer who creates an expense never approves it — see constants/roles.js.
+     */
     status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected', 'liquidated'],
+      enum: ['draft', 'pending', 'approved', 'rejected', 'liquidated'],
       default: 'pending',
     },
+    submittedAt: Date,
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedAt: Date,
+    // A rejection has to say why, and by whom: an expense returned with no reason leaves the
+    // treasurer guessing at what to change, and the audit trail unable to show who decided.
+    rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectedAt: Date,
+    rejectionReason: String,
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     attachments: [{ fileName: String, fileUrl: String, fileType: String }],
     isLiquidated: { type: Boolean, default: false },

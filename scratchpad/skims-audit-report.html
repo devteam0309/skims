@@ -1,0 +1,808 @@
+<title>Barangay Scope Round</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* ---------------------------------------------------------------------------------------------
+     SKIMS implementation report.
+
+     Palette follows the application's own: navy #1e3a5f is the primary in the running system
+     (Tailwind navy-900, and the colour of every email template heading), so it anchors the page
+     rather than a colour invented for the report. Neutrals are biased cool toward it. The single
+     accent is a brass ochre — the one warm note, spent only on emphasis and the "needs a decision"
+     state, the way an official seal sits on an otherwise plain document.
+     --------------------------------------------------------------------------------------------- */
+  :root {
+    --paper:        #f6f7f9;
+    --surface:      #ffffff;
+    --surface-sunk: #eef1f5;
+    --ink:          #111a26;
+    --ink-soft:     #47556a;
+    --ink-faint:    #6b7889;
+    --rule:         #d7dee7;
+    --rule-soft:    #e6ebf1;
+    --navy:         #1e3a5f;
+    --navy-bright:  #2c5484;
+    --brass:        #8a6413;
+    --brass-soft:   #f3ead6;
+    --done:         #1d6b46;
+    --done-soft:    #e2f0e8;
+    --partial:      #8a5a12;
+    --partial-soft: #f7ecd9;
+    --defer:        #4a5568;
+    --defer-soft:   #e8ebf0;
+
+    --measure: 66ch;
+    --step--1: 0.8125rem;
+    --step-0:  1rem;
+    --step-1:  1.1875rem;
+    --step-2:  1.5rem;
+    --step-3:  2rem;
+    --step-4:  2.75rem;
+
+    color-scheme: light dark;
+  }
+
+  /* System-default dark: only tokens are redefined, and an explicit light choice still wins. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:        #0d131b;
+      --surface:      #141c26;
+      --surface-sunk: #1a242f;
+      --ink:          #e8edf3;
+      --ink-soft:     #a9b6c6;
+      --ink-faint:    #7f8c9d;
+      --rule:         #2a3644;
+      --rule-soft:    #212c38;
+      --navy:         #9dc0e8;
+      --navy-bright:  #b8d4f2;
+      --brass:        #d9ad5a;
+      --brass-soft:   #2c2415;
+      --done:         #6cc496;
+      --done-soft:    #14291f;
+      --partial:      #d9a759;
+      --partial-soft: #2a2115;
+      --defer:        #9aa7b8;
+      --defer-soft:   #1d252f;
+    }
+  }
+
+  /* Explicit dark choice wins over a light OS. */
+  :root[data-theme="dark"] {
+    --paper:        #0d131b;
+    --surface:      #141c26;
+    --surface-sunk: #1a242f;
+    --ink:          #e8edf3;
+    --ink-soft:     #a9b6c6;
+    --ink-faint:    #7f8c9d;
+    --rule:         #2a3644;
+    --rule-soft:    #212c38;
+    --navy:         #9dc0e8;
+    --navy-bright:  #b8d4f2;
+    --brass:        #d9ad5a;
+    --brass-soft:   #2c2415;
+    --done:         #6cc496;
+    --done-soft:    #14291f;
+    --partial:      #d9a759;
+    --partial-soft: #2a2115;
+    --defer:        #9aa7b8;
+    --defer-soft:   #1d252f;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 78rem;
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1rem, 4vw, 3rem) 5rem;
+  }
+
+  /* ------------------------------------------------------------------ masthead */
+  .masthead {
+    display: grid;
+    gap: 1.75rem;
+    padding-bottom: 2rem;
+    border-bottom: 2px solid var(--navy);
+  }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--brass);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    font-size: var(--step-4);
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0.35rem 0 0;
+    color: var(--ink);
+  }
+
+  .standfirst {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: var(--step-1);
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: var(--measure);
+    margin: 0.75rem 0 0;
+  }
+
+  /* Build facts as a definition row, not stat cards — they are provenance, not the point. */
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .facts div { background: var(--surface); padding: 0.85rem 1rem; }
+  .facts dt {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 0.2rem;
+  }
+  .facts dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 1.0625rem;
+    color: var(--ink);
+  }
+  .facts dd small { font-weight: 400; color: var(--ink-faint); font-size: 0.8125rem; }
+
+  /* ------------------------------------------------------------------ sections */
+  section { margin-top: 3.25rem; }
+
+  h2 {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: var(--step-2);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    margin: 0 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+    color: var(--ink);
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--brass);
+    vertical-align: 0.55em;
+    margin-right: 0.6rem;
+    letter-spacing: 0.05em;
+  }
+
+  h3 {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: var(--step-0);
+    font-weight: 600;
+    margin: 1.75rem 0 0.4rem;
+    color: var(--ink);
+  }
+
+  p, li { max-width: var(--measure); }
+  p { margin: 0 0 0.9rem; color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+
+  ul.notes { margin: 0 0 1rem; padding-left: 1.1rem; color: var(--ink-soft); }
+  ul.notes li { margin-bottom: 0.45rem; }
+  ul.notes li::marker { color: var(--brass); }
+
+  code {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 0.875em;
+    background: var(--surface-sunk);
+    padding: 0.1em 0.35em;
+    border-radius: 2px;
+    color: var(--ink);
+    word-break: break-word;
+  }
+
+  /* ------------------------------------------------------------------ tables */
+  .scroll {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--surface);
+    margin-bottom: 1.25rem;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: var(--step--1); }
+  th, td {
+    text-align: left;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+    max-width: none;
+  }
+  thead th {
+    background: var(--surface-sunk);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 500;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.mono, th.mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+  td.req { font-weight: 600; color: var(--ink); min-width: 13rem; }
+  td.num { text-align: center; }
+  caption {
+    caption-side: bottom;
+    text-align: left;
+    padding: 0.6rem 0.85rem;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  /* State is encoded in shape as well as colour: filled = done, outlined = not. */
+  .chip {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    letter-spacing: 0.04em;
+    padding: 0.14rem 0.45rem;
+    border-radius: 2px;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .chip--yes  { background: var(--done-soft);    color: var(--done);    border: 1px solid transparent; }
+  .chip--part { background: var(--partial-soft); color: var(--partial); border: 1px solid currentColor; }
+  .chip--na   { background: transparent;         color: var(--ink-faint); border: 1px dashed var(--rule); }
+  .chip--no   { background: var(--defer-soft);   color: var(--defer);   border: 1px solid currentColor; }
+
+  /* One lifted block per section at most, for the thing a reader must not miss. */
+  .callout {
+    border-left: 3px solid var(--brass);
+    background: var(--brass-soft);
+    padding: 0.9rem 1.1rem;
+    border-radius: 0 3px 3px 0;
+    margin: 0 0 1.25rem;
+    max-width: calc(var(--measure) + 4rem);
+  }
+  .callout p { margin: 0; color: var(--ink); }
+  .callout p + p { margin-top: 0.6rem; }
+
+  .decision {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--navy-bright);
+    background: var(--surface);
+    padding: 0.9rem 1.1rem;
+    border-radius: 0 3px 3px 0;
+    margin: 0 0 1rem;
+    max-width: calc(var(--measure) + 4rem);
+  }
+  .decision p { margin: 0; }
+  .decision .q { color: var(--ink); font-weight: 600; margin-bottom: 0.3rem; }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  footer p { color: inherit; max-width: none; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    a { transition: color 120ms ease; }
+  }
+  a { color: var(--navy-bright); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">SKIMS · Implementation report</p>
+      <h1>Barangay Scope Round</h1>
+      <p class="standfirst">
+        Municipality&nbsp;→ Barangay&nbsp;→ SK account, enforced on the server; recording money separated
+        from approving it; and the review, import and recovery steps the workflows were missing.
+        Boac, Gasan, Mogpog and Santa Cruz.
+      </p>
+    </div>
+
+    <dl class="facts">
+      <div><dt>Branch</dt><dd>feat/barangay-scope<small> · 4 commits</small></dd></div>
+      <div><dt>Base</dt><dd class="mono">851e609</dd></div>
+      <div><dt>Backend tests</dt><dd>574 <small>was 473</small></dd></div>
+      <div><dt>Suites</dt><dd>43 <small>was 36</small></dd></div>
+      <div><dt>Frontend tests</dt><dd>66 <small>was 59</small></dd></div>
+      <div><dt>Diff</dt><dd>66 files <small>+5,600 / −490</small></dd></div>
+      <div><dt>Lint / build</dt><dd>clean <small>0 warnings</small></dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <h2><span class="num">01</span>Summary</h2>
+
+    <div class="callout">
+      <p>
+        <strong>The audit found the foundations already in place and unused.</strong> <code>barangay</code>
+        existed as a reference on <code>User</code>, <code>Program</code>, <code>YouthMember</code>,
+        <code>Expense</code> and <code>Document</code>; <code>Notification.priority</code> existed;
+        documents already soft-deleted; expenses already had a <code>rejected</code> status. Nothing read
+        any of it. Most of this round is enforcement and workflow around structure that was already there,
+        which is why it required no destructive schema change.
+      </p>
+    </div>
+
+    <p>
+      Every scope decision now runs through one module, <code>backend/src/utils/scope.js</code>. Municipality
+      and barangay are resolved from <code>req.user</code>; a supplied <code>?barangay=</code> can only narrow,
+      never widen; a bound officer's create is pinned to their own barangay. A record with <em>no</em> barangay
+      stays municipality-level and visible — every record written before this change has none, so treating
+      "no barangay" as "not mine" would have blanked the Programs, Youth, Expenses and Documents pages for
+      every officer on the day it shipped.
+    </p>
+
+    <p>
+      The aggregate views followed in a second pass: dashboard, monitoring, analytics and all three
+      reports use the same helper, so a figure and the rows beneath it now describe the same set of
+      records. Where a collection carries a barangay it narrows on one; budgets and liquidations do not
+      and stay municipality-level, because SK money is drawn per municipality and fiscal year.
+    </p>
+
+    <p>
+      Applying it surfaced three live fail-open reads that were nothing to do with barangays:
+      <code>getDocumentStats</code> had <strong>no role check at all</strong> and returned province-wide
+      category counts plus the five most recent documents — with uploader names — to any authenticated
+      account; <code>deleteExpense</code> had no scope check on a route open to <code>municipal_admin</code>,
+      a municipality-scoped role; and the dashboard&rsquo;s <strong>user count was province-wide for every
+      role</strong>, so a Boac chairperson&rsquo;s dashboard reported the province&rsquo;s headcount as their
+      own. All three are closed, all three have regression tests.
+    </p>
+
+    <h3>Four decisions you made before I started, and what they cost</h3>
+
+    <div class="decision">
+      <p class="q">Barangay scope narrows only where a barangay is recorded.</p>
+      <p>No invented data, no lock-outs, and existing accounts behave exactly as they did. The cost is that
+      the isolation is only as real as the assignment work — until an account is assigned, it is
+      municipality-wide, and the migration script reports rather than guesses.</p>
+    </div>
+
+    <div class="decision">
+      <p class="q">SK Chairperson is view-only in Fund Management; approvals to the admin tiers.</p>
+      <p>This reverses September's arrangement, where the chairperson could both create and approve. The
+      treasurer records money and approves nothing; the municipal administrator decides. Two existing tests
+      encoded the old rule and were rewritten deliberately, not deleted.</p>
+    </div>
+
+    <div class="decision">
+      <p class="q">Superadmin keeps full access.</p>
+      <p>Your brief allowed it where the architecture already requires it, and it does: super_admin is the
+      break-glass account and the sole approver of registrations. The intent is honoured where it matters —
+      User Management and Audit Logs remain super_admin only.</p>
+    </div>
+
+    <div class="decision">
+      <p class="q">Both the programmes list and the milestone list become tables.</p>
+      <p>"Program parts" was ambiguous, so both readings were built: the Programs card grid is now a table
+      with a target-barangay column, and Program Detail's milestone list is a table of parts with status,
+      dates, progress and who is responsible.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">02</span>Database changes</h2>
+
+    <p>
+      Mongoose, so there are no DDL migrations — every change below is additive, and no field was renamed,
+      retyped or removed. Nothing needed a backfill.
+    </p>
+
+    <div class="scroll">
+      <table>
+        <caption>All additive. Existing documents remain valid without being rewritten.</caption>
+        <thead>
+          <tr><th>Model</th><th>Added</th><th>Why</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="req">User</td>
+            <td class="mono">pendingEmail, pendingEmailRequestedAt, pendingEmailRejectedAt, pendingEmailRejectionReason</td>
+            <td>The email-change request. Exactly one can be outstanding per account, so it is fields on User rather than a second collection and a second approval mechanism.</td>
+          </tr>
+          <tr>
+            <td class="req">User <span class="chip chip--yes">index</span></td>
+            <td class="mono">{ pendingEmail: 1 }, { barangay: 1 }</td>
+            <td>Serves the approval queue and the uniqueness check against addresses already claimed by an outstanding request.</td>
+          </tr>
+          <tr>
+            <td class="req">Expense</td>
+            <td class="mono">submittedAt, rejectedBy, rejectedAt, rejectionReason</td>
+            <td>A rejection has to say why and by whom. The <code>rejected</code> status existed from the start and nothing ever wrote it.</td>
+          </tr>
+          <tr>
+            <td class="req">Expense <span class="chip chip--part">enum</span></td>
+            <td class="mono">status += 'draft'</td>
+            <td>Opt-in. The default stays <code>pending</code>, so every record written before the draft state keeps its meaning.</td>
+          </tr>
+          <tr>
+            <td class="req">Liquidation</td>
+            <td class="mono">supportingDocuments: [ref Document]</td>
+            <td>Completes Expense&nbsp;→ Supporting Document&nbsp;→ Liquidation. The embedded <code>documents[]</code> array is untouched — it holds a filename and a URL and cannot say <em>which</em> registered document an attachment is.</td>
+          </tr>
+          <tr>
+            <td class="req">Document</td>
+            <td class="mono">deletedBy</td>
+            <td>The recycle bin needs to show who removed a file; that is what someone hunting a missing document is looking for.</td>
+          </tr>
+          <tr>
+            <td class="req">Notification <span class="chip chip--yes">index</span></td>
+            <td class="mono">{ recipient: 1, priority: 1, createdAt: −1 }</td>
+            <td>Serves the new default ordering. The <code>priority</code> field itself already existed.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>Budgets and liquidations were deliberately left without a barangay.</strong> A budget is drawn
+      per municipality and fiscal year — that is what its compound unique index is on — so giving it a
+      barangay would invent a hierarchy the money does not follow. Both remain municipality-scoped.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">03</span>Backend changes</h2>
+
+    <h3>New modules</h3>
+    <ul class="notes">
+      <li><code>utils/scope.js</code> — every scope decision: <code>applyReadScope</code>,
+        <code>readScopeViolation</code>, <code>writeScopeViolation</code>, <code>createScopeViolation</code>,
+        <code>forceScopeOnCreate</code>, and <code>BARANGAY_BOUND_ROLES</code>.</li>
+      <li><code>utils/barangay.js</code> — the referential check that a barangay belongs to its municipality,
+        lifted out of <code>routes/youth.js</code> so programmes and user assignment use the same one.</li>
+      <li><code>services/youthImportService.js</code> — spreadsheet parsing, per-row validation, header-alias
+        resolution and in-file duplicate detection.</li>
+    </ul>
+
+    <h3>New endpoints</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Route</th><th>Roles</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">PATCH /api/expenses/:id/submit</td><td class="mono">FINANCE_EDITORS</td><td>draft|rejected → pending, atomic on the expected state; clears the rejection reason.</td></tr>
+          <tr><td class="mono">PATCH /api/expenses/:id/reject</td><td class="mono">FINANCE_APPROVERS</td><td>Reason required. Records rejectedBy/rejectedAt, audits old→new state, notifies and emails the author. Refused once approved.</td></tr>
+          <tr><td class="mono">POST /api/youth/import/preview</td><td class="mono">YOUTH_REGISTRARS</td><td>Parses and reports. Writes nothing.</td></tr>
+          <tr><td class="mono">POST /api/youth/import</td><td class="mono">YOUTH_REGISTRARS</td><td>Re-parses the file, inserts row by row, forces the barangay from the account, writes one IMPORT audit entry.</td></tr>
+          <tr><td class="mono">GET /api/documents/recycle-bin</td><td class="mono">ADMINS</td><td>Scoped like the active list. A separate endpoint, so a deleted document can never appear in an ordinary listing.</td></tr>
+          <tr><td class="mono">PATCH /api/documents/:id/restore</td><td class="mono">ADMINS</td><td>The file was never destroyed, so the document returns intact.</td></tr>
+          <tr><td class="mono">DELETE /api/documents/:id/permanent</td><td class="mono">ADMINS</td><td>Only for a document already in the bin. Destroys the file and every superseded version; audited <em>before</em> deletion.</td></tr>
+          <tr><td class="mono">POST · DELETE /api/auth/me/email-change</td><td class="mono">any signed-in</td><td>Request and withdraw. Current password required; own rate limiter, not the password-reset budget.</td></tr>
+          <tr><td class="mono">GET /api/users/email-changes</td><td class="mono">super_admin</td><td>The decision queue.</td></tr>
+          <tr><td class="mono">PUT /api/users/:id/email-change/(approve|reject)</td><td class="mono">super_admin</td><td>Approval re-checks the address is still free; rejection stores the reason and shows it to the user.</td></tr>
+          <tr><td class="mono">PUT /api/users/:id/barangay</td><td class="mono">super_admin</td><td>Refuses a barangay from outside the user's own municipality.</td></tr>
+          <tr><td class="mono">GET /api/reports/template/youth-roster</td><td class="mono">REPORT_VIEWERS</td><td>Fifth template in the existing generator; round-tripped through the importer by test.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The aggregate pass</h3>
+    <p>
+      <code>dashboardController</code>, <code>monitoringController</code>, <code>routes/analytics.js</code>
+      and <code>reportController</code> each carried their own three-line municipality filter; all four now
+      call <code>applyReadScope</code>. Three needed <em>two</em> filters rather than one, because a single
+      filter across collections that do and do not carry a barangay either leaves half the figures
+      municipality-wide or asks a collection for a field it has no column for — which matches nothing at all
+      rather than narrowing.
+    </p>
+    <p>
+      Youth engagement gained a <code>byBarangay</code> breakdown and the Analytics page a chart for it: for
+      an account inside one municipality the municipality chart is a single bar labelled with its own name,
+      which says nothing, while the barangay split is the comparison that account can act on. Capped at the
+      twelve largest with the remainder stated, because Boac alone has 61 barangays.
+    </p>
+    <p>
+      <strong>Two things were deliberately left municipality-level.</strong>
+      <code>/api/monitoring/municipalities</code> prints one row per municipality, labelled with its name — a
+      barangay figure under that heading would be a wrong number, not a narrower one. And
+      <code>/api/dashboard/municipality-comparison</code> stays province-wide and money-free, by the earlier
+      decision that made it safe to show an SK Chairperson at all.
+    </p>
+
+    <h3>Two fixes worth naming</h3>
+    <p>
+      <strong>Filters are built with real ObjectIds, not strings.</strong> <code>find()</code> casts a string
+      id against the schema; an aggregation <code>$match</code> does not — the pipeline goes to the server as
+      written, a string never equals an ObjectId, and the stage matches nothing. Every scoped stats and summary
+      endpoint runs through an aggregation, so a filter built from string ids would have reported zero of
+      everything to every scoped account. The document-stats test caught it.
+    </p>
+    <p>
+      <strong><code>toFormData</code> appends arrays element-wise.</strong>
+      <code>fd.append(key, ['a','b'])</code> stringifies to <code>"a,b"</code> — one field holding a
+      comma-joined blob, which a handler expecting a list discards as the wrong type. The supporting-document
+      links were silently dropped exactly that way until a frontend test caught it. The backend also coerces a
+      single id, since multer only produces an array when the field repeats.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">04</span>Frontend changes</h2>
+
+    <ul class="notes">
+      <li><strong>Public Portal is the landing page.</strong> <code>/</code> was the authenticated shell, so
+        opening the system sent an anonymous visitor to a login form and the transparency portal was reachable
+        only by knowing the <code>/portal</code> URL. The staff layout became a pathless route with absolute
+        child paths, so <em>every existing URL is unchanged</em> — only <code>/</code> moved.
+        <code>/portal</code> stays as an alias.</li>
+      <li><strong>Programs list is a table</strong> with Municipality, Barangay, Status, Dates, Budget,
+        Participants, Progress and Created-by columns, and a barangay filter whose options follow the
+        municipality filter. Program Detail's milestones became a parts table.</li>
+      <li><strong>Cancelling a programme has its own dialog</strong> — danger styling, plain wording, and
+        "Keep the program" as the way out. The other four statuses keep the ordinary one.</li>
+      <li><strong>The barangay picker is gone for an officer who has one</strong>, on both the Youth filter bar
+        and the registration form. Their barangay is stated instead. A picker whose every selection the server
+        discards is the failure this page already had twice with the municipality control.</li>
+      <li><strong>Youth import wizard</strong> — template download, file choice, a row-by-row preview using the
+        spreadsheet's own line numbers, then confirm. Invalid rows carry their reason; duplicates say which
+        line they duplicate.</li>
+      <li><strong>Expenses gained Return beside Approve</strong>, with the reason collected in the dialog
+        rather than demanded by a 422 afterwards, and shown on the returned row. Submit and Save-as-draft
+        belong to the author.</li>
+      <li><strong>Documents gained a recycle-bin view</strong> with Restore and Delete-forever. The delete
+        dialog no longer claims the document "will be permanently deleted" — it never was, and now it
+        demonstrably is not.</li>
+      <li><strong>Email changes</strong> are requested from the profile and decided in User Management, where
+        the queue shows both addresses. <strong>Barangay assignment</strong> sits beside the role change.</li>
+      <li><strong>Announcements moved beside Notifications</strong> in the sidebar. Same role list, same
+        guards; it had been filed next to the audit trail.</li>
+      <li><strong>Notifications state their own order</strong> — "Most urgent first, then most recent" —
+        because the list is deliberately no longer chronological.</li>
+      <li><strong>The Dashboard names the barangay and says what the figures cover</strong>, including that
+        budget and liquidation totals remain the municipality&rsquo;s. The numbers changed meaning in this
+        round, and a number whose scope changed silently is a number read wrongly.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">05</span>Role permissions, as they now stand</h2>
+
+    <div class="scroll">
+      <table>
+        <caption>Every cell is a route guard, not a hidden button. Frontend lists mirror
+          <code>backend/src/constants/roles.js</code> and are asserted equal by test.</caption>
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>SK Chair</th>
+            <th>SK Treasurer</th>
+            <th>Municipal Admin</th>
+            <th>Superadmin</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="req">Scope</td><td>own barangay*</td><td>own barangay*</td><td>own municipality</td><td>province-wide</td></tr>
+          <tr><td class="req">Programmes — create / edit</td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Programmes — approve</td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Youth registry — manage &amp; import</td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Fund Management — view</td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Budgets / expenses / liquidations — create, edit</td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Expenses — approve or return</td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Budgets, liquidations — approve</td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Documents — upload / edit</td><td><span class="chip chip--yes">yes</span></td><td>upload only</td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Documents — delete, recycle bin, purge</td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Reports &amp; analytics</td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">User management, audit logs, email-change decisions</td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--no">no</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      * when one is assigned; otherwise municipality-wide, which is how every existing account behaves today.
+      <code>dilg_representative</code> is unchanged: province-wide reads, no writes anywhere.
+      <code>sk_secretary</code> and <code>sk_kagawad</code> are barangay-bound on the same terms and keep their
+      existing programme, youth and document rights.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">06</span>Security changes</h2>
+
+    <ul class="notes">
+      <li><strong>Two fail-open reads closed</strong> — <code>getDocumentStats</code> (no role check at all)
+        and <code>deleteExpense</code> (no scope check on an ADMINS route that includes a scoped role).</li>
+      <li><strong>Barangay cannot be set from a request.</strong> <code>?barangay=</code>, a body field and a
+        hidden input are all ignored for a bound account, and a linked programme or supporting document is
+        re-checked against the caller's own scope before it is stored.</li>
+      <li><strong>Every scoped filter fails closed</strong> to <code>{ $in: [] }</code> rather than relying on
+        Mongoose treating an undefined value as null.</li>
+      <li><strong>Creating and approving are separated by role</strong>, not only by the self-approval guard —
+        which only ever stopped an officer approving their <em>own</em> expense, leaving one treasurer free to
+        approve another's.</li>
+      <li><strong>An email change cannot be applied without review</strong>, and requires the current password:
+        the address is the login identifier and the password-reset destination, so an unreviewed change is an
+        account takeover by typo or borrowed session.</li>
+      <li><strong>The audit trail has no write route</strong> — the router mounts a single GET, super_admin
+        only, asserted by test rather than trusted as a fact about the file.</li>
+      <li><strong>The youth deny-by-default allowlist</strong> covers all new endpoints without anyone having
+        to remember to add them; asserted for the import, the recycle bin and the email queue.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">07</span>Data migration</h2>
+
+    <div class="callout">
+      <p>
+        <strong><code>backend/scripts/migrate-barangay-scope.js</code> reports; it does not guess.</strong>
+        No SK account has ever had a barangay, and there is no fact in the database from which the right one
+        can be derived — an email domain names a municipality at best, and <code>Barangay.skChairperson</code>
+        is unpopulated too. Guessing would confine a real officer to the wrong barangay, where they would see a
+        roster that looks complete and is not.
+      </p>
+      <p>
+        Dry-run by default. <code>--apply</code> writes only what an explicit <code>email → barangay</code>
+        mapping names, each resolved <em>within that user's own municipality</em> so a name that exists in two
+        municipalities cannot be mis-assigned. Everything else is listed as a migration exception.
+      </p>
+    </div>
+
+    <ul class="notes">
+      <li><strong>Records are not back-filled.</strong> A programme, youth member, expense or document with no
+        barangay is a municipality-level record and stays readable by the whole municipality.</li>
+      <li><strong>No re-seed is required</strong> for any of this to work. The seeder was updated so the feature
+        is <em>visible</em> in a demo: Boac's chairperson and treasurer are put in different barangays and
+        Boac's ten youth are split between them, so each opens a registry with five members — spread over 61
+        barangays they would have seen one each and read the scope as a broken filter. Santa Cruz's chairperson
+        and Gasan's secretary are left unassigned on purpose, because that is the state every real account is
+        in and it has to keep working.</li>
+      <li><strong>Still true from before:</strong> local development writes to the shared Atlas cluster, and
+        <code>npm run seed</code> is unguarded there. Nothing in this round was run against it.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">08</span>Testing</h2>
+
+    <div class="scroll">
+      <table>
+        <caption>Seven new suites, 101 new backend tests, 7 new frontend tests. Whole backend run: 574 passing.</caption>
+        <thead>
+          <tr><th>Suite</th><th class="num">Tests</th><th>What it pins</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">barangayScope.test.js</td><td class="num mono">15</td><td>Barangay isolation across youth, programmes, expenses and documents — list, direct id, query parameter and body. Plus both halves of the "no barangay = municipality-level" rule.</td></tr>
+          <tr><td class="mono">financeWorkflow.test.js</td><td class="num mono">13</td><td>Chairperson view-only; treasurer cannot approve; submit/approve/return transitions; reason required; no rejecting an approved expense; cross-municipality refusals.</td></tr>
+          <tr><td class="mono">youthImport.test.js</td><td class="num mono">14</td><td>Unreadable files, missing columns, header aliases, every bad-value class, duplicates in-file and in-registry, barangay forced from the account, the audit entry, and the template round-trip.</td></tr>
+          <tr><td class="mono">documentRecycleBin.test.js</td><td class="num mono">12</td><td>Delete keeps the file; the bin is scoped; restore works; permanent delete only from the bin, destroys old versions, audits first.</td></tr>
+          <tr><td class="mono">emailChangeApproval.test.js</td><td class="num mono">21</td><td>The active address is untouched; the old one still logs in; password required; collisions refused; approve/reject outcomes; barangay assignment; notification ordering.</td></tr>
+          <tr><td class="mono">authorizationProbe.test.js</td><td class="num mono">6</td><td>Hand-built unauthorised requests: audit-log immutability, the whole user-management surface, query-parameter widening, fail-closed with no municipality, youth allowlist.</td></tr>
+          <tr><td class="mono">aggregateScope.test.js</td><td class="num mono">19</td><td>Dashboard KPIs, monitoring panels, compliance, timeline, all three analytics endpoints and all three reports — and both halves of the rule: what narrows to a barangay, and what deliberately stays municipality-level.</td></tr>
+          <tr><td class="mono">barangayScope.test.jsx <small>(frontend)</small></td><td class="num mono">7</td><td>FormData array handling and the barangay-bound role list.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Also run: full backend suite (43 suites, 574 tests), frontend Vitest (9 files, 66 tests),
+      <code>npm run lint</code> at <code>--max-warnings 0</code>, and <code>npm run build</code>. All clean.
+      <strong>Three of my own tests failed first and changed the code</strong> — the ObjectId casting bug, the
+      FormData flattening, and template notes being read as spreadsheet rows. Two more failed on my own wrong
+      assumptions about response shapes, which cost nothing but a corrected assertion.
+    </p>
+
+    <p>
+      <strong>Not covered by automated tests:</strong> anything requiring a browser. Responsive behaviour of the
+      new tables, the import wizard end to end with a real file picker, and the recycle-bin view were built to
+      the project's conventions (<code>overflow-x: auto</code> containers, five-tone status vocabulary) and
+      verified by lint and build only — jsdom does no layout.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="num">09</span>Remaining issues</h2>
+
+    <ul class="notes">
+      <li><strong>Analytics and Reports have no barangay filter of their own.</strong> The figures are
+        correctly scoped and a province-wide reader can still narrow by municipality, but there is no control
+        to pick one barangay out of a municipality the way Programs and Youth now have. The endpoints already
+        accept <code>?barangay=</code>; this is UI only.</li>
+      <li><strong>Multi-barangay programmes are not supported.</strong> <code>Program.barangay</code> is a single
+        reference; "no barangay" means municipality-wide. Your brief made this conditional on the system already
+        supporting several, and it does not — an array would change the scope query, the filter and the column.
+        Say the word if a programme needs to name three barangays.</li>
+      <li><strong>Notification levels are low / medium / high / urgent</strong>, not your "Normal". The existing
+        values are used by roughly twenty call sites and your brief said to prefer the project's conventions;
+        renaming is a data migration for a synonym.</li>
+      <li><strong>Expense <code>draft</code> is reachable only through the new Save-as-draft control.</strong>
+        The default remains <code>pending</code> so nothing already recorded changed meaning — which does mean
+        the four-state chain reads Draft → Pending → Approved/Returned rather than having a separate "Submitted"
+        state. Liquidations keep their own draft/submitted pair.</li>
+      <li><strong>Untouched from before, still true:</strong> Render's free tier blocks outbound SMTP, so
+        email-change notifications will not reach an arbitrary inbox on the deployed site; and
+        <code>VITE_SHOW_QA_CREDS=true</code> is still live on public production.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">10</span>Requirement checklist</h2>
+
+    <div class="scroll">
+      <table>
+        <caption>
+          <span class="chip chip--yes">done</span> complete ·
+          <span class="chip chip--part">partial</span> qualified, see Remaining issues ·
+          <span class="chip chip--no">not done</span> deliberate, with reasoning ·
+          <span class="chip chip--na">n/a</span> no work of that kind applies.
+        </caption>
+        <thead>
+          <tr>
+            <th>Requirement</th>
+            <th>Implemented</th>
+            <th>Backend enforced</th>
+            <th>Frontend</th>
+            <th>Tested</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="req">1 · Barangay-based SK accounts</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">scope.js</span></td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">15</span></td></tr>
+          <tr><td class="req">2 · Programme target barangay</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">validated</span></td><td><span class="chip chip--yes">column + filter</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">2b · Multiple barangays per programme</td><td><span class="chip chip--no">not done</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--na">n/a</span></td></tr>
+          <tr><td class="req">3 · Cancellation warning</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--na">UI only</span></td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--no">manual</span></td></tr>
+          <tr><td class="req">4 · Table-based programme &amp; parts display</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--yes">both</span></td><td><span class="chip chip--no">lint/build</span></td></tr>
+          <tr><td class="req">5 · Municipality + barangay filters</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">server-side</span></td><td><span class="chip chip--yes">dependent</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">6 · No manual barangay for the Chairperson</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">forced</span></td><td><span class="chip chip--yes">removed</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">7 · Youth Excel import</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">re-validated</span></td><td><span class="chip chip--yes">wizard</span></td><td><span class="chip chip--yes">14</span></td></tr>
+          <tr><td class="req">8 · Chairperson finance view-only</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">route guards</span></td><td><span class="chip chip--yes">hidden</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">9 · Finance role audit</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">all routes</span></td><td><span class="chip chip--yes">mirrored</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">10 · Expense → programme relationship</td><td><span class="chip chip--yes">pre-existing</span></td><td><span class="chip chip--yes">scope-checked</span></td><td><span class="chip chip--yes">selector</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">11 · Treasurer does not approve</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">role + self</span></td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">12 · Expense rejection with reason</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">required</span></td><td><span class="chip chip--yes">dialog</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">13 · Liquidation supporting documents</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">scope-checked</span></td><td><span class="chip chip--yes">picker</span></td><td><span class="chip chip--part">create only</span></td></tr>
+          <tr><td class="req">14 · Document recycle bin</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">3 routes</span></td><td><span class="chip chip--yes">view</span></td><td><span class="chip chip--yes">12</span></td></tr>
+          <tr><td class="req">15 · Notification priority ordering</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">DB sort</span></td><td><span class="chip chip--yes">stated</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">16 · Email change approval</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">never applied</span></td><td><span class="chip chip--yes">both sides</span></td><td><span class="chip chip--yes">13</span></td></tr>
+          <tr><td class="req">17 · Announcements beside Notifications</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--na">layout only</span></td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--no">manual</span></td></tr>
+          <tr><td class="req">18 · Portal as landing page</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">guards intact</span></td><td><span class="chip chip--yes">URLs kept</span></td><td><span class="chip chip--part">layout suite</span></td></tr>
+          <tr><td class="req">Superadmin view-only for operations</td><td><span class="chip chip--no">declined</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--na">n/a</span></td></tr>
+          <tr><td class="req">Phase 14 · Backend authorization</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">every case</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--yes">probe suite</span></td></tr>
+          <tr><td class="req">Phase 15 · Database integrity</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">additive</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Phase 17 · Audit logging</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">8 new actions</span></td><td><span class="chip chip--na">n/a</span></td><td><span class="chip chip--yes">yes</span></td></tr>
+          <tr><td class="req">Phase 18 · Data visibility</td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">lists + aggregates</span></td><td><span class="chip chip--yes">done</span></td><td><span class="chip chip--yes">19</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>SKIMS · Sangguniang Kabataan Integrated Program and Fund Management System · Boac · Gasan · Mogpog · Santa Cruz</p>
+    <p>feat/barangay-scope-and-workflow-round · d06adcd · ee700a7 · 97001d0 · 2342201 · base 851e609</p>
+  </footer>
+
+</div>

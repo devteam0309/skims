@@ -145,11 +145,29 @@ const seed = async () => {
     // remember one credential across every account type.
     const DEMO_PASSWORD = 'Admin@123';
 
+    /*
+     * Barangay assignments for the demo.
+     *
+     * SK accounts are barangay-scoped now, and no real account has ever had a barangay — so without
+     * this the feature is invisible in a demo and nothing shows that Barangay A's chairperson cannot
+     * see Barangay B's registry.
+     *
+     * Boac's chairperson and treasurer are put in DIFFERENT barangays deliberately: one account
+     * cannot demonstrate isolation, and Boac's municipal_admin (Carlos) sees both, which is the
+     * contrast that makes the rule legible.
+     *
+     * Santa Cruz's chairperson and Gasan's secretary are left UNASSIGNED on purpose. That is the
+     * state every existing account is in, and it has to keep working: they stay municipality-wide.
+     */
+    const boacBarangays = (barangays.filter((b) => b.municipality.toString() === munMap['BOA']._id.toString()));
+    const chairBarangay = boacBarangays[0];
+    const treasurerBarangay = boacBarangays[1];
+
     const usersData = [
       { firstName: 'Admin', lastName: 'Super', email: 'superadmin@skims.gov.ph', password: 'Admin@123', role: 'super_admin', isApproved: true, isEmailVerified: true },
       { firstName: 'Provincial', lastName: 'Admin', email: 'provincial@skims.gov.ph', password: 'Admin@123', role: 'provincial_admin', isApproved: true, isEmailVerified: true },
-      { firstName: 'Juan', lastName: 'dela Cruz', email: 'juan@boac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['BOA']._id, isApproved: true, isEmailVerified: true },
-      { firstName: 'Maria', lastName: 'Santos', email: 'maria@boac.gov.ph', password: 'Admin@123', role: 'sk_treasurer', municipality: munMap['BOA']._id, isApproved: true, isEmailVerified: true },
+      { firstName: 'Juan', lastName: 'dela Cruz', email: 'juan@boac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['BOA']._id, barangay: chairBarangay._id, isApproved: true, isEmailVerified: true },
+      { firstName: 'Maria', lastName: 'Santos', email: 'maria@boac.gov.ph', password: 'Admin@123', role: 'sk_treasurer', municipality: munMap['BOA']._id, barangay: treasurerBarangay._id, isApproved: true, isEmailVerified: true },
       { firstName: 'Pedro', lastName: 'Garcia', email: 'pedro@stac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['STC']._id, isApproved: true, isEmailVerified: true },
       { firstName: 'Ana', lastName: 'Reyes', email: 'ana@gasan.gov.ph', password: 'Admin@123', role: 'sk_secretary', municipality: munMap['GAS']._id, isApproved: true, isEmailVerified: true },
       { firstName: 'DILG', lastName: 'Officer', email: 'dilg@marinduque.gov.ph', password: 'Admin@123', role: 'dilg_representative', isApproved: true, isEmailVerified: true },
@@ -184,6 +202,13 @@ const seed = async () => {
         createdBy: chairBoac._id,
         completionRate: 40,
         isPublic: true,
+        /*
+         * Targeted at the chairperson's own barangay, so the Programs page demonstrates the target
+         * barangay column and the barangay filter. The health campaign below is deliberately left
+         * with no barangay: it is a municipality-wide programme, which is the other legitimate
+         * state and the one every pre-existing record is in.
+         */
+        barangay: chairBarangay._id,
       },
       {
         title: 'Kabataan Malusog Health Campaign',
@@ -669,11 +694,19 @@ const seed = async () => {
       const mun = municipalities[i % municipalities.length];
       const munBarangays = barangaysByMun[mun._id.toString()] || [];
 
-      // A stride coprime with most barangay counts, so members land across the whole list
-      // instead of clustering on the first few.
-      const barangay = munBarangays.length
-        ? munBarangays[(i * 7) % munBarangays.length]
-        : undefined;
+      /*
+       * A stride coprime with most barangay counts, so members land across the whole list instead of
+       * clustering on the first few.
+       *
+       * Boac is the exception: its ten members are split between the chairperson's barangay and the
+       * treasurer's, so each of those accounts opens a registry with five members in it. Spread over
+       * all 61 Boac barangays they would each have seen one member and read the barangay scope as a
+       * broken filter — thin demo data has been misdiagnosed as a defect on this project four times.
+       */
+      const isBoac = mun._id.toString() === munMap['BOA']._id.toString();
+      const barangay = isBoac
+        ? [chairBarangay, treasurerBarangay][Math.floor(i / municipalities.length) % 2]
+        : (munBarangays.length ? munBarangays[(i * 7) % munBarangays.length] : undefined);
 
       /*
        * Ages 15-30 are under the SK; every fifth member is seeded past 30 so the registry has

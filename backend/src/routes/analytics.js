@@ -1,21 +1,29 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middleware/auth');
-const { REPORT_VIEWERS, CROSS_MUNICIPALITY_READ } = require('../constants/roles');
+const { REPORT_VIEWERS } = require('../constants/roles');
 const asyncHandler = require('express-async-handler');
 const Program = require('../models/Program');
 const Expense = require('../models/Expense');
 const YouthMember = require('../models/YouthMember');
 const { successResponse } = require('../utils/apiResponse');
+const { applyReadScope } = require('../utils/scope');
 
 router.use(protect);
 router.use(authorize(...REPORT_VIEWERS));
 
+/*
+ * Every collection analytics reads — expenses, programmes, youth members — carries a barangay, so
+ * all three endpoints narrow on it. That matters more here than on a list page: an analytics figure
+ * is read as a fact about the reader's own scope, and a chairperson comparing "our fund utilisation"
+ * against a municipality-wide total would draw a conclusion about their barangay from somebody
+ * else's spending.
+ *
+ * The ids go in as real ObjectIds, which is what makes these `$match` stages work at all — a string
+ * id is cast by `find()` against the schema and is NOT cast inside an aggregation pipeline.
+ */
 const scopeAnalytics = (req, filter) => {
-  if (!CROSS_MUNICIPALITY_READ.includes(req.user.role)) {
-    const munId = req.user.municipality?._id || req.user.municipality;
-    filter.municipality = munId || { $in: [] };
-  }
+  applyReadScope(filter, req.user, { requestedBarangay: req.query.barangay });
 };
 
 router.get('/fund-utilization', asyncHandler(async (req, res) => {
@@ -67,7 +75,7 @@ router.get('/youth-engagement', asyncHandler(async (req, res) => {
   if (municipality) filter.municipality = municipality;
   scopeAnalytics(req, filter);
 
-  const [byGender, byEducation, byMunicipality] = await Promise.all([
+  const [byGender, byEducation, byMunicipality, byBarangay] = await Promise.all([
     YouthMember.aggregate([{ $match: filter }, { $group: { _id: '$gender', count: { $sum: 1 } } }]),
     YouthMember.aggregate([{ $match: filter }, { $group: { _id: '$educationalAttainment', count: { $sum: 1 } } }]),
     YouthMember.aggregate([
@@ -77,8 +85,24 @@ router.get('/youth-engagement', asyncHandler(async (req, res) => {
       { $unwind: '$municipality' },
       { $project: { 'municipality.name': 1, count: 1 } },
     ]),
+    /*
+     * A barangay breakdown alongside the municipality one.
+     *
+     * For a scoped account the municipality chart is a single bar — itself — which says nothing. The
+     * barangay split is the comparison that account can actually act on, and for a province-wide
+     * reader it is the detail behind the municipality totals. Members with no barangay are grouped
+     * under a stated label rather than dropped, since that is a real and common state.
+     */
+    YouthMember.aggregate([
+      { $match: filter },
+      { $group: { _id: '$barangay', count: { $sum: 1 } } },
+      { $lookup: { from: 'barangays', localField: '_id', foreignField: '_id', as: 'barangay' } },
+      { $unwind: { path: '$barangay', preserveNullAndEmptyArrays: true } },
+      { $project: { name: { $ifNull: ['$barangay.name', 'No barangay recorded'] }, count: 1 } },
+      { $sort: { count: -1 } },
+    ]),
   ]);
-  successResponse(res, 200, 'Youth engagement', { byGender, byEducation, byMunicipality });
+  successResponse(res, 200, 'Youth engagement', { byGender, byEducation, byMunicipality, byBarangay });
 }));
 
 module.exports = router;

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, Download, Archive, ArchiveRestore, Trash2,
-  File, FileText, Image as ImageIcon, RefreshCw, History,
+  File, FileText, Image as ImageIcon, RefreshCw, History, RotateCcw,
 } from 'lucide-react';
 import { documentService } from '../../services/documentService';
 import DataTable from '../../components/shared/DataTable';
@@ -51,12 +51,28 @@ export default function Documents() {
   const [replaceFile, setReplaceFile] = useState(null);
   const [historyTarget, setHistoryTarget] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  /*
+   * The recycle bin is a separate view, not a filter on the list.
+   *
+   * A deleted document must never appear among the active ones by accident — it is a different
+   * endpoint on the server for the same reason, and keeping the distinction in the UI means the
+   * ordinary table can never be one wrong flag away from showing deleted records.
+   */
+  const [showRecycleBin, setShowRecycleBin] = useState(false);
+  const [binPage, setBinPage] = useState(1);
 
   useEffect(() => { setSelectedIds(new Set()); }, [filters]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['documents', filters],
     queryFn: () => documentService.getAll(filters).then((r) => r.data),
+  });
+
+  const { data: binData, isLoading: binLoading } = useQuery({
+    queryKey: ['documents', 'recycle-bin', binPage],
+    queryFn: () => documentService.getDeleted({ page: binPage, limit: 10 }).then((r) => r.data),
+    // Only fetched while the bin is open, and only for the roles that may act on it.
+    enabled: showRecycleBin && canDelete,
   });
 
   const closeUpload = () => { setShowModal(false); setFile(null); setUploadForm(emptyUploadForm()); };
@@ -84,6 +100,25 @@ export default function Documents() {
     mutationFn: (id) => documentService.delete(id),
     onSuccess: () => { toast.success('Document deleted'); queryClient.invalidateQueries(['documents']); },
     onError: (e) => toast.error(e.message || 'Delete failed'),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (id) => documentService.restore(id),
+    onSuccess: () => {
+      toast.success('Document restored');
+      // Both views change: one row leaves the bin and reappears in the active list.
+      queryClient.invalidateQueries(['documents']);
+    },
+    onError: (e) => toast.error(e.message || 'Restore failed'),
+  });
+
+  const permanentDeleteMutation = useMutation({
+    mutationFn: (id) => documentService.permanentDelete(id),
+    onSuccess: () => {
+      toast.success('Document permanently deleted');
+      queryClient.invalidateQueries(['documents']);
+    },
+    onError: (e) => toast.error(e.message || 'Permanent delete failed'),
   });
 
   const bulkArchiveMutation = useMutation({
@@ -137,9 +172,41 @@ export default function Documents() {
     if (result.isConfirmed) unarchiveMutation.mutate(id);
   };
 
+  /*
+   * Deleting moves the document to the recycle bin. The dialog used to say "will be permanently
+   * deleted", which was not true even then — the record was soft-deleted — and is emphatically not
+   * true now that it can be restored. Permanent deletion is the separate action below.
+   */
   const handleDelete = async (id, title) => {
-    const result = await confirm.delete({ text: `"${title}" will be permanently deleted.` });
+    const result = await confirm.archive({
+      title: 'Move to the recycle bin?',
+      text: `"${title}" will leave the document list. An administrator can restore it from the recycle bin.`,
+      confirmText: 'Move to recycle bin',
+    });
     if (result.isConfirmed) deleteMutation.mutate(id);
+  };
+
+  const handleRestore = async (id, title) => {
+    const result = await confirm.save({
+      title: 'Restore this document?',
+      text: `"${title}" will return to the active document list.`,
+      confirmText: 'Restore it',
+    });
+    if (result.isConfirmed) restoreMutation.mutate(id);
+  };
+
+  /*
+   * The second confirmation the brief asks for, and it earns it: this destroys the stored file and
+   * every superseded version of it. The dialog says what cannot be undone rather than asking a
+   * generic "are you sure".
+   */
+  const handlePermanentDelete = async (id, title) => {
+    const result = await confirm.delete({
+      title: 'Delete permanently?',
+      text: `"${title}" and its stored file will be destroyed. This cannot be undone, and the audit log will be the only record that it existed.`,
+      confirmText: 'Delete permanently',
+    });
+    if (result.isConfirmed) permanentDeleteMutation.mutate(id);
   };
 
   const handleBulkArchive = async () => {
@@ -307,17 +374,51 @@ export default function Documents() {
           <h1 className="page-title">Document Management</h1>
           <p className="page-subtitle">Central repository for all SK documents</p>
         </div>
-        {canUpload && (
-          <button
-            type="button"
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
-          >
-            <Upload size={16} aria-hidden="true" />Upload Document
-          </button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {/* Only offered to the roles that can delete, since the bin holds nothing they did not
+              produce and restoring is their decision. */}
+          {canDelete && (
+            <button
+              type="button"
+              aria-pressed={showRecycleBin}
+              onClick={() => { setShowRecycleBin((open) => !open); setBinPage(1); }}
+              className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                showRecycleBin
+                  ? 'border-navy-700 bg-navy-50 text-navy-800 dark:border-navy-400 dark:bg-navy-500/15 dark:text-navy-200'
+                  : 'border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Trash2 size={16} aria-hidden="true" />
+              {showRecycleBin ? 'Back to documents' : 'Recycle bin'}
+              {binData?.meta?.total > 0 && !showRecycleBin && (
+                <span className="numeric rounded-full bg-gray-100 px-1.5 text-xs dark:bg-gray-600">{binData.meta.total}</span>
+              )}
+            </button>
+          )}
+          {canUpload && !showRecycleBin && (
+            <button
+              type="button"
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
+            >
+              <Upload size={16} aria-hidden="true" />Upload Document
+            </button>
+          )}
+        </div>
       </div>
 
+      {showRecycleBin ? (
+        <RecycleBin
+          data={binData}
+          loading={binLoading}
+          onPageChange={setBinPage}
+          onRestore={handleRestore}
+          onPermanentDelete={handlePermanentDelete}
+          restoring={restoreMutation.isPending}
+          destroying={permanentDeleteMutation.isPending}
+        />
+      ) : (
+      <>
       <section aria-label="Filter documents" className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
         <div className="flex flex-wrap gap-3">
           <SearchInput
@@ -408,6 +509,8 @@ export default function Documents() {
           </button>
         ) : null}
       />
+      </>
+      )}
 
       <Modal
         isOpen={!!historyTarget}
@@ -680,5 +783,100 @@ function IconButton({ onClick, label, hover, children }) {
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * Deleted documents, with the two ways out: back to the list, or gone for good.
+ *
+ * Deliberately plain. The value here is that a document which "disappeared" can be found and
+ * returned — so the table shows who deleted it and when, which is what someone hunting for a
+ * missing file actually needs to know.
+ */
+function RecycleBin({ data, loading, onPageChange, onRestore, onPermanentDelete, restoring, destroying }) {
+  const rows = data?.data || [];
+
+  return (
+    <section aria-label="Recycle bin" className="space-y-3">
+      <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+        <Trash2 size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+        <p>
+          Deleted documents are kept here with their files intact. Restoring one returns it to the
+          document list exactly as it was. Permanent deletion destroys the file and cannot be undone.
+        </p>
+      </div>
+
+      <DataTable
+        columns={[
+          {
+            key: 'title',
+            header: 'Document',
+            render: (v, row) => (
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">{v}</p>
+                <p className="meta-text capitalize">{row.category?.replace(/_/g, ' ')}</p>
+              </div>
+            ),
+          },
+          { key: 'originalName', header: 'File', render: (v) => <span className="text-xs">{v || '—'}</span> },
+          {
+            key: 'municipality',
+            header: 'Municipality',
+            render: (v, row) => (
+              <div className="text-xs">
+                {v?.name || '—'}
+                {/* A barangay-level document says so; municipality-level ones are not missing data. */}
+                <p className="meta-text">{row.barangay?.name || 'All barangays'}</p>
+              </div>
+            ),
+          },
+          {
+            key: 'deletedAt',
+            header: 'Deleted',
+            render: (v, row) => (
+              <div className="text-xs">
+                {formatDate(v)}
+                <p className="meta-text">
+                  {row.deletedBy ? `by ${row.deletedBy.firstName} ${row.deletedBy.lastName}` : 'by an unknown user'}
+                </p>
+              </div>
+            ),
+          },
+          {
+            key: '_id',
+            header: 'Actions',
+            render: (id, row) => (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onRestore(id, row.title)}
+                  disabled={restoring}
+                  aria-label={`Restore ${row.title}`}
+                  className="flex items-center gap-1 rounded-lg bg-green-50 px-2 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-100 disabled:opacity-60 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25"
+                >
+                  <RotateCcw size={12} aria-hidden="true" />
+                  Restore
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onPermanentDelete(id, row.title)}
+                  disabled={destroying}
+                  aria-label={`Permanently delete ${row.title}`}
+                  className="flex items-center gap-1 rounded-lg bg-red-50 px-2 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25"
+                >
+                  <Trash2 size={12} aria-hidden="true" />
+                  Delete forever
+                </button>
+              </div>
+            ),
+          },
+        ]}
+        data={rows}
+        loading={loading}
+        pagination={data?.meta}
+        onPageChange={onPageChange}
+        emptyMessage="The recycle bin is empty"
+      />
+    </section>
   );
 }

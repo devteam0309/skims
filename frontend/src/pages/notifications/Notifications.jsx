@@ -96,8 +96,14 @@ export default function Notifications() {
             <span className="numeric">{unreadCount}</span> unread
             {/* The count only ever covered the 50 rows fetched. Saying so is cheaper than
                 implying the number is the whole picture. */}
-            {total > notifications.length && ` · showing the ${notifications.length} most recent of ${total}`}
+            {total > notifications.length && ` · showing ${notifications.length} of ${total}`}
           </p>
+          {/*
+            * Said out loud, because the list is deliberately NOT chronological any more: an urgent
+            * alert stays at the top however long it has been there. Without this line a reader who
+            * expects a timeline reads the order as arbitrary.
+            */}
+          <p className="field-hint">Most urgent first, then most recent.</p>
         </div>
         {unreadCount > 0 && (
           <button

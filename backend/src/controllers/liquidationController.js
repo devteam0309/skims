@@ -1,6 +1,7 @@
 const asyncHandler = require('express-async-handler');
 const { randomUUID } = require('crypto');
 const Liquidation = require('../models/Liquidation');
+const Document = require('../models/Document');
 const Expense = require('../models/Expense');
 const AuditLog = require('../models/AuditLog');
 const Notification = require('../models/Notification');
@@ -9,7 +10,8 @@ const emailService = require('../services/emailService');
 const { uploadToCloudinary } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { normalizeLabel } = require('../utils/labels');
-const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
+const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
+const { writeScopeViolation, idOf } = require('../utils/scope');
 
 const MAX_LIMIT = 100;
 const { pickCreatable } = require('../utils/writeFields');
@@ -50,6 +52,8 @@ exports.getLiquidation = asyncHandler(async (req, res) => {
   const liq = await Liquidation.findById(req.params.id)
     .populate('program', 'title category budget')
     .populate('expenses')
+    // Which registered documents back this report — the whole point of the link.
+    .populate('supportingDocuments', 'title category originalName fileType isArchived')
     .populate('municipality', 'name')
     .populate('submittedBy', 'firstName lastName email')
     .populate('approvedBy', 'firstName lastName');
@@ -64,7 +68,7 @@ exports.getLiquidation = asyncHandler(async (req, res) => {
 });
 
 exports.createLiquidation = asyncHandler(async (req, res) => {
-  const ALLOWED_CREATE_FIELDS = ['title', 'program', 'budget', 'expenses', 'totalAmount', 'liquidatedAmount', 'dueDate', 'remarks'];
+  const ALLOWED_CREATE_FIELDS = ['title', 'program', 'budget', 'expenses', 'totalAmount', 'liquidatedAmount', 'dueDate', 'remarks', 'supportingDocuments'];
   // Blanks dropped — an absent due date or remark posts '' and cannot be cast. `program` is
   // required by the schema, so an unlinked one is rejected by validation rather than silently kept.
   const liqData = pickCreatable(Liquidation, req.body, ALLOWED_CREATE_FIELDS);
@@ -90,18 +94,38 @@ exports.createLiquidation = asyncHandler(async (req, res) => {
     liqData.documents = uploaded;
   }
 
+  /*
+   * Linked supporting documents must be documents the caller can actually see. Without the check a
+   * report could name another municipality's document by id and publish its title and category to
+   * everyone who opens the report — a read across the boundary, arriving through a write.
+   */
+  /*
+   * Normalised before it is used. A multipart body carrying one linked document arrives as a bare
+   * string rather than an array of one — multer only produces an array when the field repeats — so
+   * checking `Array.isArray` alone would silently ignore a single selection.
+   */
+  if (typeof liqData.supportingDocuments === 'string' && liqData.supportingDocuments) {
+    liqData.supportingDocuments = [liqData.supportingDocuments];
+  }
+  if (Array.isArray(liqData.supportingDocuments) && liqData.supportingDocuments.length > 0) {
+    const ids = [...new Set(liqData.supportingDocuments.map(String))];
+    if (ids.length > 20) return errorResponse(res, 400, 'A liquidation can link at most 20 supporting documents');
+    const docs = await Document.find({ _id: { $in: ids }, deletedAt: null }).select('municipality barangay');
+    if (docs.length !== ids.length) return errorResponse(res, 404, 'One or more supporting documents could not be found');
+    const foreign = docs.find((d) => writeScopeViolation(d, req.user));
+    if (foreign) return errorResponse(res, 403, 'One or more supporting documents belong to another municipality or barangay');
+    liqData.supportingDocuments = ids;
+  }
+
   const liq = await Liquidation.create(liqData);
-  await AuditLog.create({ user: req.user._id, action: 'CREATE', resource: 'liquidation', resourceId: liq._id, details: { title: liq.title, totalAmount: liq.totalAmount }, ipAddress: req.ip });
+  await AuditLog.create({ user: req.user._id, action: 'CREATE', resource: 'liquidation', resourceId: liq._id, details: { title: liq.title, totalAmount: liq.totalAmount, supportingDocuments: liq.supportingDocuments?.length || 0 }, municipality: liq.municipality, ipAddress: req.ip });
   successResponse(res, 201, 'Liquidation created', liq);
 });
 
 exports.submitLiquidation = asyncHandler(async (req, res) => {
   const liq = await Liquidation.findOne({ _id: req.params.id, deletedAt: null });
   if (!liq) return errorResponse(res, 404, 'Liquidation not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (liq.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to submit this liquidation');
-  }
+  if (writeScopeViolation(liq, req.user, { barangay: false })) return errorResponse(res, 403, 'Not authorized to submit this liquidation');
   if (liq.status !== 'draft') return errorResponse(res, 400, 'Only draft liquidations can be submitted');
 
   const submitted = await Liquidation.findByIdAndUpdate(
@@ -127,10 +151,7 @@ exports.submitLiquidation = asyncHandler(async (req, res) => {
 exports.approveLiquidation = asyncHandler(async (req, res) => {
   const liq = await Liquidation.findOne({ _id: req.params.id, deletedAt: null });
   if (!liq) return errorResponse(res, 404, 'Liquidation not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (liq.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to approve this liquidation');
-  }
+  if (writeScopeViolation(liq, req.user, { barangay: false })) return errorResponse(res, 403, 'Not authorized to approve this liquidation');
 
   // Atomic conditional update prevents double-approval race condition
   const approved = await Liquidation.findOneAndUpdate(
@@ -164,10 +185,7 @@ exports.approveLiquidation = asyncHandler(async (req, res) => {
 exports.rejectLiquidation = asyncHandler(async (req, res) => {
   const liq = await Liquidation.findOne({ _id: req.params.id, deletedAt: null });
   if (!liq) return errorResponse(res, 404, 'Liquidation not found');
-  if (!CROSS_MUNICIPALITY_WRITE.includes(req.user.role)) {
-    const userMunId = (req.user.municipality?._id || req.user.municipality)?.toString();
-    if (liq.municipality?.toString() !== userMunId) return errorResponse(res, 403, 'Not authorized to reject this liquidation');
-  }
+  if (writeScopeViolation(liq, req.user, { barangay: false })) return errorResponse(res, 403, 'Not authorized to reject this liquidation');
   if (!['submitted', 'under_review'].includes(liq.status)) return errorResponse(res, 400, 'Liquidation cannot be rejected in its current state');
 
   const rejected = await Liquidation.findByIdAndUpdate(
