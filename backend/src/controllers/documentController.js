@@ -2,7 +2,7 @@ const asyncHandler = require('express-async-handler');
 const { randomUUID } = require('crypto');
 const Document = require('../models/Document');
 const AuditLog = require('../models/AuditLog');
-const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
+const { uploadToCloudinary, destroyQuietly, rawUploadOptions } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { normalizeLabel } = require('../utils/labels');
 const { escapeRegex } = require('../utils/regex');
@@ -82,11 +82,14 @@ exports.uploadDocument = asyncHandler(async (req, res) => {
   const body = pickCreatable(Document, req.body, ALLOWED_FIELDS);
 
   const isImage = req.file.mimetype.startsWith('image/');
-  const result = await uploadToCloudinary(req.file.buffer, {
-    folder: isImage ? 'skims/avatars' : 'skims/documents',
-    resource_type: isImage ? 'image' : 'raw',
-    public_id: randomUUID(),
-  });
+  /*
+   * Images keep the old shape — Cloudinary detects an image format and appends it to the delivery
+   * URL itself. A raw file gets no such treatment, so the extension must ride on the public_id or
+   * the download arrives as an extensionless octet-stream. See rawUploadOptions.
+   */
+  const result = await uploadToCloudinary(req.file.buffer, isImage
+    ? { folder: 'skims/avatars', resource_type: 'image', public_id: randomUUID() }
+    : rawUploadOptions(req.file.originalname));
 
   const doc = await Document.create({
     title: body.title || req.file.originalname,
@@ -207,11 +210,14 @@ exports.replaceFile = asyncHandler(async (req, res) => {
   if (writeScopeViolation(doc, req.user)) return errorResponse(res, 403, 'Not authorized to replace this document');
 
   const isImage = req.file.mimetype.startsWith('image/');
-  const result = await uploadToCloudinary(req.file.buffer, {
-    folder: isImage ? 'skims/avatars' : 'skims/documents',
-    resource_type: isImage ? 'image' : 'raw',
-    public_id: randomUUID(),
-  });
+  /*
+   * Images keep the old shape — Cloudinary detects an image format and appends it to the delivery
+   * URL itself. A raw file gets no such treatment, so the extension must ride on the public_id or
+   * the download arrives as an extensionless octet-stream. See rawUploadOptions.
+   */
+  const result = await uploadToCloudinary(req.file.buffer, isImage
+    ? { folder: 'skims/avatars', resource_type: 'image', public_id: randomUUID() }
+    : rawUploadOptions(req.file.originalname));
 
   const updated = await Document.findByIdAndUpdate(
     req.params.id,

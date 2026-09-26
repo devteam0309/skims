@@ -7,7 +7,7 @@ const AuditLog = require('../models/AuditLog');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 const emailService = require('../services/emailService');
-const { uploadToCloudinary } = require('../config/cloudinary');
+const { uploadToCloudinary, rawUploadOptions } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { normalizeLabel } = require('../utils/labels');
 const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
@@ -78,7 +78,7 @@ exports.createLiquidation = asyncHandler(async (req, res) => {
   if (req.files && req.files.length > 0) {
     const uploaded = await Promise.all(
       req.files.map((f, i) =>
-        uploadToCloudinary(f.buffer, { folder: 'skims/documents', resource_type: 'raw', public_id: randomUUID() })
+        uploadToCloudinary(f.buffer, rawUploadOptions(f.originalname))
           .then((r) => ({
             /*
              * Left unset when the client sends no type, rather than silently labelled 'other'.

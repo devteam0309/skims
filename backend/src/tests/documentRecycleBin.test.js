@@ -16,6 +16,9 @@ const AuditLog = require('../models/AuditLog');
 jest.mock('../config/cloudinary', () => ({
   uploadToCloudinary: jest.fn(),
   destroyQuietly: jest.fn(),
+  // Present so the mock stays a complete stand-in for the module even though this suite never
+  // uploads — an incomplete mock fails as an undefined call deep in a handler, which reads as a 500.
+  rawUploadOptions: jest.fn(() => ({ folder: 'skims/documents', resource_type: 'raw', public_id: 'test-upload' })),
   cloudinary: {},
 }));
 const { destroyQuietly } = require('../config/cloudinary');
