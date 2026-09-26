@@ -5,6 +5,7 @@ require('dotenv').config();
 const User = require('../models/User');
 const Municipality = require('../models/Municipality');
 const Barangay = require('../models/Barangay');
+const PDFDocument = require('pdfkit');
 const { uploadToCloudinary } = require('../config/cloudinary');
 const Program = require('../models/Program');
 const Budget = require('../models/Budget');
@@ -158,27 +159,59 @@ const seed = async () => {
      * download routes now say "no file attached", which is true, instead of redirecting the browser
      * somewhere that does not exist.
      */
-    const samplePdf = () => {
-      const body = [
-        '%PDF-1.4',
-        '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
-        '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
-        '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 120]/Contents 4 0 R'
-          + '/Resources<</Font<</F1 5 0 R>>>>>>endobj',
-        '4 0 obj<</Length 92>>stream',
-        'BT /F1 11 Tf 20 70 Td (SKIMS sample document) Tj 0 -20 Td (Seeded demo data) Tj ET',
-        'endstream endobj',
-        '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj',
-        'trailer<</Root 1 0 R>>',
-        '%%EOF',
-      ].join('\n');
-      return Buffer.from(body, 'utf8');
-    };
+    /*
+     * Built with PDFKit, which already generates the ABYIP and COA report templates.
+     *
+     * The first version of this was a hand-written PDF with no xref table. It uploaded and
+     * downloaded, but "a viewer will accept it" was an assumption — strict readers repair such a
+     * file or refuse it outright, and the one thing this document must do is OPEN when somebody
+     * clicks Download.
+     *
+     * The wording matters as much as the format. Every seeded document points at this one file, so
+     * the page cannot describe any particular record — and a reader who opens "SK Resolution No.
+     * 2026-01" and finds two words of placeholder text learns nothing about why. It says what it
+     * is, why its title will not match, and what to do about it.
+     */
+    const samplePdf = () => new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A4', margin: 64 });
+      const chunks = [];
+      doc.on('data', (c) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.fontSize(20).fillColor('#1e3a5f').text('SKIMS sample document');
+      doc.moveDown(0.3);
+      // ASCII punctuation on purpose: the standard PDF fonts encode it without question, and this
+      // is the one file in the system guaranteed to be opened by someone who is not a developer.
+      doc.fontSize(12).fillColor('#444444').text('Seeded demo data - not a real SK record.');
+      doc.moveDown(1.2);
+
+      doc.fontSize(11).fillColor('#222222').text(
+        'Please upload real files to replace them.',
+        { continued: false },
+      );
+      doc.moveDown(0.8);
+
+      doc.fontSize(10).fillColor('#555555').text(
+        'Every document created by the seeder links to this same placeholder file, so the title and '
+        + 'category shown in SKIMS will not match anything on this page. Replacing a seeded record is '
+        + 'the ordinary upload: open Documents, upload the real file, then delete the placeholder.',
+        { align: 'left', lineGap: 2 },
+      );
+      doc.moveDown(1.5);
+
+      doc.fontSize(9).fillColor('#777777').text(
+        'Sangguniang Kabataan Integrated Program and Fund Management System',
+      );
+      doc.fontSize(9).fillColor('#777777').text('Boac, Gasan, Mogpog and Santa Cruz');
+
+      doc.end();
+    });
 
     let sampleFileUrl = null;
     let sampleFileName = null;
     try {
-      const uploaded = await uploadToCloudinary(samplePdf(), {
+      const uploaded = await uploadToCloudinary(await samplePdf(), {
         folder: 'skims/documents',
         resource_type: 'raw',
         // `.pdf` now that PDF delivery is enabled on the account — the seeded document downloads
