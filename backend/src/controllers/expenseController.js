@@ -8,7 +8,7 @@ const AuditLog = require('../models/AuditLog');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
 const emailService = require('../services/emailService');
-const { uploadToCloudinary } = require('../config/cloudinary');
+const { uploadToCloudinary, rawUploadOptions } = require('../config/cloudinary');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
 const { applyReadScope, writeScopeViolation, createScopeViolation, forceScopeOnCreate, barangayScopeOf, idOf } = require('../utils/scope');
@@ -188,7 +188,7 @@ exports.createExpense = asyncHandler(async (req, res) => {
   if (req.files && req.files.length > 0) {
     const uploaded = await Promise.all(
       req.files.map((f) =>
-        uploadToCloudinary(f.buffer, { folder: 'skims/documents', resource_type: 'raw', public_id: randomUUID() })
+        uploadToCloudinary(f.buffer, rawUploadOptions(f.originalname))
           .then((r) => ({ fileName: f.originalname, fileUrl: r.secure_url, fileType: f.mimetype }))
       )
     );
