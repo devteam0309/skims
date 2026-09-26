@@ -181,12 +181,9 @@ const seed = async () => {
       const uploaded = await uploadToCloudinary(samplePdf(), {
         folder: 'skims/documents',
         resource_type: 'raw',
-        /*
-         * No `.pdf` — Cloudinary blocks PDF delivery by default and answers 401 for an asset named
-         * that way. See RESTRICTED_BY_CLOUDINARY in config/cloudinary.js for the one setting that
-         * lifts it. The file IS a PDF; only the stored name omits the suffix.
-         */
-        public_id: 'seed-sample-document',
+        // `.pdf` now that PDF delivery is enabled on the account — the seeded document downloads
+        // as a real PDF rather than an anonymous raw blob.
+        public_id: 'seed-sample-document.pdf',
         overwrite: true,
       });
       sampleFileUrl = uploaded.secure_url;

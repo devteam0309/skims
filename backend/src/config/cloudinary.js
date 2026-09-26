@@ -32,25 +32,25 @@ const uploadToCloudinary = (buffer, options) =>
  * `middleware/fileUpload.js` already admits, so nothing unexpected reaches the id.
  */
 /*
- * ⚠️ PDF and ZIP are deliberately excluded, and this is NOT a code limitation.
+ * The extension rides on the public_id for every type.
  *
- * Cloudinary blocks delivery of PDF and ZIP assets by default — an account-level security setting
- * added after PDFs were used as an attack vector. With `.pdf` on the public_id the CDN classifies
- * the delivery as a PDF and answers **401**; without it, the same bytes are served as an anonymous
- * raw blob with 200. Measured both ways on this account.
+ * PDF and ZIP were excluded for a while: Cloudinary blocks their delivery by default — an
+ * account-level security setting — so `.pdf` on the public_id made the CDN answer 401 while the
+ * same bytes without it came back 200. **That setting was enabled on this account on 2026-09-26**
+ * (verified: a `.pdf` raw asset now returns 200 `application/pdf`), so the carve-out is gone.
  *
- * So the extension is carried for every type that is not restricted (xlsx, docx, csv, images…),
- * which fixes their content type today, and withheld for pdf/zip so those keep downloading at all.
- *
- * To lift it: Cloudinary console → Settings → Security → enable "Allow delivery of PDF and ZIP
- * files", then delete RESTRICTED_BY_CLOUDINARY below and re-upload (or re-seed). Nothing else
- * changes; the content type starts coming back correct for PDFs too.
+ * If a future environment answers 401 on PDF downloads, this is the first thing to check —
+ * Cloudinary console → Settings → Security → "Allow delivery of PDF and ZIP files". The symptom is
+ * a download that fails only for PDFs while other types work.
  */
-const RESTRICTED_BY_CLOUDINARY = ['.pdf', '.zip'];
-
 const rawUploadOptions = (originalName, folder = 'skims/documents') => {
   const ext = path.extname(originalName || '').toLowerCase();
-  const usable = /^\.[a-z0-9]{1,5}$/.test(ext) && !RESTRICTED_BY_CLOUDINARY.includes(ext);
+  /*
+   * The UUID supplies uniqueness — the original name is attacker-supplied and would collide — so
+   * only the extension is carried, and only when it looks like one. `../evil.pdf` yields a UUID
+   * plus `.pdf`, never a path.
+   */
+  const usable = /^\.[a-z0-9]{1,5}$/.test(ext);
   return { folder, resource_type: 'raw', public_id: `${randomUUID()}${usable ? ext : ''}` };
 };
 

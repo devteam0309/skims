@@ -24,13 +24,11 @@ jest.mock('../config/cloudinary', () => ({
     public_id: 'skims/documents/test', secure_url: 'https://example.test/doc.pdf', bytes: 1024,
   }),
   destroyQuietly: jest.fn().mockResolvedValue({}),
-  // Mirrors the real helper closely enough to be worth having: the extension rides on the
-  // public_id EXCEPT for the two types Cloudinary refuses to deliver. A mock that simply returned
-  // an object would hide a caller passing the wrong argument.
+  // Mirrors the real helper: the extension rides on the public_id. A mock that simply returned a
+  // fixed object would hide a caller passing the wrong argument.
   rawUploadOptions: (originalName, folder = 'skims/documents') => {
     const ext = String(originalName || '').match(/\.[a-z0-9]{1,5}$/i)?.[0].toLowerCase() || '';
-    const usable = ext && !['.pdf', '.zip'].includes(ext);
-    return { folder, resource_type: 'raw', public_id: `test-upload${usable ? ext : ''}` };
+    return { folder, resource_type: 'raw', public_id: `test-upload${ext}` };
   },
   cloudinary: { uploader: { destroy: jest.fn() } },
 }));
