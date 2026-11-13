@@ -7,10 +7,11 @@
  *
  * Two shapes are pinned deliberately, not incidentally:
  *
- *   - collections that carry a barangay (programmes, expenses, documents, youth) narrow to it;
- *   - budgets and liquidations do NOT, because they are drawn per municipality and fiscal year.
- *     A barangay officer's expense lines are theirs while the budget behind them is the
- *     municipality's, which is the actual shape of SK funding.
+ *   - programmes, documents and youth narrow to the barangay and keep municipality-level records;
+ *   - finance — budgets, expenses, liquidations — is STRICT since October 2026: a barangay officer
+ *     sees their own barangay's allocation and spending, never the municipal budget it was carved
+ *     from. The municipal administrator sees the municipal total, counted once (an allocation is
+ *     part of the municipal budget, not on top of it).
  */
 const request = require('supertest');
 const app = require('../app');
@@ -79,8 +80,12 @@ const town = async () => {
   await youth(mine._id, 'Mine');
   await youth(theirs._id, 'Theirs');
 
-  // Municipality-level money: one budget, one liquidation. Neither model has a barangay.
-  const budget = await createBudget(municipalityId, admin._id, { totalBudget: 500000, disbursedAmount: 8000, remainingBalance: 492000 });
+  // The municipal budget, and each barangay's allocation carved out of it.
+  const budget = await createBudget(municipalityId, admin._id, { totalBudget: 500000, disbursedAmount: 0, remainingBalance: 500000 });
+  await createBudget(municipalityId, admin._id, { title: 'Mine allocation', barangay: mine._id, totalBudget: 120000, disbursedAmount: 1000, remainingBalance: 119000 });
+  await createBudget(municipalityId, admin._id, { title: 'Theirs allocation', barangay: theirs._id, totalBudget: 80000, disbursedAmount: 7000, remainingBalance: 73000 });
+  // A municipality-level liquidation and one of this barangay's.
+  const soon = new Date(Date.now() + 24 * 60 * 60 * 1000);
   await Liquidation.create({
     title: 'Q1 liquidation',
     program: programs.shared._id,
@@ -88,7 +93,17 @@ const town = async () => {
     totalAmount: 8000,
     status: 'submitted',
     submittedBy: admin._id,
-    dueDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    dueDate: soon,
+  });
+  await Liquidation.create({
+    title: 'Mine liquidation',
+    program: programs.mine._id,
+    municipality: municipalityId,
+    barangay: mine._id,
+    totalAmount: 1000,
+    status: 'submitted',
+    submittedBy: admin._id,
+    dueDate: soon,
   });
 
   return { admin, municipalityId, mine, theirs, token, programs, budget };
@@ -109,14 +124,28 @@ describe('Dashboard KPIs', () => {
     expect(kpis.totalExpenses).toBe(1000);
   });
 
-  it('keeps budget totals municipality-level, because budgets have no barangay', async () => {
+  it('shows a barangay officer their own allocation, never the municipal total', async () => {
     const { token } = await town();
     const res = await request(app).get('/api/dashboard').set(authHeader(token));
 
-    // The whole municipality's budget, deliberately: the money is drawn per municipality and fiscal
-    // year. Narrowing on a field the collection does not have would have returned zero.
-    expect(res.body.data.kpis.totalBudget).toBe(500000);
+    // The barangay's allocation and what was spent from it — not the municipality's ₱500,000.
+    expect(res.body.data.kpis.totalBudget).toBe(120000);
+    expect(res.body.data.kpis.disbursedBudget).toBe(1000);
+    expect(res.body.data.kpis.remainingBudget).toBe(119000);
+    // Their own barangay's report only, not the municipality-level one.
     expect(res.body.data.kpis.pendingLiquidations).toBe(1);
+  });
+
+  it('gives a municipal_admin the municipal total once, not plus every allocation', async () => {
+    const { municipalityId } = await town();
+    const { token } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
+    const res = await request(app).get('/api/dashboard').set(authHeader(token));
+
+    expect(res.body.data.kpis.totalBudget).toBe(500000);
+    expect(res.body.data.kpis.allocatedToBarangays).toBe(200000);
+    // Spent from the two allocations, so spent from the municipality's budget too.
+    expect(res.body.data.kpis.disbursedBudget).toBe(8000);
+    expect(res.body.data.kpis.remainingBudget).toBe(492000);
   });
 
   it('scopes the user count, which used to report the whole province', async () => {
@@ -124,11 +153,12 @@ describe('Dashboard KPIs', () => {
     // A second municipality with two more accounts; neither belongs on the first one's dashboard.
     await createUser({ role: 'municipal_admin' });
     await createUser({ role: 'sk_treasurer' });
-    const { token } = await createUser({ role: 'sk_chairperson', municipality: municipalityId, barangay: mine._id });
+    // The barangay's treasurer — a second chairperson would be a second holder of one seat.
+    const { token } = await createUser({ role: 'sk_treasurer', municipality: municipalityId, barangay: mine._id });
 
     const res = await request(app).get('/api/dashboard').set(authHeader(token));
     // Staff serve a municipality, so this is municipality-scoped rather than barangay-scoped: the
-    // admin, the first chairperson and this one.
+    // admin, the chairperson and this treasurer.
     expect(res.body.data.kpis.totalUsers).toBe(3);
   });
 
@@ -173,11 +203,15 @@ describe('Monitoring', () => {
     expect(res.body.data.overBudgetPrograms.map((p) => p.title)).toEqual(['Mine']);
   });
 
-  it('still surfaces the municipality-level liquidation due soon', async () => {
-    const { token } = await town();
+  it("surfaces the barangay's own liquidation due soon, not the municipality's", async () => {
+    const { token, municipalityId } = await town();
     const res = await request(app).get('/api/monitoring/overview').set(authHeader(token));
-    // Liquidations are municipality-level; a barangay filter would have hidden every one of them.
     expect(res.body.data.pendingLiquidations).toHaveLength(1);
+
+    // The municipal reviewer sees both.
+    const { token: adminToken } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
+    const all = await request(app).get('/api/monitoring/overview').set(authHeader(adminToken));
+    expect(all.body.data.pendingLiquidations).toHaveLength(2);
   });
 
   it('scopes the compliance programme counts but not the liquidation count', async () => {
@@ -275,15 +309,15 @@ describe('Reports', () => {
     expect(res.body.data.total).toBe(1);
   });
 
-  it('scopes financial expenses to the barangay while the budget stays the municipality own', async () => {
+  it('scopes the financial report to the barangay, budget included', async () => {
     const { token } = await town();
     const res = await request(app).get('/api/reports/financial').set(authHeader(token));
     expect(res.status).toBe(200);
 
     expect(res.body.data.summary.totalExpenses).toBe(1000);
-    // Not a mismatch: SK money is budgeted per municipality and spent per barangay, and the report
-    // has to be able to state both without pretending the budget was the barangay's.
-    expect(res.body.data.summary.totalBudget).toBe(500000);
+    // The barangay's own allocation — the panel's rule is that a barangay does not treat the
+    // municipality's budget as its own.
+    expect(res.body.data.summary.totalBudget).toBe(120000);
   });
 
   it('gives a municipal_admin the municipality figures in the same report', async () => {
@@ -292,6 +326,8 @@ describe('Reports', () => {
 
     const res = await request(app).get('/api/reports/financial').set(authHeader(token));
     expect(res.body.data.summary.totalExpenses).toBe(8000);
+    // Counted once: the ₱200,000 allocated to barangays is inside the ₱500,000, not added to it.
     expect(res.body.data.summary.totalBudget).toBe(500000);
+    expect(res.body.data.summary.allocatedToBarangays).toBe(200000);
   });
 });

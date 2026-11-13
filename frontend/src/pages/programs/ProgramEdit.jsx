@@ -12,6 +12,7 @@ import { PROGRAM_CATEGORIES } from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 import { PageLoader } from '../../components/shared/LoadingSpinner';
 import { confirm } from '../../utils/confirm';
+import { refreshAll } from '../../utils/queryRefresh';
 import { Field, RequiredNote, control } from '../../components/shared/FormField';
 
 /*
@@ -27,6 +28,9 @@ const schema = z.object({
   budget: z.coerce.number({ invalid_type_error: 'Budget must be a number' }).min(0, 'Budget cannot be negative'),
   startDate: z.string().min(1, 'Start date is required'),
   endDate: z.string().min(1, 'End date is required'),
+  // The day the activity actually happens — never derived from the preparation period, and never
+  // before it opens. Optional while the exact day is still being fixed.
+  implementationDate: z.string().optional(),
   targetParticipants: z.coerce.number({ invalid_type_error: 'Enter a number' }).min(1, 'Target participants required'),
   actualParticipants: z.coerce.number({ invalid_type_error: 'Enter a number' }).min(0, 'Cannot be negative').optional(),
   budgetRef: z.string().optional(),
@@ -34,6 +38,9 @@ const schema = z.object({
 }).refine((d) => !d.startDate || !d.endDate || new Date(d.endDate) > new Date(d.startDate), {
   message: 'End date must be after start date',
   path: ['endDate'],
+}).refine((d) => !d.implementationDate || !d.startDate || new Date(d.implementationDate) >= new Date(d.startDate), {
+  message: 'The implementation date cannot be before the preparation period starts',
+  path: ['implementationDate'],
 });
 
 export default function ProgramEdit() {
@@ -65,6 +72,7 @@ export default function ProgramEdit() {
         ...program,
         startDate: program.startDate?.slice(0, 10),
         endDate: program.endDate?.slice(0, 10),
+        implementationDate: program.implementationDate?.slice(0, 10) || '',
         budgetRef: program.budgetRef?._id || program.budgetRef || '',
       });
     }
@@ -74,8 +82,7 @@ export default function ProgramEdit() {
     mutationFn: (data) => programService.update(id, data),
     onSuccess: () => {
       toast.success('Program updated');
-      queryClient.invalidateQueries(['program', id]);
-      queryClient.invalidateQueries(['programs']);
+      refreshAll(queryClient);
       navigate(`/programs/${id}`);
     },
     onError: (e) => toast.error(e.message || 'Failed to update program'),
@@ -184,11 +191,32 @@ export default function ProgramEdit() {
           {/* Single column on phones — two date controls at 360px wide leave neither wide enough
               to show its own value. Matches the create form. */}
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            <Field id="startDate" label="Start Date" required error={errors.startDate}>
+            <Field
+              id="startDate"
+              label="Start Date"
+              required
+              error={errors.startDate}
+              hint="When preparation and the submission of requirements begin."
+            >
               <input {...register('startDate')} type="date" className={control} />
             </Field>
-            <Field id="endDate" label="End Date" required error={errors.endDate}>
+            <Field
+              id="endDate"
+              label="End Date"
+              required
+              error={errors.endDate}
+              hint="Deadline for preparation and requirements."
+            >
               <input {...register('endDate')} type="date" className={control} />
+            </Field>
+            <Field
+              id="implementationDate"
+              label="Implementation Date"
+              optional
+              error={errors.implementationDate}
+              hint="The day the activity itself takes place. Required before the programme can be marked completed."
+            >
+              <input {...register('implementationDate')} type="date" className={control} />
             </Field>
             <Field id="budget" label="Budget (₱)" required error={errors.budget}>
               <input {...register('budget')} type="number" min="0" step="0.01" className={`${control} numeric`} />

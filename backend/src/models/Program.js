@@ -57,8 +57,20 @@ const programSchema = new mongoose.Schema(
     budget: { type: Number, default: 0, min: 0 },
     budgetRef: { type: mongoose.Schema.Types.ObjectId, ref: 'Budget', default: null },
     actualExpenses: { type: Number, default: 0 },
+    /*
+     * Three dates, three meanings — the panel asked for them to be kept apart:
+     *
+     *   startDate           opening of the preparation / requirements-submission period
+     *   endDate             deadline or close of that period
+     *   implementationDate  the day the activity itself actually takes place
+     *
+     * The implementation date is never derived from the other two. It is optional when a programme
+     * is planned (the day may not be fixed yet) but must not fall before the preparation period
+     * opens, and a programme cannot be marked completed without one — see programController.
+     */
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
+    implementationDate: { type: Date, default: null },
     targetParticipants: { type: Number, default: 0 },
     actualParticipants: { type: Number, default: 0 },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -89,6 +101,8 @@ const programSchema = new mongoose.Schema(
 programSchema.index({ municipality: 1, status: 1, deletedAt: 1 });
 programSchema.index({ municipality: 1, category: 1, deletedAt: 1 });
 programSchema.index({ startDate: 1, endDate: 1 });
+programSchema.index({ implementationDate: 1 });
+programSchema.index({ municipality: 1, barangay: 1, deletedAt: 1 });
 programSchema.index({ deletedAt: 1 });
 programSchema.index({ title: 'text', description: 'text' });
 

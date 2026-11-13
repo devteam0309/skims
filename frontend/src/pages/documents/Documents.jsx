@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, Download, Archive, ArchiveRestore, Trash2,
-  File, FileText, Image as ImageIcon, RefreshCw, History, RotateCcw,
+  File, FileText, Image as ImageIcon, RefreshCw, History, RotateCcw, Eye,
 } from 'lucide-react';
+import FilePreview from '../../components/shared/FilePreview';
 import { documentService } from '../../services/documentService';
 import DataTable from '../../components/shared/DataTable';
 import Modal from '../../components/shared/Modal';
@@ -16,7 +17,7 @@ import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
 import ComboInput from '../../components/shared/ComboInput';
-import { DOCUMENT_CATEGORIES, DOC_UPLOADERS, DOC_EDITORS, ADMIN_ROLES } from '../../utils/constants';
+import { DOCUMENT_CATEGORIES, DOC_UPLOADERS, DOC_EDITORS, BARANGAY_BOUND_ROLES } from '../../utils/constants';
 
 const FILE_ICONS = {
   'application/pdf': FileText,
@@ -41,7 +42,20 @@ export default function Documents() {
   const { user } = useAuthStore();
   const canUpload = DOC_UPLOADERS.includes(user?.role);
   const canEdit = DOC_EDITORS.includes(user?.role);
-  const canDelete = ADMIN_ROLES.includes(user?.role);
+  /*
+   * Moving a document to the recycle bin (October 2026): every uploader may, within their own
+   * barangay — an editor any of its documents, the treasurer only what they uploaded — and a
+   * barangay officer never a municipality-level document. The server applies the same rule; this
+   * only decides where the button appears.
+   */
+  const isBound = BARANGAY_BOUND_ROLES.includes(user?.role) && Boolean(user?.barangay);
+  const canBin = (row) => {
+    if (!canUpload) return false;
+    const mine = (row.uploadedBy?._id || row.uploadedBy) === user?._id;
+    if (isBound && !row.barangay && !mine) return false;
+    return canEdit || mine;
+  };
+  const [previewTarget, setPreviewTarget] = useState(null);
 
   const [showModal, setShowModal] = useState(false);
   const [filters, setFilters] = useState({ page: 1, limit: 10, search: '', category: '', isArchived: false });
@@ -72,7 +86,7 @@ export default function Documents() {
     queryKey: ['documents', 'recycle-bin', binPage],
     queryFn: () => documentService.getDeleted({ page: binPage, limit: 10 }).then((r) => r.data),
     // Only fetched while the bin is open, and only for the roles that may act on it.
-    enabled: showRecycleBin && canDelete,
+    enabled: showRecycleBin && canUpload,
   });
 
   const closeUpload = () => { setShowModal(false); setFile(null); setUploadForm(emptyUploadForm()); };
@@ -180,7 +194,7 @@ export default function Documents() {
   const handleDelete = async (id, title) => {
     const result = await confirm.archive({
       title: 'Move to the recycle bin?',
-      text: `"${title}" will leave the document list. An administrator can restore it from the recycle bin.`,
+      text: `"${title}" will leave the document list. It stays in your barangay's recycle bin, where it can be restored.`,
       confirmText: 'Move to recycle bin',
     });
     if (result.isConfirmed) deleteMutation.mutate(id);
@@ -230,8 +244,8 @@ export default function Documents() {
     try {
       const res = await documentService.serve(doc._id);
       downloadBlob(res.data, doc.originalName || doc.fileName || doc.title);
-    } catch {
-      toast.error('Failed to download document');
+    } catch (err) {
+      toast.error(err.message || 'Failed to download document');
     }
   };
 
@@ -239,8 +253,8 @@ export default function Documents() {
     try {
       const res = await documentService.serveVersion(doc._id, pv.version);
       downloadBlob(res.data, pv.fileName?.split('/').pop() || `${doc.title}_v${pv.version}`);
-    } catch {
-      toast.error('Failed to download version');
+    } catch (err) {
+      toast.error(err.message || 'Failed to download version');
     }
   };
 
@@ -313,8 +327,26 @@ export default function Documents() {
         );
       },
     },
-    { key: 'category', header: 'Category', render: (v) => <span className="text-xs capitalize">{v?.replace(/_/g, ' ')}</span> },
-    { key: 'municipality', header: 'Municipality', render: (v) => v?.name || 'All' },
+    {
+      key: 'category',
+      header: 'Category',
+      // The list's own label first, so ABYIP and CBYDP keep their capitals; a typed one reads as words.
+      render: (v) => {
+        const label = DOCUMENT_CATEGORIES.find((c) => c.value === v)?.label;
+        return <span className={`text-xs ${label ? '' : 'capitalize'}`}>{label || v?.replace(/_/g, ' ')}</span>;
+      },
+    },
+    {
+      key: 'municipality',
+      header: 'Barangay',
+      // The barangay a document is filed under — all three of its officers share it.
+      render: (v, row) => (
+        <div className="text-xs">
+          {row.barangay?.name || <span className="meta-text">Municipality level</span>}
+          {v?.name && <p className="meta-text">{v.name}</p>}
+        </div>
+      ),
+    },
     {
       key: 'uploadedBy',
       header: 'Uploaded By',
@@ -334,6 +366,11 @@ export default function Documents() {
         <div className="flex items-center gap-1">
           {/* These carried a `title` tooltip but no accessible name, so each announced as a bare
               "button" — seven identical ones per row. */}
+          {/((pdf)|(image\/))/i.test(row.fileType || '') && (
+            <IconButton onClick={() => setPreviewTarget(row)} label={`Preview ${row.title}`} hover="hover:text-navy-700 dark:hover:text-navy-300">
+              <Eye size={14} aria-hidden="true" />
+            </IconButton>
+          )}
           <IconButton onClick={() => handleDownload(row)} label={`Download ${row.title}`} hover="hover:text-navy-700 dark:hover:text-navy-300">
             <Download size={14} aria-hidden="true" />
           </IconButton>
@@ -357,7 +394,7 @@ export default function Documents() {
               <ArchiveRestore size={14} aria-hidden="true" />
             </IconButton>
           )}
-          {canDelete && (
+          {canBin(row) && (
             <IconButton onClick={() => handleDelete(id, row.title)} label={`Delete ${row.title}`} hover="hover:text-red-600 dark:hover:text-red-400">
               <Trash2 size={14} aria-hidden="true" />
             </IconButton>
@@ -369,15 +406,19 @@ export default function Documents() {
 
   return (
     <div className="space-y-5">
+      <FilePreview
+        file={previewTarget ? { key: previewTarget._id, name: previewTarget.originalName || previewTarget.title, type: previewTarget.fileType } : null}
+        load={() => documentService.serve(previewTarget._id, { inline: true })}
+        onClose={() => setPreviewTarget(null)}
+      />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="page-title">Document Management</h1>
           <p className="page-subtitle">Central repository for all SK documents</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {/* Only offered to the roles that can delete, since the bin holds nothing they did not
-              produce and restoring is their decision. */}
-          {canDelete && (
+          {/* Every uploader has a bin now, holding their own barangay's deleted documents. */}
+          {canUpload && (
             <button
               type="button"
               aria-pressed={showRecycleBin}
@@ -794,6 +835,7 @@ function IconButton({ onClick, label, hover, children }) {
  * missing file actually needs to know.
  */
 function RecycleBin({ data, loading, onPageChange, onRestore, onPermanentDelete, restoring, destroying }) {
+  // Per row, from the server: whether this caller may restore it, and whether they may destroy it.
   const rows = data?.data || [];
 
   return (
@@ -847,6 +889,7 @@ function RecycleBin({ data, loading, onPageChange, onRestore, onPermanentDelete,
             header: 'Actions',
             render: (id, row) => (
               <div className="flex flex-wrap items-center gap-1.5">
+                {row.canRestore !== false && (
                 <button
                   type="button"
                   onClick={() => onRestore(id, row.title)}
@@ -857,6 +900,8 @@ function RecycleBin({ data, loading, onPageChange, onRestore, onPermanentDelete,
                   <RotateCcw size={12} aria-hidden="true" />
                   Restore
                 </button>
+                )}
+                {row.canPermanentlyDelete && (
                 <button
                   type="button"
                   onClick={() => onPermanentDelete(id, row.title)}
@@ -867,6 +912,7 @@ function RecycleBin({ data, loading, onPageChange, onRestore, onPermanentDelete,
                   <Trash2 size={12} aria-hidden="true" />
                   Delete forever
                 </button>
+                )}
               </div>
             ),
           },

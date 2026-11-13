@@ -26,6 +26,7 @@ import ProgramEdit from './pages/programs/ProgramEdit';
 import Budgets from './pages/funds/Budgets';
 import Expenses from './pages/funds/Expenses';
 import Liquidations from './pages/funds/Liquidations';
+import BarangayFinances from './pages/funds/BarangayFinances';
 
 // Documents
 import Documents from './pages/documents/Documents';
@@ -70,7 +71,7 @@ import YouthLayout from './components/layout/YouthLayout';
 import MyPrograms from './pages/youth/MyPrograms';
 import MyDetails from './pages/youth/MyDetails';
 
-import { STAFF, PROGRAM_EDITORS, EDITOR_ROLES as CONTENT_EDITORS, REPORT_VIEWERS, USER_ADMINS, homeFor } from './utils/constants';
+import { STAFF, PROGRAM_EDITORS, REPORT_VIEWERS, USER_ADMINS, FINANCE_MONITORS, homeFor } from './utils/constants';
 
 // homeFor lives in utils/constants so PublicLayout resolves the same destination — see there.
 
@@ -143,6 +144,7 @@ export default function App() {
           <Route path="/budgets" element={<Budgets />} />
           <Route path="/expenses" element={<Expenses />} />
           <Route path="/liquidations" element={<Liquidations />} />
+          <Route path="/finance/barangays" element={<ProtectedRoute roles={FINANCE_MONITORS}><BarangayFinances /></ProtectedRoute>} />
           <Route path="/documents" element={<Documents />} />
           <Route path="/reports" element={<ProtectedRoute roles={REPORT_VIEWERS}><Reports /></ProtectedRoute>} />
           <Route path="/monitoring" element={<Monitoring />} />
@@ -151,7 +153,9 @@ export default function App() {
           <Route path="/profile" element={<UserProfile />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/youth" element={<Youth />} />
-          <Route path="/announcements" element={<ProtectedRoute roles={CONTENT_EDITORS}><Announcements /></ProtectedRoute>} />
+          {/* Every staff role reads announcements; who may write or change one is decided per
+              announcement by the server. */}
+          <Route path="/announcements" element={<Announcements />} />
           <Route path="/audit-logs" element={<ProtectedRoute roles={USER_ADMINS}><AuditLogs /></ProtectedRoute>} />
         </Route>
 

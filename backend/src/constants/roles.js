@@ -1,10 +1,27 @@
+/*
+ * `sk_kagawad` was removed from the system in the October 2026 panel round. The panel asked for it
+ * to be dropped from registration, and the live database held no account with the role, so it is
+ * gone from the enum and from every group below rather than lingering as a value nothing assigns.
+ * `scripts/migrate-barangay-finance.js` reports any account still carrying it before this ships.
+ */
 const ADMINS = ['super_admin', 'provincial_admin', 'municipal_admin'];
-const STAFF = [...ADMINS, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'];
+const STAFF = [...ADMINS, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'dilg_representative'];
 const EDITORS = [...ADMINS, 'sk_chairperson', 'sk_secretary'];
 const YOUTH_REGISTRARS = [...ADMINS, 'sk_chairperson'];
-const YOUTH_EDITORS = [...ADMINS, 'sk_chairperson', 'sk_secretary', 'sk_kagawad'];
-const DOC_UPLOADERS = [...ADMINS, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad'];
+const YOUTH_EDITORS = [...ADMINS, 'sk_chairperson', 'sk_secretary'];
+const DOC_UPLOADERS = [...ADMINS, 'sk_chairperson', 'sk_treasurer', 'sk_secretary'];
 const DOC_EDITORS = [...ADMINS, 'sk_chairperson', 'sk_secretary'];
+
+/*
+ * The three SK offices a barangay has exactly one of.
+ *
+ * A barangay has one chairperson, one treasurer and one secretary, so each (barangay, office) pair
+ * is a seat that at most one account may hold — enforced by a unique index on `User.seatKey`, not
+ * only by the check registration makes first. Pending applications hold the seat too, so two
+ * applicants cannot both claim it while waiting for review; a rejected, deactivated or deleted
+ * account releases it.
+ */
+const SEAT_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary'];
 
 /* --------------------------------------------------------------------------------------------- *
  * Municipality reach
@@ -54,9 +71,59 @@ const FINANCE_EDITORS = [...ADMINS, 'sk_treasurer'];
 const FINANCE_APPROVERS = [...ADMINS];
 const BUDGET_APPROVERS = [...ADMINS];
 
+/*
+ * Who reads the per-barangay financial performance view: the officers who review barangay money,
+ * plus DILG's province-wide oversight. Barangay officers see their own figures on the ordinary
+ * budget pages; a table comparing every barangay is the municipality's tool, not theirs.
+ */
+const FINANCE_MONITORS = [...ADMINS, 'dilg_representative'];
+
+/*
+ * Registration.
+ *
+ * `municipal_admin` became self-registrable at the panel's request — it was the role the register
+ * form was "missing". It is safe to offer only because every non-youth registration waits for a
+ * super_admin to approve it, and the approval refuses an applicant who uploaded no identity or
+ * residency document (see VERIFICATION_REQUIRED_ROLES). `provincial_admin` and `super_admin`
+ * remain assignable only by an existing administrator.
+ */
+const SELF_ASSIGNABLE_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'municipal_admin', 'dilg_representative', 'youth'];
+
+/*
+ * Applicants who must prove who they are before a super_admin may let them in. Every
+ * self-registering role except `youth`, which approves itself and is vetted through its registry
+ * record instead.
+ */
+const VERIFICATION_REQUIRED_ROLES = SELF_ASSIGNABLE_ROLES.filter((r) => r !== 'youth');
+
+/*
+ * Kinds of supporting document an applicant may attach, as the panel listed them. Stored with each
+ * upload so the approver knows what they are looking at before opening it.
+ */
+const VERIFICATION_DOCUMENT_TYPES = ['government_id', 'kk_id', 'proof_of_residency'];
+
+/*
+ * Rank used to decide who may change an announcement someone else wrote: an account may manage
+ * announcements issued by a strictly LOWER authority within its reach, and its own. A barangay
+ * officer therefore cannot touch what the municipal, provincial or DILG level published.
+ */
+const AUTHORITY_RANK = {
+  super_admin: 5,
+  provincial_admin: 4,
+  dilg_representative: 4,
+  municipal_admin: 3,
+  sk_chairperson: 1,
+  sk_secretary: 1,
+  sk_treasurer: 1,
+  youth: 0,
+};
+
 module.exports = {
   ADMINS, STAFF, EDITORS,
   YOUTH_REGISTRARS, YOUTH_EDITORS, DOC_UPLOADERS, DOC_EDITORS,
+  SEAT_ROLES,
   CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE,
-  REPORT_VIEWERS, FINANCE_EDITORS, FINANCE_APPROVERS, BUDGET_APPROVERS,
+  REPORT_VIEWERS, FINANCE_EDITORS, FINANCE_APPROVERS, BUDGET_APPROVERS, FINANCE_MONITORS,
+  SELF_ASSIGNABLE_ROLES, VERIFICATION_REQUIRED_ROLES, VERIFICATION_DOCUMENT_TYPES,
+  AUTHORITY_RANK,
 };

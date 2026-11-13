@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { SEAT_ROLES, VERIFICATION_DOCUMENT_TYPES } = require('../constants/roles');
 
 const ROLES = [
   'super_admin',
@@ -10,7 +11,7 @@ const ROLES = [
   'sk_chairperson',
   'sk_treasurer',
   'sk_secretary',
-  'sk_kagawad',
+  // `sk_kagawad` was removed in the October 2026 panel round — see constants/roles.js.
   'dilg_representative',
   // A member of the Katipunan ng Kabataan with their own login: tied to a registry record, and
   // able to ask to join its municipality's programmes. Deliberately absent from every group in
@@ -21,6 +22,35 @@ const ROLES = [
   // the silent catch-all for any unrecognised role at registration, which hid a real bug.
   'youth',
 ];
+
+/*
+ * A document an applicant uploaded to prove who they are and that they belong to the barangay they
+ * claim. Stored privately (services/fileStorage.js) and readable only by super_admin, through
+ * GET /api/users/:id/verification-documents/:docId.
+ *
+ * The storage fields are stripped from every JSON response by the transform below: they are of no
+ * use to a client, and the file is reachable through the authorised route alone.
+ */
+const verificationDocumentSchema = new mongoose.Schema({
+  documentType: { type: String, enum: VERIFICATION_DOCUMENT_TYPES, required: true },
+  originalName: String,
+  fileType: String,
+  fileSize: Number,
+  storageType: String,
+  publicId: String,
+  resourceType: String,
+  version: Number,
+  uploadedAt: { type: Date, default: Date.now },
+});
+verificationDocumentSchema.set('toJSON', {
+  transform: (doc, ret) => {
+    delete ret.storageType;
+    delete ret.publicId;
+    delete ret.resourceType;
+    delete ret.version;
+    return ret;
+  },
+});
 
 const userSchema = new mongoose.Schema(
   {
@@ -85,12 +115,32 @@ const userSchema = new mongoose.Schema(
     pendingEmailRequestedAt: Date,
     pendingEmailRejectedAt: Date,
     pendingEmailRejectionReason: String,
+    /*
+     * Identity and residency proof submitted at registration. Required for every role that waits
+     * for approval (constants/roles.js VERIFICATION_REQUIRED_ROLES); approval refuses an applicant
+     * who has none, because the panel's rule is that verification is not complete without it.
+     */
+    verificationDocuments: [verificationDocumentSchema],
+    // Why an application was refused, and by whom — shown to the applicant and kept for the record.
+    rejectedAt: Date,
+    rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectionReason: String,
+    /*
+     * The SK seat this account occupies: `<barangayId>:<role>` for a chairperson, treasurer or
+     * secretary whose account is active, and absent otherwise. A unique (sparse) index on it is what
+     * makes "one chairperson per barangay" hold even when two applicants register at the same
+     * instant — a check-then-insert alone cannot. Pending applications occupy the seat, so nobody can
+     * claim it while another is awaiting review; rejecting, deactivating or deleting the account
+     * releases it. Maintained by the pre-save hook below — never set it directly.
+     */
+    seatKey: { type: String, default: undefined },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
 // Indexes
+userSchema.index({ seatKey: 1 }, { unique: true, sparse: true });
 userSchema.index({ role: 1 });
 // Serves the pending-email-change queue, and the uniqueness check against addresses already claimed
 // by an outstanding request.
@@ -102,6 +152,33 @@ userSchema.index({ deletedAt: 1 });
 // Virtual: full name
 userSchema.virtual('fullName').get(function () {
   return `${this.firstName} ${this.lastName}`;
+});
+
+/**
+ * The seat an account would occupy in its current state, or undefined.
+ *
+ * Exported as a static so the registration pre-check and the migration compute exactly what the
+ * hook below stores.
+ */
+const seatKeyFor = (u) => {
+  const barangay = u?.barangay?._id || u?.barangay;
+  if (!SEAT_ROLES.includes(u?.role) || !barangay) return undefined;
+  if (u.isActive === false || u.deletedAt) return undefined;
+  return `${barangay.toString()}:${u.role}`;
+};
+userSchema.statics.seatKeyFor = seatKeyFor;
+
+/*
+ * Recomputed only when something that decides the seat changes. Every login saves the account (to
+ * reset the attempt counter), and recomputing there would turn a pre-existing duplicate seat into a
+ * failed sign-in instead of a finding for scripts/migrate-barangay-finance.js to report.
+ */
+userSchema.pre('save', function (next) {
+  if (this.isNew || this.isModified('role') || this.isModified('barangay')
+    || this.isModified('isActive') || this.isModified('deletedAt')) {
+    this.seatKey = seatKeyFor(this);
+  }
+  next();
 });
 
 // Hash password before save

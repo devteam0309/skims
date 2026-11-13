@@ -222,17 +222,47 @@ exports.sendExpenseApproved = async (user, expense) => {
   });
 };
 
-exports.sendExpenseRejected = async (user, expense) => {
+// Returned for correction: the treasurer can fix it, add proof, and submit it again.
+exports.sendExpenseReturned = async (user, expense) => {
   await sendEmail({
     to: user.email,
     subject: `SKIMS — Expense Returned: ${expense.referenceNumber}`,
     html: wrap(`
-      <h2 style="color:#1e3a5f">Expense Returned</h2>
-      <p>Hello ${esc(user.firstName)}, your expense <strong>${esc(expense.title)}</strong> (${esc(expense.referenceNumber)}) was not approved.</p>
+      <h2 style="color:#1e3a5f">Expense Returned for Correction</h2>
+      <p>Hello ${esc(user.firstName)}, your expense <strong>${esc(expense.title)}</strong> (${esc(expense.referenceNumber)}) was returned to you.</p>
+      <p style="color:#555">Amount: <strong>${peso(expense.amount)}</strong></p>
+      <p style="color:#555">Reviewer's remarks: <strong>${esc(expense.returnReason || 'No remarks given')}</strong></p>
+      <p style="color:#555">Correct the record or attach the missing proof, then submit it again.</p>
+      ${btn(`${process.env.CLIENT_URL}/expenses`, 'View Expenses')}
+    `),
+  });
+};
+
+// Rejected outright: a final decision, not a request for changes.
+exports.sendExpenseRejected = async (user, expense) => {
+  await sendEmail({
+    to: user.email,
+    subject: `SKIMS — Expense Rejected: ${expense.referenceNumber}`,
+    html: wrap(`
+      <h2 style="color:#c0392b">Expense Rejected</h2>
+      <p>Hello ${esc(user.firstName)}, your expense <strong>${esc(expense.title)}</strong> (${esc(expense.referenceNumber)}) was rejected.</p>
       <p style="color:#555">Amount: <strong>${peso(expense.amount)}</strong></p>
       <p style="color:#555">Reason: <strong>${esc(expense.rejectionReason || 'No reason given')}</strong></p>
-      <p style="color:#555">You can edit the record and submit it again.</p>
       ${btn(`${process.env.CLIENT_URL}/expenses`, 'View Expenses')}
+    `),
+  });
+};
+
+exports.sendLiquidationReturned = async (user, liquidation, reason) => {
+  await sendEmail({
+    to: user.email,
+    subject: `SKIMS — Liquidation Returned: ${liquidation.referenceNumber}`,
+    html: wrap(`
+      <h2 style="color:#1e3a5f">Liquidation Report Returned for Correction</h2>
+      <p>Hello ${esc(user.firstName)}, your liquidation report <strong>${esc(liquidation.title)}</strong> (${esc(liquidation.referenceNumber)}) was returned to you.</p>
+      ${reason ? `<p style="color:#555">Reviewer's remarks: <em>${esc(reason)}</em></p>` : ''}
+      <p style="color:#555">Add the missing supporting documents or correct the report, then submit it again.</p>
+      ${btn(`${process.env.CLIENT_URL}/liquidations`, 'View Liquidations')}
     `),
   });
 };

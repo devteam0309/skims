@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import BarangayPanel from '../../components/shared/BarangayPanel';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -25,7 +26,7 @@ const CROSS_MUNICIPALITY_ROLES = ['super_admin', 'provincial_admin'];
 export default function Programs() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const [filters, setFilters] = useState({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '', barangay: '' });
+  const [filters, setFilters] = useState({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '', barangay: '', sort: '' });
 
   // Debouncing lives in SearchInput now. This page had the original hand-rolled copy, written
   // before the behaviour was extracted for the funds pages; keeping it meant two implementations
@@ -109,9 +110,21 @@ export default function Programs() {
     enabled: !isBarangayBound,
   });
 
+  /*
+   * Programmes per barangay, for the accounts that oversee more than one (7.1). Every barangay of the
+   * municipality is listed with its counts — including those with none yet — and choosing one
+   * filters the table below to it. A barangay officer has one barangay and gets no panel.
+   */
+  const { data: barangaySummary } = useQuery({
+    queryKey: ['program-barangay-summary', filters.municipality],
+    queryFn: () => programService.getBarangaySummary(filters.municipality ? { municipality: filters.municipality } : undefined)
+      .then((r) => r.data.data),
+    enabled: !isBarangayBound,
+  });
+
   // SearchInput mirrors `value`, so clearing the filter clears the box — no separate reset needed.
   const clearFilters = () => {
-    setFilters({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '', barangay: '' });
+    setFilters({ page: 1, limit: 12, search: '', status: '', approvalStatus: '', category: '', municipality: '', barangay: '', sort: '' });
   };
 
   return (
@@ -139,6 +152,30 @@ export default function Programs() {
           </Link>
         )}
       </div>
+
+      {!isBarangayBound && barangaySummary && (
+        <BarangayPanel
+          title="Programs by barangay"
+          rows={barangaySummary.barangays.map((r) => ({
+            id: r.barangay._id,
+            name: r.barangay.name,
+            primary: r.total,
+            primaryLabel: r.total === 1 ? 'program' : 'programs',
+            detail: [
+              r.ongoing ? `${r.ongoing} ongoing` : null,
+              r.completed ? `${r.completed} completed` : null,
+              r.awaitingApproval ? `${r.awaitingApproval} awaiting approval` : null,
+            ].filter(Boolean).join(' · '),
+          }))}
+          municipalityWide={barangaySummary.municipalityWide.total ? {
+            primary: barangaySummary.municipalityWide.total,
+            primaryLabel: barangaySummary.municipalityWide.total === 1 ? 'program' : 'programs',
+          } : null}
+          selected={filters.barangay}
+          onSelect={(barangay) => setFilters((f) => ({ ...f, barangay, page: 1 }))}
+          hint={isCrossMunicipality && !filters.municipality ? 'Choose a municipality to list all of its barangays.' : null}
+        />
+      )}
 
       <section aria-label="Filter programs" className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
         <div className="flex flex-wrap gap-3">
@@ -229,6 +266,7 @@ export default function Programs() {
                 className="max-w-[12rem] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
               >
                 <option value="">All barangays</option>
+                <option value="none">Municipality-wide only</option>
                 {barangayMunicipalityId || !isCrossMunicipality
                   ? barangayOptions.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)
                   : Object.entries(
@@ -245,6 +283,20 @@ export default function Programs() {
               </select>
             </div>
           )}
+
+          <div>
+            <label htmlFor="program-sort" className="sr-only">Order programs</label>
+            <select
+              id="program-sort"
+              value={filters.sort}
+              onChange={(e) => setFilters({ ...filters, sort: e.target.value, page: 1 })}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+            >
+              <option value="">Newest first</option>
+              {!isBarangayBound && <option value="barangay">Grouped by barangay</option>}
+              <option value="implementationDate">By implementation date</option>
+            </select>
+          </div>
 
           {/* There was no way out of a filter combination that returned nothing. */}
           {hasFilters && (
@@ -330,7 +382,7 @@ export default function Programs() {
             */}
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div className="overflow-x-auto">
-              <table className="data-table w-full min-w-[64rem]">
+              <table className="data-table w-full min-w-[70rem]">
                 <caption className="sr-only">
                   Programs, with municipality, target barangay, status, dates, budget and progress
                 </caption>
@@ -340,7 +392,8 @@ export default function Programs() {
                     <th scope="col">Municipality</th>
                     <th scope="col">Barangay</th>
                     <th scope="col">Status</th>
-                    <th scope="col">Dates</th>
+                    <th scope="col">Preparation</th>
+                    <th scope="col">Implementation</th>
                     <th scope="col" className="cell-numeric">Budget</th>
                     <th scope="col" className="cell-numeric">Participants</th>
                     <th scope="col">Progress</th>
@@ -381,6 +434,12 @@ export default function Programs() {
                       <td className="whitespace-nowrap text-xs">
                         {formatDate(program.startDate)}
                         <span className="meta-text"> to {formatDate(program.endDate)}</span>
+                      </td>
+                      {/* The day the activity happens — distinct from the preparation window. */}
+                      <td className="whitespace-nowrap text-xs">
+                        {program.implementationDate
+                          ? formatDate(program.implementationDate)
+                          : <span className="meta-text">Not yet set</span>}
                       </td>
                       <td className="cell-numeric">{formatCurrency(program.budget)}</td>
                       <td className="cell-numeric">

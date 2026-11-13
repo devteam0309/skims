@@ -103,6 +103,16 @@ exports.authorize = (...roles) => {
   };
 };
 
+/*
+ * Attach the caller when there is a usable session, and carry on anonymously when there is not.
+ *
+ * Used by the document download routes, which serve public documents to anyone. It used to attach
+ * whatever account a valid token named — deactivated, unapproved, soft-deleted, or a youth account —
+ * so a token that `protect` would refuse still opened every non-public document in its
+ * municipality, and the youth allowlist above was bypassed entirely. The account now has to pass
+ * the same checks `protect` makes; anything less is treated as signed out, which for a non-public
+ * document means 401.
+ */
 exports.optionalAuth = asyncHandler(async (req, res, next) => {
   let token;
   if (req.cookies?.token) {
@@ -113,8 +123,11 @@ exports.optionalAuth = asyncHandler(async (req, res, next) => {
   if (token) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id);
-    } catch (_) {}
+      const user = await User.findById(decoded.id).populate('municipality', 'name code').populate('barangay', 'name');
+      const usable = user && !user.deletedAt && user.isEmailVerified && user.isActive && user.isApproved;
+      const allowed = usable && (user.role !== 'youth' || youthMayAccess(req.method, req.originalUrl));
+      if (allowed) req.user = user;
+    } catch (_) { /* an invalid token is the same as none */ }
   }
   next();
 });

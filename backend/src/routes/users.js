@@ -7,9 +7,14 @@ const {
   getUsers, getUser, approveUser, rejectUser,
   updateUserRole, toggleUserStatus, deleteUser, getPendingApprovals,
   getPendingEmailChanges, approveEmailChange, rejectEmailChange, updateUserBarangay,
+  getVerificationDocument,
 } = require('../controllers/userController');
 
 const idParam = validate([param('id').isMongoId().withMessage('Invalid user ID')]);
+const documentParams = validate([
+  param('id').isMongoId().withMessage('Invalid user ID'),
+  param('docId').isMongoId().withMessage('Invalid document ID'),
+]);
 // Clearing the assignment is legitimate, so an empty value is allowed; a present one must be an id.
 const barangayValidation = validate([
   body('barangay').optional({ checkFalsy: true }).isMongoId().withMessage('Invalid barangay ID'),
@@ -28,8 +33,10 @@ router.get('/pending', authorize('super_admin'), getPendingApprovals);
 // Declared before '/:id' so "email-changes" is not parsed as a user id.
 router.get('/email-changes', authorize('super_admin'), getPendingEmailChanges);
 router.get('/:id', getUser);
-router.put('/:id/approve', authorize('super_admin'), approveUser);
-router.put('/:id/reject', authorize('super_admin'), rejectUser);
+// An applicant's identity / residency proof. Same guard as approval: the reviewer, and nobody else.
+router.get('/:id/verification-documents/:docId', authorize('super_admin'), documentParams, getVerificationDocument);
+router.put('/:id/approve', authorize('super_admin'), idParam, approveUser);
+router.put('/:id/reject', authorize('super_admin'), idParam, rejectUser);
 router.put('/:id/role', authorize('super_admin'), updateUserRole);
 router.put('/:id/toggle-status', authorize('super_admin'), toggleUserStatus);
 /*

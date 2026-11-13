@@ -2,7 +2,7 @@ const request = require('supertest');
 const mongoose = require('mongoose');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
-const { createUser, createBudget, createProgram, authHeader } = require('./helpers');
+const { createUser, createBudget, createProgram, authHeader, multipart } = require('./helpers');
 const Expense = require('../models/Expense');
 
 jest.mock('../services/emailService', () => ({
@@ -24,17 +24,16 @@ const EXPENSE = (overrides = {}) => ({
 describe('Expense vendorName → vendor.name mapping', () => {
   it('maps the flat vendorName field onto vendor.name on create', async () => {
     const { token } = await createUser({ role: 'sk_treasurer' });
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE({ vendorName: 'Acme Trading' }));
+      .set(authHeader(token)), EXPENSE({ vendorName: 'Acme Trading' }));
     expect(res.status).toBe(201);
     expect(res.body.data.vendor.name).toBe('Acme Trading');
   });
 
   it('maps vendorName onto vendor.name on update', async () => {
     const { token } = await createUser({ role: 'sk_treasurer' });
-    const created = await request(app).post('/api/expenses').set(authHeader(token)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(token)), EXPENSE());
     const id = created.body.data._id;
 
     const res = await request(app)
@@ -59,10 +58,9 @@ describe('Expense category allocation enforcement', () => {
       allocations: [{ category: 'education', amount: 2000 }],
     });
 
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE({ amount: 2001, budget: budget._id.toString(), program: program._id.toString() }));
+      .set(authHeader(token)), EXPENSE({ amount: 2001, budget: budget._id.toString(), program: program._id.toString() }));
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/category allocation/i);
   });
@@ -72,10 +70,9 @@ describe('Expense cross-municipality / status guards', () => {
   it('blocks creating an expense for another municipality (403)', async () => {
     const { token } = await createUser({ role: 'sk_treasurer' });
     const otherMunId = new mongoose.Types.ObjectId().toString();
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE({ municipality: otherMunId }));
+      .set(authHeader(token)), EXPENSE({ municipality: otherMunId }));
     expect(res.status).toBe(403);
     expect(res.body.message).toMatch(/another municipality/i);
   });
@@ -83,7 +80,7 @@ describe('Expense cross-municipality / status guards', () => {
   it('blocks editing an approved expense (400)', async () => {
     const { token: creator, municipalityId } = await createUser({ role: 'sk_treasurer' });
     const { token: approver } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
-    const created = await request(app).post('/api/expenses').set(authHeader(creator)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(creator)), EXPENSE());
     const id = created.body.data._id;
     await request(app).patch(`/api/expenses/${id}/approve`).set(authHeader(approver));
 
@@ -95,7 +92,7 @@ describe('Expense cross-municipality / status guards', () => {
   it('blocks deleting an approved expense (400)', async () => {
     const { token: creator, municipalityId } = await createUser({ role: 'sk_treasurer' });
     const { token: admin } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
-    const created = await request(app).post('/api/expenses').set(authHeader(creator)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(creator)), EXPENSE());
     const id = created.body.data._id;
     await request(app).patch(`/api/expenses/${id}/approve`).set(authHeader(admin));
 
@@ -106,7 +103,7 @@ describe('Expense cross-municipality / status guards', () => {
   it('soft-deletes a pending expense (200)', async () => {
     const { token: creator, municipalityId } = await createUser({ role: 'sk_treasurer' });
     const { token: admin } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
-    const created = await request(app).post('/api/expenses').set(authHeader(creator)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(creator)), EXPENSE());
     const id = created.body.data._id;
 
     const res = await request(app).delete(`/api/expenses/${id}`).set(authHeader(admin));

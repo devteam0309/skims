@@ -45,6 +45,8 @@ const STATUS_TONES = {
   pending_approval: 'warning',
   approved: 'success',
   rejected: 'danger',
+  // Sent back for correction: the author has something to do.
+  returned: 'warning',
   liquidated: 'success',
   // Account state
   active: 'success',

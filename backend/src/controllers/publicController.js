@@ -5,6 +5,9 @@ const Budget = require('../models/Budget');
 const Document = require('../models/Document');
 const Municipality = require('../models/Municipality');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
+const { sendFile } = require('../services/fileStorage');
+const { budgetTotalsStages } = require('../utils/budgetTotals');
+const { objectIdOf } = require('../utils/scope');
 
 const MAX_LIMIT = 100;
 
@@ -20,7 +23,7 @@ exports.getPublicPrograms = asyncHandler(async (req, res) => {
     Program.find(filter)
       .populate('municipality', 'name')
       .populate('barangay', 'name')
-      .select('title description category status budget startDate endDate completionRate targetParticipants actualParticipants')
+      .select('title description category status budget startDate endDate implementationDate completionRate targetParticipants actualParticipants')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(safeLimit),
@@ -51,24 +54,23 @@ exports.getPublicAnnouncements = asyncHandler(async (req, res) => {
 exports.getPublicBudgetSummary = asyncHandler(async (req, res) => {
   const { municipality, fiscalYear } = req.query;
   const filter = { status: 'approved', deletedAt: null };
-  if (municipality) filter.municipality = municipality;
+  // ObjectId, not the raw string: an aggregation does no casting, so a string never matched.
+  if (municipality) filter.municipality = objectIdOf(municipality) || { $in: [] };
   if (fiscalYear) filter.fiscalYear = parseInt(fiscalYear);
 
+  /*
+   * Barangay allocations are carved out of the municipal budget, so summing every approved budget
+   * would publish each allocated peso twice. utils/budgetTotals.js counts the municipal total once
+   * and every disbursement once, wherever it was charged.
+   */
   const summary = await Budget.aggregate([
     { $match: filter },
-    {
-      $group: {
-        _id: '$municipality',
-        totalBudget: { $sum: '$totalBudget' },
-        disbursed: { $sum: '$disbursedAmount' },
-        remaining: { $sum: '$remainingBalance' },
-      },
-    },
+    ...budgetTotalsStages({ byMunicipality: true }),
     {
       $lookup: { from: 'municipalities', localField: '_id', foreignField: '_id', as: 'municipality' },
     },
     { $unwind: '$municipality' },
-    { $project: { 'municipality.name': 1, totalBudget: 1, disbursed: 1, remaining: 1 } },
+    { $project: { 'municipality.name': 1, totalBudget: '$total', disbursed: 1, remaining: 1 } },
   ]);
   successResponse(res, 200, 'Public budget summary', summary);
 });
@@ -106,9 +108,22 @@ exports.downloadPublicDocument = asyncHandler(async (req, res) => {
    * configured, and any future import that registers metadata ahead of the file. Redirecting to an
    * empty or missing URL sends the browser somewhere that does not resolve, which surfaces as
    * ERR_INVALID_RESPONSE and reads as a broken download rather than as a document with no file.
+   *
+   * Documents uploaded since October 2026 are stored privately; a public one is streamed through
+   * here like any other, the `isPublic` check above being its access decision.
    */
-  if (!doc.fileUrl) return errorResponse(res, 404, 'This document has no file attached');
-  res.redirect(302, doc.fileUrl);
+  if ((doc.storageType || 'cloudinary') === 'cloudinary' && !doc.fileUrl) {
+    return errorResponse(res, 404, 'This document has no file attached');
+  }
+  return sendFile(res, {
+    storageType: doc.storageType,
+    publicId: doc.fileName,
+    resourceType: doc.resourceType,
+    version: doc.storageVersion,
+    fileUrl: doc.fileUrl,
+    fileType: doc.fileType,
+    originalName: doc.originalName,
+  }, { disposition: 'attachment' });
 });
 
 exports.getMunicipalities = asyncHandler(async (req, res) => {

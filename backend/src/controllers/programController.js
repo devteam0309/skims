@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const mongoose = require('mongoose');
 const Program = require('../models/Program');
 const Budget = require('../models/Budget');
 const YouthMember = require('../models/YouthMember');
@@ -10,14 +11,76 @@ const { successResponse, errorResponse, paginatedResponse, parsePagination } = r
 const { escapeRegex } = require('../utils/regex');
 const { pickCreatable, pickWritable, toMutation } = require('../utils/writeFields');
 const { CROSS_MUNICIPALITY_READ, CROSS_MUNICIPALITY_WRITE } = require('../constants/roles');
-const { applyReadScope, writeScopeViolation, barangayScopeOf, idOf } = require('../utils/scope');
+const {
+  applyReadScope, writeScopeViolation, readScopeViolation, barangayScopeOf, idOf, objectIdOf,
+} = require('../utils/scope');
 const { checkBarangay, barangayErrorMessage } = require('../utils/barangay');
+const Barangay = require('../models/Barangay');
+const { municipalBudgetAvailability, peso } = require('../utils/budgetTotals');
+const { withTransaction, sessionOpts, httpError } = require('../utils/transaction');
 
 const MAX_LIMIT = 100;
 
+/*
+ * Writes are STRICT for a barangay-bound officer: they may change their own barangay's programmes,
+ * and a municipality-wide one only if they created it themselves. A municipality-wide programme is
+ * the municipal administrator's to manage — before this, any barangay's chairperson could edit or
+ * resubmit it on behalf of every other barangay. Reads stay lenient: municipal programmes are still
+ * listed for every barangay, which is how youth find them.
+ */
+const PROGRAM_WRITE_SCOPE = { strict: true, ownerField: 'createdBy' };
+
+/*
+ * The implementation date — the day the activity actually happens — cannot precede the opening of
+ * the preparation period it follows. It is deliberately NOT compared with the end date: the panel
+ * defined that as the close of requirements submission, which an activity may coincide with.
+ */
+const implementationDateProblem = (implementationDate, startDate) => {
+  if (!implementationDate) return null;
+  const when = new Date(implementationDate);
+  if (Number.isNaN(when.getTime())) return 'Enter a valid implementation date';
+  if (startDate && when < new Date(new Date(startDate).toDateString())) {
+    return 'The implementation date cannot be before the start of the preparation period';
+  }
+  return null;
+};
+
+/**
+ * A programme's budget must be its own level's: a barangay programme is funded from that barangay's
+ * allocation, a municipality-wide one from the municipal budget, and never anything from another
+ * municipality. The link was a bare id before — a hand-built request could attach a programme to any
+ * budget in the province, and approving it would then commit that budget's money.
+ */
+const budgetLinkProblem = async (budgetRef, { municipality, barangay }) => {
+  if (!budgetRef) return null;
+  // Named like errorHandler names a bad field. Querying with it would raise a CastError on `_id`,
+  // which reads as "Resource not found" — the misleading 404 this field once produced.
+  if (!mongoose.Types.ObjectId.isValid(String(budgetRef))) return 'Invalid value for budgetRef';
+  const budget = await Budget.findOne({ _id: budgetRef, deletedAt: null }).select('municipality barangay');
+  if (!budget) return 'The linked budget does not exist';
+  if (idOf(budget.municipality) !== idOf(municipality)) return 'The linked budget belongs to another municipality';
+  if (idOf(budget.barangay) !== idOf(barangay)) {
+    return barangay
+      ? 'A barangay programme must be funded from that barangay\'s own budget allocation'
+      : 'A municipality-wide programme must be funded from the municipal budget';
+  }
+  return null;
+};
+
+/**
+ * Search terms also match barangay NAMES, so a municipal administrator can type "Agot" and see
+ * Agot's programmes. Limited to barangays the caller could see anyway; the read scope applied after
+ * still decides what is returned.
+ */
+const barangayIdsMatching = async (rx, user) => {
+  const filter = { name: rx };
+  if (!CROSS_MUNICIPALITY_READ.includes(user.role)) filter.municipality = objectIdOf(user.municipality) || { $in: [] };
+  const rows = await Barangay.find(filter).select('_id').limit(200).lean();
+  return rows.map((b) => b._id);
+};
 
 exports.getPrograms = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 10, status, approvalStatus, category, municipality, barangay, search, startDate, endDate } = req.query;
+  const { status, approvalStatus, category, municipality, barangay, search, startDate, endDate, sort } = req.query;
   const filter = { deletedAt: null };
 
   if (status) filter.status = status;
@@ -28,10 +91,15 @@ exports.getPrograms = asyncHandler(async (req, res) => {
    * indexed words: searching "Lead" or "Youth Lead" returned nothing while "Leadership" worked,
    * so the box looked broken for any partial term — which is how people actually type. The term
    * is escaped because it is data, not a pattern.
+   *
+   * `location` is an object; the address inside it is what can actually match a term.
    */
   if (search) {
     const rx = { $regex: escapeRegex(search), $options: 'i' };
-    filter.$or = [{ title: rx }, { description: rx }, { location: rx }];
+    const or = [{ title: rx }, { description: rx }, { 'location.address': rx }];
+    const barangayIds = await barangayIdsMatching(rx, req.user);
+    if (barangayIds.length) or.push({ barangay: { $in: barangayIds } });
+    filter.$or = or;
   }
   if (startDate || endDate) {
     filter.startDate = {};
@@ -44,22 +112,126 @@ exports.getPrograms = asyncHandler(async (req, res) => {
    * gets Barangay A plus the municipality-wide programmes that target no single barangay, and a
    * `?barangay=` pointing anywhere else is discarded rather than obeyed — see utils/scope.js.
    */
-  if (CROSS_MUNICIPALITY_READ.includes(req.user?.role) && municipality) filter.municipality = municipality;
+  if (CROSS_MUNICIPALITY_READ.includes(req.user?.role) && municipality) {
+    filter.municipality = objectIdOf(municipality) || { $in: [] };
+  }
   applyReadScope(filter, req.user, { requestedBarangay: barangay });
 
   const { safePage, safeLimit, skip } = parsePagination(req.query, { maxLimit: MAX_LIMIT });
+  const populate = (q) => q
+    .populate('municipality', 'name code')
+    .populate('barangay', 'name')
+    .populate('createdBy', 'firstName lastName');
+
+  /*
+   * `?sort=barangay` orders by barangay NAME (municipality-wide programmes last), so a municipal
+   * administrator reading many barangays' programmes sees them grouped. A name lives on another
+   * collection, so this one ordering goes through an aggregation for the ids and loads them after.
+   */
+  if (sort === 'barangay') {
+    const [ordered, total] = await Promise.all([
+      Program.aggregate([
+        { $match: filter },
+        { $lookup: { from: 'barangays', localField: 'barangay', foreignField: '_id', as: 'b' } },
+        { $addFields: { _barangayName: { $ifNull: [{ $arrayElemAt: ['$b.name', 0] }, '￿'] } } },
+        { $sort: { _barangayName: 1, title: 1 } },
+        { $skip: skip },
+        { $limit: safeLimit },
+        { $project: { _id: 1 } },
+      ]),
+      Program.countDocuments(filter),
+    ]);
+    const ids = ordered.map((o) => o._id);
+    const docs = await populate(Program.find({ _id: { $in: ids } }));
+    const byId = new Map(docs.map((d) => [d._id.toString(), d]));
+    return paginatedResponse(res, ids.map((id) => byId.get(id.toString())).filter(Boolean), safePage, safeLimit, total);
+  }
+
+  const order = sort === 'implementationDate' ? { implementationDate: 1, createdAt: -1 } : { createdAt: -1 };
   const [programs, total] = await Promise.all([
-    Program.find(filter)
-      .populate('municipality', 'name code')
-      .populate('barangay', 'name')
-      .populate('createdBy', 'firstName lastName')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(safeLimit),
+    populate(Program.find(filter)).sort(order).skip(skip).limit(safeLimit),
     Program.countDocuments(filter),
   ]);
 
   paginatedResponse(res, programs, safePage, safeLimit, total);
+});
+
+/**
+ * Programmes per barangay, for the municipal administrator's grouped view (and DILG's).
+ *
+ * Every barangay of the municipality is listed — including those with no programme yet, which is
+ * itself worth seeing — plus a "municipality-wide" row for programmes that target no barangay.
+ * Counts are scoped exactly like the list, so clicking a row and filtering the table by it shows the
+ * same number of programmes the row promised. A barangay-bound officer gets their own row only.
+ */
+exports.getProgramBarangaySummary = asyncHandler(async (req, res) => {
+  const filter = { deletedAt: null };
+  if (CROSS_MUNICIPALITY_READ.includes(req.user.role) && req.query.municipality) {
+    filter.municipality = objectIdOf(req.query.municipality) || { $in: [] };
+  }
+  applyReadScope(filter, req.user);
+
+  const counts = await Program.aggregate([
+    { $match: filter },
+    {
+      $group: {
+        _id: { municipality: '$municipality', barangay: { $ifNull: ['$barangay', null] } },
+        total: { $sum: 1 },
+        planned: { $sum: { $cond: [{ $eq: ['$status', 'planned'] }, 1, 0] } },
+        ongoing: { $sum: { $cond: [{ $eq: ['$status', 'ongoing'] }, 1, 0] } },
+        delayed: { $sum: { $cond: [{ $eq: ['$status', 'delayed'] }, 1, 0] } },
+        completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+        cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } },
+        awaitingApproval: { $sum: { $cond: [{ $eq: ['$approvalStatus', 'submitted'] }, 1, 0] } },
+        totalBudget: { $sum: { $ifNull: ['$budget', 0] } },
+        nextImplementation: {
+          $min: { $cond: [{ $gte: ['$implementationDate', new Date(new Date().toDateString())] }, '$implementationDate', null] },
+        },
+      },
+    },
+  ]);
+
+  // Which barangays to list: the caller's own municipality (or the one picked), every one of them.
+  const ownBarangay = barangayScopeOf(req.user);
+  // An ObjectId when one municipality is in scope; `{ $in: [] }` (none) or absent (province) otherwise.
+  const municipalityId = filter.municipality && !filter.municipality.$in ? filter.municipality : null;
+  let barangays = [];
+  if (ownBarangay) {
+    barangays = await Barangay.find({ _id: ownBarangay }).select('name municipality').lean();
+  } else if (municipalityId) {
+    barangays = await Barangay.find({ municipality: municipalityId, isActive: true })
+      .select('name municipality').collation({ locale: 'en' }).sort({ name: 1 }).lean();
+  } else {
+    const ids = counts.map((c) => c._id.barangay).filter(Boolean);
+    barangays = await Barangay.find({ _id: { $in: ids } }).select('name municipality')
+      .populate('municipality', 'name').collation({ locale: 'en' }).sort({ name: 1 }).lean();
+  }
+
+  const empty = { total: 0, planned: 0, ongoing: 0, delayed: 0, completed: 0, cancelled: 0, awaitingApproval: 0, totalBudget: 0, nextImplementation: null };
+  const countFor = (barangayId) => {
+    const rows = counts.filter((c) => idOf(c._id.barangay) === idOf(barangayId));
+    if (!rows.length) return { ...empty };
+    return rows.reduce((acc, r) => ({
+      total: acc.total + r.total,
+      planned: acc.planned + r.planned,
+      ongoing: acc.ongoing + r.ongoing,
+      delayed: acc.delayed + r.delayed,
+      completed: acc.completed + r.completed,
+      cancelled: acc.cancelled + r.cancelled,
+      awaitingApproval: acc.awaitingApproval + r.awaitingApproval,
+      totalBudget: acc.totalBudget + r.totalBudget,
+      nextImplementation: [acc.nextImplementation, r.nextImplementation].filter(Boolean).sort((a, b) => a - b)[0] || null,
+    }), { ...empty });
+  };
+
+  const rows = barangays.map((b) => ({ barangay: b, ...countFor(b._id) }));
+  const municipalityWide = countFor(null);
+  successResponse(res, 200, 'Programs by barangay', {
+    barangays: rows,
+    // Programmes that target no single barangay. Omitted for a bound officer only if it is empty.
+    municipalityWide,
+    totals: rows.reduce((t, r) => t + r.total, 0) + municipalityWide.total,
+  });
 });
 
 exports.getProgram = asyncHandler(async (req, res) => {
@@ -91,7 +263,7 @@ exports.getProgram = asyncHandler(async (req, res) => {
 });
 
 exports.createProgram = asyncHandler(async (req, res) => {
-  const ALLOWED_CREATE_FIELDS = ['title', 'description', 'category', 'status', 'municipality', 'barangay', 'budget', 'budgetRef', 'startDate', 'endDate', 'targetParticipants', 'objectives', 'assignedOfficers', 'isPublic'];
+  const ALLOWED_CREATE_FIELDS = ['title', 'description', 'category', 'status', 'municipality', 'barangay', 'budget', 'budgetRef', 'startDate', 'endDate', 'implementationDate', 'targetParticipants', 'objectives', 'assignedOfficers', 'isPublic'];
   /*
    * Blank values are dropped rather than stored. The form posts every field it owns, so a program
    * with no budget linked arrives as `budgetRef: ''` — which Mongoose cannot cast to an ObjectId.
@@ -134,6 +306,14 @@ exports.createProgram = asyncHandler(async (req, res) => {
   if (programData.startDate && programData.endDate && new Date(programData.endDate) <= new Date(programData.startDate)) {
     return errorResponse(res, 400, 'End date must be after start date');
   }
+  const dateProblem = implementationDateProblem(programData.implementationDate, programData.startDate);
+  if (dateProblem) return errorResponse(res, 400, dateProblem);
+  if (programData.status === 'completed' && !programData.implementationDate) {
+    return errorResponse(res, 400, 'A completed programme needs the date it was actually implemented');
+  }
+
+  const linkProblem = await budgetLinkProblem(programData.budgetRef, programData);
+  if (linkProblem) return errorResponse(res, 400, linkProblem);
 
   const program = await Program.create(programData);
 
@@ -151,9 +331,9 @@ exports.createProgram = asyncHandler(async (req, res) => {
 exports.updateProgram = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (writeScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to update this program');
+  if (writeScopeViolation(program, req.user, PROGRAM_WRITE_SCOPE)) return errorResponse(res, 403, 'Not authorized to update this program');
 
-  const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'objectives', 'category', 'status', 'barangay', 'budget', 'budgetRef', 'startDate', 'endDate', 'targetParticipants', 'actualParticipants', 'assignedOfficers', 'milestones', 'accomplishmentReport', 'isPublic', 'tags', 'location', 'attachments'];
+  const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'objectives', 'category', 'status', 'barangay', 'budget', 'budgetRef', 'startDate', 'endDate', 'implementationDate', 'targetParticipants', 'actualParticipants', 'assignedOfficers', 'milestones', 'accomplishmentReport', 'isPublic', 'tags', 'location', 'attachments'];
   /*
    * Same CastError as on create, plus the ability to clear a field. The form submits its whole
    * shape, so unlinking a budget arrives as `budgetRef: ''`: sent to $set it fails the entire
@@ -186,6 +366,29 @@ exports.updateProgram = asyncHandler(async (req, res) => {
     return errorResponse(res, 400, 'End date must be after start date');
   }
 
+  const implementation = cleared.includes('implementationDate')
+    ? null
+    : (updates.implementationDate || program.implementationDate);
+  const dateProblem = implementationDateProblem(implementation, start);
+  if (dateProblem) return errorResponse(res, 400, dateProblem);
+  // Checked on the move INTO completed, so an older completed programme without the date can still
+  // be edited — the rule is that a programme is not marked done without saying when it happened.
+  const nextStatus = updates.status || program.status;
+  if (nextStatus === 'completed' && program.status !== 'completed' && !implementation) {
+    return errorResponse(res, 400, 'A completed programme needs the date it was actually implemented');
+  }
+
+  // Validated only when the link changes: programmes linked before per-barangay budgets existed keep
+  // the municipal budget they were approved against, and an unrelated edit must not be refused for it.
+  if (updates.budgetRef && idOf(updates.budgetRef) !== idOf(program.budgetRef)) {
+    const linkProblem = await budgetLinkProblem(updates.budgetRef, {
+      municipality: program.municipality,
+      barangay: Object.prototype.hasOwnProperty.call(updates, 'barangay') ? updates.barangay
+        : (cleared.includes('barangay') ? null : program.barangay),
+    });
+    if (linkProblem) return errorResponse(res, 400, linkProblem);
+  }
+
   const updated = await Program.findByIdAndUpdate(req.params.id, toMutation({ set: updates, unset: cleared }), { new: true, runValidators: true });
   // Cleared fields are changes too — omitting them under-reports the edit in the audit trail.
   await AuditLog.create({ user: req.user._id, action: 'UPDATE', resource: 'program', resourceId: program._id, details: { changes: [...Object.keys(updates), ...cleared] }, municipality: program.municipality, ipAddress: req.ip });
@@ -206,7 +409,18 @@ exports.updateProgram = asyncHandler(async (req, res) => {
 
 // Shared ownership guard. Returns an error message, or null when the caller may act.
 const denyIfForeign = (req, program, verb) =>
-  (writeScopeViolation(program, req.user) ? `Not authorized to ${verb} this program` : null);
+  (writeScopeViolation(program, req.user, PROGRAM_WRITE_SCOPE) ? `Not authorized to ${verb} this program` : null);
+
+/**
+ * How much of `budget` a programme approval may still commit. For a barangay allocation that is its
+ * own uncommitted balance; for the MUNICIPAL budget it is also net of every approved barangay
+ * allocation, because that money has already been given to the barangays.
+ */
+const committableBalance = async (budget, session) => {
+  if (budget.barangay) return budget.availableBalance;
+  const { available } = await municipalBudgetAvailability(budget, { session });
+  return available;
+};
 
 exports.submitProgram = asyncHandler(async (req, res) => {
   const program = await Program.findOne({ _id: req.params.id, deletedAt: null });
@@ -240,38 +454,47 @@ exports.approveProgram = asyncHandler(async (req, res) => {
   }
 
   const amount = program.budget || 0;
-  const budget = program.budgetRef ? await Budget.findOne({ _id: program.budgetRef, deletedAt: null }) : null;
 
-  // Guard before the state change, so a rejected commitment leaves no half-approved program.
-  if (budget && amount > 0) {
-    if (budget.status !== 'approved') {
-      return errorResponse(res, 400, 'The linked budget is not approved yet');
-    }
-    if (amount > budget.availableBalance) {
-      return errorResponse(
-        res, 400,
-        `Only ₱${budget.availableBalance.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} is uncommitted in the linked budget`
+  /*
+   * The state change and the commitment happen together, in one transaction: the programme cannot
+   * end up approved with nothing reserved for it, nor the money reserved for a programme whose
+   * approval lost a race. The balance is re-read inside the transaction, so two approvals against
+   * the same budget cannot both see the same uncommitted money.
+   */
+  let approved;
+  let budget = null;
+  try {
+    approved = await withTransaction(async (session) => {
+      const opts = sessionOpts(session);
+      budget = program.budgetRef ? await Budget.findOne({ _id: program.budgetRef, deletedAt: null }, null, opts) : null;
+      if (budget && amount > 0) {
+        if (budget.status !== 'approved') throw httpError(400, 'The linked budget is not approved yet');
+        const available = await committableBalance(budget, session);
+        if (amount > available) throw httpError(400, `Only ${peso(Math.max(0, available))} is uncommitted in the linked budget`);
+      }
+
+      const claimed = await Program.findOneAndUpdate(
+        { _id: req.params.id, approvalStatus: 'submitted' },
+        {
+          approvalStatus: 'approved',
+          approvedBy: req.user._id,
+          approvedAt: new Date(),
+          committedAmount: budget ? amount : 0,
+          rejectionReason: undefined,
+        },
+        { new: true, ...opts }
       );
-    }
-  }
+      if (!claimed) throw httpError(409, 'Program was already processed or is not awaiting approval');
 
-  const approved = await Program.findOneAndUpdate(
-    { _id: req.params.id, approvalStatus: 'submitted' },
-    {
-      approvalStatus: 'approved',
-      approvedBy: req.user._id,
-      approvedAt: new Date(),
-      committedAmount: budget ? amount : 0,
-      rejectionReason: undefined,
-    },
-    { new: true }
-  );
-  if (!approved) return errorResponse(res, 409, 'Program was already processed or is not awaiting approval');
-
-  // Encumber the money only once the program is definitively approved. $inc, not a read-modify-
-  // write, so concurrent approvals against the same budget cannot lose one another's commitment.
-  if (budget && amount > 0) {
-    await Budget.updateOne({ _id: budget._id }, { $inc: { committedAmount: amount } });
+      // $inc, not a read-modify-write, so concurrent approvals cannot lose one another's commitment.
+      if (budget && amount > 0) {
+        await Budget.updateOne({ _id: budget._id }, { $inc: { committedAmount: amount } }, opts);
+      }
+      return claimed;
+    });
+  } catch (err) {
+    if (err.statusCode) return errorResponse(res, err.statusCode, err.message);
+    throw err;
   }
 
   await AuditLog.create({
@@ -400,8 +623,8 @@ exports.withdrawJoinRequest = asyncHandler(async (req, res) => {
 exports.getParticipants = asyncHandler(async (req, res) => {
   const program = await Program.findOne({ _id: req.params.id, deletedAt: null });
   if (!program) return errorResponse(res, 404, 'Program not found');
-  const denied = denyIfForeign(req, program, 'view participants for');
-  if (denied) return errorResponse(res, 403, denied);
+  // Reading the list follows the programme's read scope; deciding on a request is a write (below).
+  if (readScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to view participants for this program');
 
   const members = await YouthMember.find({
     deletedAt: null,
@@ -504,14 +727,15 @@ exports.deleteProgram = asyncHandler(async (req, res) => {
   const denied = denyIfForeign(req, program, 'delete');
   if (denied) return errorResponse(res, 403, denied);
 
-  program.deletedAt = new Date();
-  await program.save();
-
-  // Give the money back. A deleted program cannot hold an encumbrance against a live budget.
-  if (program.committedAmount > 0 && program.budgetRef) {
-    await Budget.updateOne({ _id: program.budgetRef }, { $inc: { committedAmount: -program.committedAmount } });
-    await Program.updateOne({ _id: program._id }, { committedAmount: 0 });
-  }
+  // Deleting and giving the money back are one act: a deleted programme cannot keep an encumbrance
+  // on a live budget, and a release must not happen for a delete that did not.
+  await withTransaction(async (session) => {
+    const opts = sessionOpts(session);
+    await Program.updateOne({ _id: program._id }, { deletedAt: new Date(), committedAmount: 0 }, opts);
+    if (program.committedAmount > 0 && program.budgetRef) {
+      await Budget.updateOne({ _id: program.budgetRef }, { $inc: { committedAmount: -program.committedAmount } }, opts);
+    }
+  });
 
   await AuditLog.create({
     user: req.user._id, action: 'DELETE', resource: 'program', resourceId: program._id,
@@ -529,7 +753,10 @@ exports.updateProgramStatus = asyncHandler(async (req, res) => {
 
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (writeScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to update this program');
+  if (writeScopeViolation(program, req.user, PROGRAM_WRITE_SCOPE)) return errorResponse(res, 403, 'Not authorized to update this program');
+  if (status === 'completed' && program.status !== 'completed' && !program.implementationDate) {
+    return errorResponse(res, 400, 'Record the date the programme was actually implemented before marking it completed');
+  }
   const updated = await Program.findByIdAndUpdate(req.params.id, { status }, { new: true });
 
   // Notify the program creator and assigned officers of the status change
@@ -552,7 +779,7 @@ exports.updateProgramStatus = asyncHandler(async (req, res) => {
 exports.addMilestone = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (writeScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to update this program');
+  if (writeScopeViolation(program, req.user, PROGRAM_WRITE_SCOPE)) return errorResponse(res, 403, 'Not authorized to update this program');
   const ALLOWED_MILESTONE_FIELDS = ['title', 'description', 'targetDate', 'completedAt', 'status', 'completionRate'];
   const milestoneData = Object.fromEntries(Object.entries(req.body).filter(([k]) => ALLOWED_MILESTONE_FIELDS.includes(k)));
   program.milestones.push(milestoneData);
@@ -563,7 +790,7 @@ exports.addMilestone = asyncHandler(async (req, res) => {
 exports.updateMilestone = asyncHandler(async (req, res) => {
   const program = await Program.findById(req.params.id);
   if (!program || program.deletedAt) return errorResponse(res, 404, 'Program not found');
-  if (writeScopeViolation(program, req.user)) return errorResponse(res, 403, 'Not authorized to update this program');
+  if (writeScopeViolation(program, req.user, PROGRAM_WRITE_SCOPE)) return errorResponse(res, 403, 'Not authorized to update this program');
   const milestone = program.milestones.id(req.params.milestoneId);
   if (!milestone) return errorResponse(res, 404, 'Milestone not found');
   const ALLOWED_MILESTONE_FIELDS = ['title', 'description', 'targetDate', 'completedAt', 'status', 'completionRate'];

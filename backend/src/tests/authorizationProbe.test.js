@@ -50,7 +50,7 @@ describe('The audit trail cannot be written through the API', () => {
 
   it('is not readable by an ordinary SK account', async () => {
     const { municipalityId } = await createUser({ role: 'municipal_admin' });
-    for (const role of ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'municipal_admin']) {
+    for (const role of ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'municipal_admin']) {
       const { token } = await createUser({ role, municipality: municipalityId });
       const res = await request(app).get('/api/audit-logs').set(authHeader(token));
       expect(res.status).toBe(403);

@@ -10,7 +10,7 @@ export const documentService = {
   unarchive: (id) => api.patch(`/documents/${id}/unarchive`),
   replaceFile: (id, data) => api.patch(`/documents/${id}/replace-file`, data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   trackDownload: (id) => api.post(`/documents/${id}/download`),
-  serve: (id) => api.get(`/documents/${id}/serve`, { responseType: 'blob' }),
+  serve: (id, { inline = false } = {}) => api.get(`/documents/${id}/serve`, { params: inline ? { inline: 1 } : {}, responseType: 'blob' }),
   serveVersion: (id, version) => api.get(`/documents/${id}/versions/${version}/serve`, { responseType: 'blob' }),
   // Moves the document to the recycle bin; the stored file is kept so a restore is real.
   delete: (id) => api.delete(`/documents/${id}`),
@@ -35,9 +35,10 @@ export const dashboardService = {
 };
 
 export const reportService = {
-  generatePrograms: (params) => api.get('/reports/programs', { params, responseType: params.format !== 'json' ? 'blob' : 'json' }),
-  generateFinancial: (params) => api.get('/reports/financial', { params, responseType: params.format !== 'json' ? 'blob' : 'json' }),
-  generateYouth: (params) => api.get('/reports/youth', { params }),
+  // Downloads are PDF or Excel only (October 2026); the JSON export was removed from the page.
+  generatePrograms: (params) => api.get('/reports/programs', { params, responseType: 'blob' }),
+  generateFinancial: (params) => api.get('/reports/financial', { params, responseType: 'blob' }),
+  generateYouth: (params) => api.get('/reports/youth', { params, responseType: 'blob' }),
   downloadTemplate: (name) => api.get(`/reports/template/${name}`, { responseType: 'blob' }),
 };
 
@@ -50,7 +51,8 @@ export const analyticsService = {
 export const municipalityService = {
   getAll: () => api.get('/municipalities'),
   getById: (id) => api.get(`/municipalities/${id}`),
-  getBarangays: (id) => api.get(`/municipalities/${id}/barangays`),
+  // With a role, each barangay carries seatStatus (vacant / pending / filled) for that SK office.
+  getBarangays: (id, params) => api.get(`/municipalities/${id}/barangays`, { params }),
   // Province-wide: every barangay, each carrying its municipality for grouping.
   getAllBarangays: () => api.get('/municipalities/barangays'),
 };
@@ -112,4 +114,7 @@ export const userService = {
   rejectEmailChange: (id, reason) => api.put(`/users/${id}/email-change/reject`, { reason }),
   // Barangay assignment: what makes barangay-level scope usable for an SK account.
   assignBarangay: (id, barangay) => api.put(`/users/${id}/barangay`, { barangay }),
+  // An applicant's identity / residency proof, for the reviewer. super_admin only.
+  verificationDocument: (id, docId, { download = false } = {}) =>
+    api.get(`/users/${id}/verification-documents/${docId}`, { params: download ? { download: 1 } : {}, responseType: 'blob' }),
 };

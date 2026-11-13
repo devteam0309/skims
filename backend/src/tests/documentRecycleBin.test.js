@@ -97,9 +97,11 @@ describe('GET /api/documents/recycle-bin', () => {
     expect(res.body.data).toHaveLength(0);
   });
 
+  // SK officers may bin their barangay's documents now (October 2026), so they may see the bin.
+  // DILG uploads nothing, deletes nothing, and has no bin.
   it('is closed to roles that cannot delete documents', async () => {
     const { municipalityId } = await createUser({ role: 'municipal_admin' });
-    const { token } = await createUser({ role: 'sk_chairperson', municipality: municipalityId });
+    const { token } = await createUser({ role: 'dilg_representative', municipality: municipalityId });
     const res = await request(app).get('/api/documents/recycle-bin').set(authHeader(token));
     expect(res.status).toBe(403);
   });

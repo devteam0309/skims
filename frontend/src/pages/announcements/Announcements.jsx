@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pin, Trash2, Edit2 } from 'lucide-react';
+import { Plus, Pin, Trash2, Edit2, Building2, CalendarDays, MapPin } from 'lucide-react';
 import { announcementService } from '../../services/announcementService';
-import { ADMIN_ROLES, EDITOR_ROLES } from '../../utils/constants';
+import { EDITOR_ROLES, ROLE_LABELS } from '../../utils/constants';
 import DataTable from '../../components/shared/DataTable';
 import Modal from '../../components/shared/Modal';
 import ComboInput from '../../components/shared/ComboInput';
@@ -39,14 +39,16 @@ export default function Announcements() {
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  // The announcement open in full, like opening a conversation.
+  const [viewing, setViewing] = useState(null);
 
   /*
-   * routes/announcements.js authorizes POST and PUT for EDITORS and DELETE for ADMINS. Only
-   * delete was gated here, so an sk_treasurer or sk_kagawad saw "New Announcement", filled the
-   * whole form and got a 403 on submit.
+   * Creating is open to EDITORS. Editing and deleting are decided per announcement by the server —
+   * the author, or an office of higher authority within reach — and each row arrives with
+   * `canEdit`/`canDelete` saying which applies. A barangay officer therefore sees no Edit button on
+   * what DILG or the municipal office issued, and the server refuses it if one is forced anyway.
    */
   const canWrite = EDITOR_ROLES.includes(user?.role);
-  const canDelete = ADMIN_ROLES.includes(user?.role);
 
   const { data, isLoading } = useQuery({
     queryKey: ['announcements', filters],
@@ -78,13 +80,14 @@ export default function Announcements() {
 
   const deleteMutation = useMutation({
     mutationFn: (id) => announcementService.delete(id),
-    onSuccess: () => { toast.success('Announcement deleted'); queryClient.invalidateQueries(['announcements']); },
+    onSuccess: () => { toast.success('Announcement deleted'); queryClient.invalidateQueries(['announcements']); setViewing(null); },
     onError: (e) => toast.error(e.message || 'Failed to delete announcement'),
   });
 
   const openCreate = () => { setEditTarget(null); setForm(EMPTY_FORM); setShowModal(true); };
 
   const openEdit = (ann) => {
+    setViewing(null);
     setEditTarget(ann);
     setForm({
       title: ann.title,
@@ -130,8 +133,14 @@ export default function Announcements() {
     {
       key: 'title',
       header: 'Announcement',
+      // The whole cell opens the full announcement: the list shows a one-line preview only.
       render: (v, row) => (
-        <div className="flex items-start gap-2">
+        <button
+          type="button"
+          onClick={() => setViewing(row)}
+          className="flex w-full items-start gap-2 text-left"
+          aria-label={`Open announcement: ${v}`}
+        >
           {row.isPinned && (
             <>
               <Pin size={12} className="mt-0.5 shrink-0 text-gold-600" aria-hidden="true" />
@@ -139,18 +148,23 @@ export default function Announcements() {
             </>
           )}
           <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-900 dark:text-white">{v}</p>
+            <p className="text-sm font-medium text-navy-800 hover:underline dark:text-navy-200">{v}</p>
             <p className="meta-text mt-0.5 line-clamp-1">{row.content}</p>
           </div>
-        </div>
+        </button>
       ),
+    },
+    {
+      key: 'issuingOffice',
+      header: 'Issued by',
+      render: (v, row) => <span className="text-xs">{v || (row.author ? ROLE_LABELS[row.author.role] : '—')}</span>,
     },
     {
       key: 'type',
       header: 'Type',
       render: (v) => (
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${TYPE_CHIPS[v] || TYPE_CHIP_DEFAULT}`}>
-          {v}
+          {v?.replace(/_/g, ' ')}
         </span>
       ),
     },
@@ -177,12 +191,12 @@ export default function Announcements() {
       },
     },
     { key: 'createdAt', header: 'Posted', render: (v) => <span className="meta-text">{formatDate(v)}</span> },
-    ...(canWrite || canDelete ? [{
+    {
       key: '_id',
       header: <span className="sr-only">Actions</span>,
       render: (id, row) => (
         <div className="flex gap-1">
-          {canWrite && (
+          {row.canEdit && (
             <button
               type="button"
               onClick={() => openEdit(row)}
@@ -193,7 +207,7 @@ export default function Announcements() {
               <Edit2 size={14} aria-hidden="true" />
             </button>
           )}
-          {canDelete && (
+          {row.canDelete && (
             <button
               type="button"
               onClick={() => handleDelete(id, row.title)}
@@ -205,9 +219,10 @@ export default function Announcements() {
               <Trash2 size={14} aria-hidden="true" />
             </button>
           )}
+          {!row.canEdit && !row.canDelete && <span className="meta-text">View only</span>}
         </div>
       ),
-    }] : []),
+    },
   ];
 
   const isPending = createMutation.isPending || updateMutation.isPending;
@@ -217,7 +232,7 @@ export default function Announcements() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="page-title">Announcements</h1>
-          <p className="page-subtitle">Manage public announcements, events, and alerts</p>
+          <p className="page-subtitle">Notices from the provincial, municipal and barangay offices. Open one to read it in full.</p>
         </div>
         {canWrite && (
           <button
@@ -245,7 +260,8 @@ export default function Announcements() {
                 : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
             }`}
           >
-            {t || 'All'}
+            {/* Typed types are stored as slugs (utils/labels.js on the server); shown as words. */}
+            {t ? t.replace(/_/g, ' ') : 'All'}
           </button>
         ))}
       </div>
@@ -256,7 +272,7 @@ export default function Announcements() {
         loading={isLoading}
         pagination={data?.meta}
         onPageChange={(p) => setFilters({ ...filters, page: p })}
-        emptyMessage={filters.type ? `No ${filters.type} announcements` : 'No announcements yet'}
+        emptyMessage={filters.type ? `No ${filters.type.replace(/_/g, ' ')} announcements` : 'No announcements yet'}
         emptyAction={filters.type ? (
           <button
             type="button"
@@ -267,6 +283,94 @@ export default function Announcements() {
           </button>
         ) : null}
       />
+
+      {/*
+        * The full announcement. Long messages keep their paragraphs (pre-wrap) and break long words,
+        * so a pasted memo with a URL in it cannot widen the dialog off the screen.
+        */}
+      <Modal
+        isOpen={!!viewing}
+        onClose={() => setViewing(null)}
+        title={viewing?.title || 'Announcement'}
+        size="lg"
+        footer={viewing && (viewing.canEdit || viewing.canDelete) ? (
+          <div className="flex justify-end gap-3">
+            {viewing.canDelete && (
+              <button
+                type="button"
+                onClick={() => handleDelete(viewing._id, viewing.title)}
+                className="rounded-xl border border-red-200 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300"
+              >
+                Delete
+              </button>
+            )}
+            {viewing.canEdit && (
+              <button
+                type="button"
+                onClick={() => openEdit(viewing)}
+                className="rounded-xl bg-navy-900 px-5 py-2 text-sm font-semibold text-white hover:bg-navy-800"
+              >
+                Edit
+              </button>
+            )}
+          </div>
+        ) : null}
+      >
+        {viewing && (
+          <article className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${TYPE_CHIPS[viewing.type] || TYPE_CHIP_DEFAULT}`}>
+                {viewing.type?.replace(/_/g, ' ')}
+              </span>
+              {viewing.isPinned && <span className="meta-text">Pinned</span>}
+              <span className="meta-text">{viewing.isPublic ? 'Public' : 'Staff only'}</span>
+              <span className="meta-text">· {viewing.municipality?.name || 'All municipalities'}</span>
+            </div>
+
+            <dl className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm sm:grid-cols-2 dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex gap-2">
+                <Building2 size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-gray-400" />
+                <div>
+                  <dt className="meta-text">Issuing office</dt>
+                  <dd className="font-medium text-gray-900 dark:text-white">
+                    {viewing.issuingOffice || (viewing.author ? ROLE_LABELS[viewing.author.role] : '—')}
+                  </dd>
+                  {viewing.author && (
+                    <dd className="meta-text">{viewing.author.firstName} {viewing.author.lastName}</dd>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <CalendarDays size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-gray-400" />
+                <div>
+                  <dt className="meta-text">Published</dt>
+                  <dd className="font-medium text-gray-900 dark:text-white">{formatDate(viewing.publishedAt || viewing.createdAt)}</dd>
+                  {viewing.expiresAt && <dd className="meta-text">Until {formatDate(viewing.expiresAt)}</dd>}
+                </div>
+              </div>
+              {(viewing.eventDate || viewing.eventLocation) && (
+                <div className="flex gap-2 sm:col-span-2">
+                  <MapPin size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-gray-400" />
+                  <div>
+                    <dt className="meta-text">Event</dt>
+                    <dd className="font-medium text-gray-900 dark:text-white">
+                      {[viewing.eventDate ? formatDate(viewing.eventDate) : null, viewing.eventLocation].filter(Boolean).join(' · ')}
+                    </dd>
+                  </div>
+                </div>
+              )}
+            </dl>
+
+            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800 dark:text-gray-100">
+              {viewing.content}
+            </div>
+
+            {!viewing.canEdit && (
+              <p className="meta-text">You can read this announcement; it can be changed only by the office that issued it.</p>
+            )}
+          </article>
+        )}
+      </Modal>
 
       <Modal
         isOpen={showModal}

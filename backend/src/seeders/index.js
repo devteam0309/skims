@@ -226,6 +226,9 @@ const seed = async () => {
       // Not fatal. A seed without Cloudinary is still a useful seed; it just has no downloadable file.
       console.log(`No Cloudinary upload (${err?.message || 'not configured'}) — seeded documents will have no file attached`);
     }
+    // Document.fileName is required. Without an upload the records still need one; with no fileUrl
+    // beside it, a download answers "This document has no file attached" rather than failing.
+    if (!sampleFileName) sampleFileName = 'skims/documents/seed-sample-document.pdf';
 
     // Seed users
     // Shared demo password. The seeded youth logins use the same one, so a reviewer only needs to
@@ -261,13 +264,31 @@ const seed = async () => {
       const own = barangays.filter((b) => b.municipality.toString() === munMap[code]._id.toString());
       demoBarangays[code] = [own[0], own[1]];
     }
-    const [chairBarangay, treasurerBarangay] = demoBarangays['BOA'];
+    /*
+     * Boac's pair is named rather than positional: Agot and Maligaya are the barangays the October
+     * 2026 panel used in its own examples ("officials of Barangay Agot may only access Barangay Agot
+     * documents"), so the demo answers the question in the words it was asked.
+     *
+     * Agot holds a full set of officers — chairperson, treasurer and secretary — to show three
+     * accounts reading ONE barangay's records. Maligaya has its own chairperson, the contrast that
+     * shows those records stay inside Agot.
+     */
+    const byName = (code, name) => barangays.find(
+      (b) => b.municipality.toString() === munMap[code]._id.toString() && b.name === name
+    );
+    const agot = byName('BOA', 'Agot');
+    const maligaya = byName('BOA', 'Maligaya');
+    if (!agot || !maligaya) throw new Error('Seed error: Boac must contain the barangays Agot and Maligaya');
+    demoBarangays['BOA'] = [agot, maligaya];
+    const chairBarangay = agot;
 
     const usersData = [
       { firstName: 'Admin', lastName: 'Super', email: 'superadmin@skims.gov.ph', password: 'Admin@123', role: 'super_admin', isApproved: true, isEmailVerified: true },
       { firstName: 'Provincial', lastName: 'Admin', email: 'provincial@skims.gov.ph', password: 'Admin@123', role: 'provincial_admin', isApproved: true, isEmailVerified: true },
-      { firstName: 'Juan', lastName: 'dela Cruz', email: 'juan@boac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['BOA']._id, barangay: chairBarangay._id, isApproved: true, isEmailVerified: true },
-      { firstName: 'Maria', lastName: 'Santos', email: 'maria@boac.gov.ph', password: 'Admin@123', role: 'sk_treasurer', municipality: munMap['BOA']._id, barangay: treasurerBarangay._id, isApproved: true, isEmailVerified: true },
+      { firstName: 'Juan', lastName: 'dela Cruz', email: 'juan@boac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['BOA']._id, barangay: agot._id, isApproved: true, isEmailVerified: true },
+      { firstName: 'Maria', lastName: 'Santos', email: 'maria@boac.gov.ph', password: 'Admin@123', role: 'sk_treasurer', municipality: munMap['BOA']._id, barangay: agot._id, isApproved: true, isEmailVerified: true },
+      { firstName: 'Liza', lastName: 'Mendoza', email: 'liza@boac.gov.ph', password: 'Admin@123', role: 'sk_secretary', municipality: munMap['BOA']._id, barangay: agot._id, isApproved: true, isEmailVerified: true },
+      { firstName: 'Ramon', lastName: 'Villanueva', email: 'ramon@boac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['BOA']._id, barangay: maligaya._id, isApproved: true, isEmailVerified: true },
       { firstName: 'Pedro', lastName: 'Garcia', email: 'pedro@stac.gov.ph', password: 'Admin@123', role: 'sk_chairperson', municipality: munMap['STC']._id, barangay: demoBarangays['STC'][0]._id, isApproved: true, isEmailVerified: true },
       { firstName: 'Ana', lastName: 'Reyes', email: 'ana@gasan.gov.ph', password: 'Admin@123', role: 'sk_secretary', municipality: munMap['GAS']._id, barangay: demoBarangays['GAS'][0]._id, isApproved: true, isEmailVerified: true },
       { firstName: 'DILG', lastName: 'Officer', email: 'dilg@marinduque.gov.ph', password: 'Admin@123', role: 'dilg_representative', isApproved: true, isEmailVerified: true },
@@ -283,6 +304,7 @@ const seed = async () => {
     // Needed as a programme creator below; `anaGasan` proper is resolved later for budgets.
     const anaGasanEarly = users.find((u) => u.email === 'ana@gasan.gov.ph');
     const munAdmin = users.find((u) => u.email === 'municipal@boac.gov.ph');
+    const chairMaligaya = users.find((u) => u.email === 'ramon@boac.gov.ph');
 
     // Seed programs
     const programsData = [
@@ -301,6 +323,7 @@ const seed = async () => {
         actualParticipants: 145,
         createdBy: chairBoac._id,
         completionRate: 40,
+        implementationDate: new Date('2026-11-20'),
         isPublic: true,
         /*
          * Targeted at the chairperson's own barangay, so the Programs page demonstrates the target
@@ -325,6 +348,7 @@ const seed = async () => {
         actualParticipants: 487,
         createdBy: chairBoac._id,
         completionRate: 100,
+        implementationDate: new Date('2026-05-16'),
         isPublic: true,
       },
       {
@@ -338,6 +362,7 @@ const seed = async () => {
         actualExpenses: 0,
         startDate: new Date('2026-08-01'),
         endDate: new Date('2026-11-30'),
+        implementationDate: new Date('2026-12-07'),
         targetParticipants: 100,
         actualParticipants: 0,
         createdBy: chairStac._id,
@@ -355,6 +380,7 @@ const seed = async () => {
         actualExpenses: 30000,
         startDate: new Date('2026-04-15'),
         endDate: new Date('2026-05-31'),
+        implementationDate: new Date('2026-06-20'),
         targetParticipants: 300,
         actualParticipants: 120,
         createdBy: chairBoac._id,
@@ -375,6 +401,7 @@ const seed = async () => {
         actualParticipants: 230,
         createdBy: chairBoac._id,
         completionRate: 55,
+        implementationDate: new Date('2026-11-08'),
         isPublic: true      },
 
       /*
@@ -401,6 +428,7 @@ const seed = async () => {
         actualParticipants: 96,
         createdBy: anaGasanEarly._id,
         completionRate: 60,
+        implementationDate: new Date('2026-11-15'),
         isPublic: true,
       },
       {
@@ -417,6 +445,7 @@ const seed = async () => {
         actualParticipants: 74,
         createdBy: anaGasanEarly._id,
         completionRate: 100,
+        implementationDate: new Date('2026-05-24'),
         isPublic: true,
       },
       {
@@ -447,6 +476,7 @@ const seed = async () => {
         actualParticipants: 118,
         createdBy: chairBoac._id,
         completionRate: 100,
+        implementationDate: new Date('2026-06-13'),
         isPublic: true,
       },
       {
@@ -463,6 +493,7 @@ const seed = async () => {
         actualParticipants: 63,
         createdBy: chairStac._id,
         completionRate: 55,
+        implementationDate: new Date('2026-11-12'),
         isPublic: true,
       },
       {
@@ -479,6 +510,7 @@ const seed = async () => {
         actualParticipants: 210,
         createdBy: chairStac._id,
         completionRate: 100,
+        implementationDate: new Date('2026-05-09'),
         isPublic: true,
       },
       {
@@ -498,8 +530,12 @@ const seed = async () => {
          * restricted to EDITORS, which excludes sk_treasurer — so attributing this to Maria Santos
          * described a creation the application would have refused, and made the Details panel read
          * as though it were naming the wrong person.
+         *
+         * Maligaya's programme, by Maligaya's chairperson: the record Agot's officers must NOT see.
          */
-        createdBy: chairBoac._id,
+        createdBy: chairMaligaya._id,
+        barangay: maligaya._id,
+        implementationDate: new Date('2026-11-28'),
         completionRate: 30,
         isPublic: true,
       },
@@ -562,7 +598,42 @@ const seed = async () => {
       });
     }
     const budget = budgetsByMun['BOA']; // alias kept for downstream references
-    console.log(`Seeded ${budgetSpecs.length} budgets (one per municipality)`);
+    console.log(`Seeded ${budgetSpecs.length} municipal budgets (one per municipality)`);
+
+    /*
+     * Barangay allocations, carved out of each municipal budget (October 2026 panel round). Each
+     * barangay spends from its own allocation only, never from the municipal total. Gasan's second
+     * barangay is left awaiting approval so the allocation review is demonstrable; the rest are
+     * approved and fit comfortably inside what their municipal budget has left.
+     */
+    const allocationSpecs = [
+      { code: 'BOA', barangay: agot, total: 250000, status: 'approved' },
+      { code: 'BOA', barangay: maligaya, total: 180000, status: 'approved' },
+      { code: 'STC', barangay: demoBarangays['STC'][0], total: 150000, status: 'approved' },
+      { code: 'GAS', barangay: demoBarangays['GAS'][0], total: 120000, status: 'approved' },
+      { code: 'GAS', barangay: demoBarangays['GAS'][1], total: 100000, status: 'pending_approval' },
+      { code: 'MOG', barangay: demoBarangays['MOG'][0], total: 90000, status: 'approved' },
+    ];
+    const allocationByBarangay = {};
+    for (const spec of allocationSpecs) {
+      if (spec.barangay.municipality.toString() !== munMap[spec.code]._id.toString()) {
+        throw new Error(`Seed error: ${spec.barangay.name} is not in ${spec.code}`);
+      }
+      allocationByBarangay[spec.barangay._id.toString()] = await Budget.create({
+        title: `SK Barangay ${spec.barangay.name} Budget 2026`,
+        fiscalYear: 2026,
+        municipality: munMap[spec.code]._id,
+        barangay: spec.barangay._id,
+        totalBudget: spec.total,
+        approvedAmount: spec.status === 'approved' ? spec.total : 0,
+        disbursedAmount: 0,
+        remainingBalance: spec.total,
+        status: spec.status,
+        ...(spec.status === 'approved' ? { approvedBy: munAdmin._id, approvedAt: new Date('2026-01-20') } : {}),
+        createdBy: (spec.code === 'BOA' ? munAdmin : provincial)._id,
+      });
+    }
+    console.log(`Seeded ${allocationSpecs.length} barangay budget allocations`);
 
     // Link each program to ITS OWN municipality's budget
     /*
@@ -588,8 +659,12 @@ const seed = async () => {
       }
       return { prog, code };
     });
+    // A barangay programme is funded from its barangay's allocation; a municipality-wide one from
+    // the municipal budget — the same rule programController enforces on every new link.
     for (const { prog, code } of programLinks) {
-      await Program.updateOne({ _id: prog._id }, { budgetRef: budgetsByMun[code]._id });
+      const own = prog.barangay ? allocationByBarangay[prog.barangay.toString()] : null;
+      if (prog.barangay && !own) throw new Error(`Seed error: "${prog.title}" targets a barangay with no allocation to fund it`);
+      await Program.updateOne({ _id: prog._id }, { budgetRef: (own || budgetsByMun[code])._id });
     }
 
     /*
@@ -607,7 +682,21 @@ const seed = async () => {
         : { approvalStatus: 'submitted', submittedAt: new Date('2026-02-01') });
     }
 
-    // Seed expenses — each one's program, budget and municipality all belong to the SAME municipality
+    /*
+     * Proof attached to every seeded expense. An expense cannot be submitted or approved without
+     * one (October 2026), so a seed whose expenses carried none would show the review screen a state
+     * the application can no longer produce. They point at the same placeholder PDF as the seeded
+     * documents — a public, legacy-style attachment, served by redirect.
+     */
+    const proof = (...names) => names.map(([name, documentType]) => ({
+      documentType, fileName: name, originalName: name, fileType: 'application/pdf',
+      ...(sampleFileUrl ? { fileUrl: sampleFileUrl } : {}),
+      uploadedAt: new Date('2026-03-01'),
+    }));
+    const allocationOf = (b) => allocationByBarangay[b._id.toString()]._id;
+
+    // Seed expenses — each one's program, budget, barangay and municipality all belong together:
+    // a barangay's expense is charged to that barangay's allocation, never the municipal budget.
     const expensesData = [
       {
         type: 'purchase_request',
@@ -615,8 +704,10 @@ const seed = async () => {
         description: 'Purchase of medicines, vitamins, and first aid supplies',
         amount: 45000,
         program: programs[1]._id, // Boac health program
-        budget: budgetsByMun['BOA']._id,
+        budget: allocationOf(agot),
         municipality: munMap['BOA']._id,
+        barangay: agot._id,
+        attachments: proof(['OR-0012-medical-supplies.pdf', 'official_receipt'], ['SI-4471-marinduque-medical.pdf', 'sales_invoice']),
         transactionDate: new Date('2026-03-10'),
         status: 'approved',
         approvedBy: munAdmin._id,
@@ -628,8 +719,10 @@ const seed = async () => {
         title: 'Training Materials for Leadership Summit',
         amount: 28000,
         program: programs[0]._id, // Boac governance program
-        budget: budgetsByMun['BOA']._id,
+        budget: allocationOf(agot),
         municipality: munMap['BOA']._id,
+        barangay: agot._id,
+        attachments: proof(['DV-2026-031-training-materials.pdf', 'disbursement_voucher']),
         transactionDate: new Date('2026-02-15'),
         status: 'approved',
         approvedBy: munAdmin._id,
@@ -641,8 +734,10 @@ const seed = async () => {
         title: 'Sports Equipment for Laro ng Lahi',
         amount: 30000,
         program: programs[3]._id, // Gasan sports program
-        budget: budgetsByMun['GAS']._id,
+        budget: allocationOf(demoBarangays['GAS'][0]),
         municipality: munMap['GAS']._id,
+        barangay: demoBarangays['GAS'][0]._id,
+        attachments: proof(['OR-0093-sports-depot.pdf', 'official_receipt']),
         transactionDate: new Date('2026-04-20'),
         status: 'pending',
         createdBy: anaGasan._id,
@@ -653,8 +748,9 @@ const seed = async () => {
         title: 'Coastal Clean-Up Supplies',
         amount: 18000,
         program: programs[4]._id, // Mogpog environment program
-        budget: budgetsByMun['MOG']._id,
+        budget: budgetsByMun['MOG']._id, // municipality-level spending, from the municipal budget
         municipality: munMap['MOG']._id,
+        attachments: proof(['OR-0128-green-earth.pdf', 'official_receipt']),
         transactionDate: new Date('2026-03-05'),
         status: 'approved',
         approvedBy: provincial._id,
@@ -678,13 +774,33 @@ const seed = async () => {
       description: 'Hall rental and meals for the three-day bootcamp.',
       amount: 52000,
       program: stcProgram._id,
-      budget: budgetsByMun['STC']._id,
+      budget: allocationOf(demoBarangays['STC'][0]),
       municipality: munMap['STC']._id,
+      barangay: demoBarangays['STC'][0]._id,
+      attachments: proof(['PO-2026-017-venue-catering.pdf', 'official_receipt']),
       transactionDate: new Date('2026-05-12'),
       status: 'approved',
       approvedBy: provincial._id,
       createdBy: chairStac._id,
       vendor: { name: 'Marinduque Events and Catering', address: 'Santa Cruz, Marinduque' },
+    });
+
+    // One of Agot's expenses is left awaiting review, with its proof, so the municipal administrator
+    // has something to open, inspect and decide on in a fresh demo.
+    expensesData.push({
+      type: 'official_receipt',
+      title: 'Snacks and Water for Clean-Up Volunteers',
+      description: 'Refreshments for 60 volunteers at the Agot river clean-up.',
+      amount: 6500,
+      budget: allocationOf(agot),
+      municipality: munMap['BOA']._id,
+      barangay: agot._id,
+      transactionDate: new Date('2026-10-18'),
+      status: 'pending',
+      submittedAt: new Date('2026-10-19'),
+      createdBy: treasBoac._id,
+      vendor: { name: 'Agot Sari-Sari Store', address: 'Agot, Boac, Marinduque' },
+      attachments: proof(['OR-0441-agot-store.pdf', 'official_receipt'], ['AR-volunteer-acknowledgment.pdf', 'acknowledgment_receipt']),
     });
 
     for (const ed of expensesData) {
@@ -693,10 +809,10 @@ const seed = async () => {
     console.log(`Seeded ${expensesData.length} expenses`);
 
     // Keep each budget aligned: disbursedAmount = sum of its APPROVED expenses; remaining = total - disbursed
-    for (const code of Object.keys(budgetsByMun)) {
-      const b = budgetsByMun[code];
+    // Municipal budgets AND barangay allocations alike — each holds exactly what was charged to it.
+    for (const b of await Budget.find({ deletedAt: null })) {
       const [agg] = await Expense.aggregate([
-        { $match: { budget: b._id, status: 'approved', deletedAt: null } },
+        { $match: { budget: b._id, status: { $in: ['approved', 'liquidated'] }, deletedAt: null } },
         { $group: { _id: null, total: { $sum: '$amount' } } },
       ]);
       const disbursed = agg?.total || 0;
@@ -941,6 +1057,18 @@ const seed = async () => {
         publishedAt: new Date(),
       },
     ]);
+    /*
+     * The authority each was issued under, recorded as the API records it for new announcements.
+     * "DILG Compliance Deadline Reminder" is the panel's own example: issued by DILG, it must be
+     * read-only to every barangay officer.
+     */
+    const { issuingOfficeFor } = require('../controllers/announcementController');
+    for (const a of await Announcement.find({}).populate({
+      path: 'author', select: 'role municipality barangay',
+      populate: [{ path: 'municipality', select: 'name' }, { path: 'barangay', select: 'name' }],
+    })) {
+      await Announcement.updateOne({ _id: a._id }, { authorRole: a.author.role, issuingOffice: issuingOfficeFor(a.author) });
+    }
     console.log('Seeded announcements');
 
     // Seed liquidations (sequential — referenceNumber is generated by the pre-save hook)
@@ -948,8 +1076,10 @@ const seed = async () => {
       {
         title: 'Liquidation — Kabataan Malusog Health Campaign',
         program: programs[1]._id,
-        budget: budget._id,
+        budget: allocationOf(agot),
         municipality: munMap['BOA']._id,
+        barangay: agot._id,
+        documents: proof(['OR-0012-medical-supplies.pdf', 'official_receipt'], ['DV-2026-044-health-campaign.pdf', 'disbursement_voucher']),
         totalAmount: 78500,
         liquidatedAmount: 78500,
         status: 'approved',
@@ -965,8 +1095,10 @@ const seed = async () => {
       {
         title: 'Liquidation — Youth Leadership Summit (Q1)',
         program: programs[0]._id,
-        budget: budget._id,
+        budget: allocationOf(agot),
         municipality: munMap['BOA']._id,
+        barangay: agot._id,
+        documents: proof(['SI-2026-summit-catering.pdf', 'sales_invoice']),
         totalAmount: 45000,
         liquidatedAmount: 28000,
         status: 'submitted',
@@ -978,8 +1110,10 @@ const seed = async () => {
       {
         title: 'Liquidation — Leadership Summit Training Materials',
         program: programs[0]._id,
-        budget: budget._id,
+        budget: allocationOf(agot),
         municipality: munMap['BOA']._id,
+        barangay: agot._id,
+        documents: proof(['DV-2026-031-training-materials.pdf', 'disbursement_voucher']),
         totalAmount: 28000,
         liquidatedAmount: 0,
         status: 'draft',
@@ -1017,11 +1151,16 @@ const seed = async () => {
       if (prog.municipality.toString() !== munMap[spec.code]._id.toString()) {
         throw new Error(`Seed error: "${spec.title}" is not in ${spec.code}; the liquidation would cross municipalities`);
       }
+      // A bound submitter's report is filed under their barangay and funded from its allocation;
+      // the provincial office's are municipality-level, against the municipal budget.
+      const submitterBarangay = ['sk_chairperson', 'sk_treasurer', 'sk_secretary'].includes(spec.submitter.role) ? spec.submitter.barangay : null;
       liquidationsData.push({
         title: `Liquidation — ${spec.title}`,
         program: prog._id,
-        budget: budgetsByMun[spec.code]._id,
+        budget: submitterBarangay ? allocationByBarangay[submitterBarangay.toString()]._id : budgetsByMun[spec.code]._id,
         municipality: munMap[spec.code]._id,
+        barangay: submitterBarangay || null,
+        documents: proof([`receipts-${spec.code.toLowerCase()}-liquidation.pdf`, 'official_receipt']),
         totalAmount: spec.totalAmount,
         liquidatedAmount: spec.liquidatedAmount,
         status: spec.status,
@@ -1177,6 +1316,34 @@ const seed = async () => {
           tags: d.tags,
         });
       }
+    }
+
+    // Maligaya's own document — the record Agot's officers must not see, uploaded by its chairperson.
+    documentsData.push({
+      title: 'Barangay Maligaya Clean-Up Plan',
+      description: 'Work plan and volunteer roster for the Maligaya coastal clean-up.',
+      category: 'minutes',
+      fileName: sampleFileName,
+      originalName: 'Maligaya-Clean-Up-Plan.pdf',
+      fileUrl: sampleFileUrl,
+      fileType: 'application/pdf',
+      fileSize: 98765,
+      municipality: munMap['BOA']._id,
+      uploadedBy: chairMaligaya._id,
+      fiscalYear: 2026,
+      tags: ['clean-up', 'maligaya'],
+    });
+
+    /*
+     * Filed under the uploader's barangay — the rule the upload route enforces since October 2026.
+     * Maria's financial papers and Juan's resolutions therefore land in ONE repository, Agot's,
+     * which Agot's three officers share and Maligaya's chairperson cannot open. Documents from the
+     * municipal and provincial offices stay municipality-level.
+     */
+    const SEAT = ['sk_chairperson', 'sk_treasurer', 'sk_secretary'];
+    for (const d of documentsData) {
+      const uploader = users.find((u) => u._id.equals(d.uploadedBy));
+      if (d.barangay === undefined) d.barangay = uploader && SEAT.includes(uploader.role) ? uploader.barangay : null;
     }
 
     const documents = await Document.insertMany(documentsData);

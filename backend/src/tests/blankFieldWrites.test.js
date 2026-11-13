@@ -11,7 +11,7 @@
 const request = require('supertest');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
-const { createUser, createBudget, createProgram, authHeader } = require('./helpers');
+const { createUser, createBudget, createProgram, authHeader, PDF } = require('./helpers');
 const Announcement = require('../models/Announcement');
 const Expense = require('../models/Expense');
 
@@ -94,7 +94,10 @@ describe('expenses: blank optional references', () => {
       .field('budget', budget._id.toString())
       .field('program', '')
       .field('barangay', '')
-      .field('transactionDate', '2026-03-10');
+      .field('transactionDate', '2026-03-10')
+      // Proof is required to submit an expense for review (October 2026).
+      .field('documentTypes', 'official_receipt')
+      .attach('attachments', PDF, { filename: 'receipt.pdf', contentType: 'application/pdf' });
 
     expect(res.status).toBe(201);
     const stored = await Expense.findById(res.body.data._id);
@@ -110,7 +113,8 @@ describe('expenses: blank optional references', () => {
       .field('title', 'Office supplies for the SK secretariat')
       .field('amount', '5000')
       .field('budget', budget._id.toString())
-      .field('transactionDate', '2026-03-10');
+      .field('transactionDate', '2026-03-10')
+      .attach('attachments', PDF, { filename: 'receipt.pdf', contentType: 'application/pdf' });
     expect(created.status).toBe(201);
 
     const res = await request(app).put(`/api/expenses/${created.body.data._id}`)
@@ -143,7 +147,10 @@ describe('liquidations: blank optional fields', () => {
       .field('totalAmount', '5000')
       .field('liquidatedAmount', '5000')
       .field('dueDate', '')
-      .field('remarks', '');
+      .field('remarks', '')
+      // A liquidation report must carry its evidence (October 2026).
+      .field('documentTypes', 'official_receipt')
+      .attach('documents', PDF, { filename: 'receipt.pdf', contentType: 'application/pdf' });
 
     expect(res.status).toBe(201);
   });

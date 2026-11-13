@@ -27,10 +27,13 @@ const QA_PASSWORD = SHOW_QA_CREDS ? 'Admin@123' : '';
 const QA_ACCOUNTS = SHOW_QA_CREDS ? [
   { role: 'Super Admin', email: 'superadmin@skims.gov.ph' },
   { role: 'Provincial Admin', email: 'provincial@skims.gov.ph' },
-  { role: 'Municipal Admin · Boac', email: 'municipal@boac.gov.ph' },
-  { role: 'SK Chairperson · Boac', email: 'juan@boac.gov.ph' },
-  { role: 'SK Treasurer · Boac', email: 'maria@boac.gov.ph' },
-  { role: 'SK Chairperson · Sta. Cruz', email: 'pedro@stac.gov.ph' },
+  { role: 'SK Municipal Admin · Boac', email: 'municipal@boac.gov.ph' },
+  // Agot's three officers share one barangay's records; Maligaya's chairperson sees none of them.
+  { role: 'SK Chairperson · Agot, Boac', email: 'juan@boac.gov.ph' },
+  { role: 'SK Treasurer · Agot, Boac', email: 'maria@boac.gov.ph' },
+  { role: 'SK Secretary · Agot, Boac', email: 'liza@boac.gov.ph' },
+  { role: 'SK Chairperson · Maligaya, Boac', email: 'ramon@boac.gov.ph' },
+  { role: 'SK Chairperson · Santa Cruz', email: 'pedro@stac.gov.ph' },
   { role: 'SK Secretary · Gasan', email: 'ana@gasan.gov.ph' },
   { role: 'DILG Representative', email: 'dilg@marinduque.gov.ph' },
   /*
@@ -131,7 +134,7 @@ export default function Login() {
               Sangguniang Kabataan<br />Integrated Program and Fund<br />Management System
             </h1>
             <p className="mb-8 text-sm leading-relaxed text-navy-300">
-              Digitizing youth governance across Boac, Gasan, Mogpog, and Sta. Cruz municipalities.
+              Digitizing youth governance across Boac, Gasan, Mogpog, and Santa Cruz municipalities.
             </p>
 
             <ul className="space-y-3">

@@ -2,7 +2,7 @@ const request = require('supertest');
 const mongoose = require('mongoose');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
-const { createUser, createBudget, createProgram, authHeader } = require('./helpers');
+const { createUser, createBudget, createProgram, authHeader, multipart } = require('./helpers');
 const Budget = require('../models/Budget');
 const Program = require('../models/Program');
 
@@ -23,7 +23,7 @@ const EXPENSE = (overrides = {}) => ({
 });
 
 const createExpenseAs = async (token, overrides = {}) => {
-  const res = await request(app).post('/api/expenses').set(authHeader(token)).send(EXPENSE(overrides));
+  const res = await multipart(request(app).post('/api/expenses').set(authHeader(token)), EXPENSE(overrides));
   expect(res.status).toBe(201);
   return res.body.data._id;
 };
@@ -139,8 +139,8 @@ describe('PATCH /api/expenses/bulk-approve', () => {
     expect(res.body.message).toMatch(/50/);
   });
 
-  it('returns 403 for a role without approval rights (sk_kagawad)', async () => {
-    const { token } = await createUser({ role: 'sk_kagawad' });
+  it('returns 403 for a role without approval rights (sk_secretary)', async () => {
+    const { token } = await createUser({ role: 'sk_secretary' });
     const res = await request(app)
       .patch('/api/expenses/bulk-approve')
       .set(authHeader(token))

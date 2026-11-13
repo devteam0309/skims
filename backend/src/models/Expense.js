@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Counter = require('./Counter');
+const { attachmentSchema } = require('./schemas/attachment');
 
 const EXPENSE_TYPES = [
   'purchase_request',
@@ -29,39 +30,66 @@ const expenseSchema = new mongoose.Schema(
     },
     transactionDate: { type: Date, required: true },
     /*
-     * draft ──submit──▶ pending ──approve──▶ approved ──▶ liquidated
-     *                      └─────reject────▶ rejected ──(edit, resubmit)──▶ pending
+     * draft ──submit──▶ pending ──approve──▶ approved ──(liquidation approved)──▶ liquidated
+     *                      ├──return──▶ returned ──(correct, add proof, resubmit)──▶ pending
+     *                      └──reject──▶ rejected   (final)
      *
      * `pending` means "submitted, awaiting the administrator's review" and remains the DEFAULT, so
-     * every record written before this workflow existed keeps its meaning and no migration is
-     * required. `draft` is opt-in at creation, for a treasurer assembling a record before sending
-     * it up; it mirrors the draft/submitted pair budgets and liquidations already use.
+     * every record written before this workflow existed keeps its meaning. `draft` is opt-in at
+     * creation, for a treasurer assembling a record before sending it up.
+     *
+     * `returned` and `rejected` are different decisions. Returning sends the expense back for
+     * correction or further proof and it can be resubmitted; rejecting refuses it outright. Until
+     * October 2026 there was only `rejected`, used to mean "returned" — the live database held no
+     * rejected expense when the two were split, so nothing needed converting.
+     *
+     * Only approval moves money: the budget is deducted once, in the same transaction that claims
+     * the `pending → approved` transition, so a review repeated or resubmitted cannot deduct twice.
      *
      * The officer who creates an expense never approves it — see constants/roles.js.
      */
     status: {
       type: String,
-      enum: ['draft', 'pending', 'approved', 'rejected', 'liquidated'],
+      enum: ['draft', 'pending', 'approved', 'returned', 'rejected', 'liquidated'],
       default: 'pending',
     },
     submittedAt: Date,
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedAt: Date,
-    // A rejection has to say why, and by whom: an expense returned with no reason leaves the
-    // treasurer guessing at what to change, and the audit trail unable to show who decided.
+    // A rejection has to say why, and by whom: an expense refused with no reason leaves the
+    // treasurer guessing, and the audit trail unable to show who decided.
     rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     rejectedAt: Date,
     rejectionReason: String,
+    // The same for a return: what has to change before it comes back.
+    returnedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    returnedAt: Date,
+    returnReason: String,
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    attachments: [{ fileName: String, fileUrl: String, fileType: String }],
+    /*
+     * Proof of the expenditure. An expense cannot be submitted for review, or approved, without at
+     * least one — the panel's rule is that nothing is "fully documented or approved" on the
+     * treasurer's word alone.
+     */
+    attachments: [attachmentSchema],
+    /*
+     * Set when the approval deducts money: which budget was charged, and how much programme
+     * commitment the approval released. Reversing an approval reads both to refund exactly what was
+     * taken — so a reversed and re-approved expense is deducted once, never twice.
+     */
+    chargedBudget: { type: mongoose.Schema.Types.ObjectId, ref: 'Budget', default: null },
+    commitmentReleased: { type: Number, default: 0 },
     isLiquidated: { type: Boolean, default: false },
     liquidationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Liquidation' },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
 expenseSchema.index({ municipality: 1, status: 1, deletedAt: 1 });
+expenseSchema.index({ barangay: 1, status: 1, deletedAt: 1 });
+expenseSchema.index({ budget: 1, status: 1 });
 expenseSchema.index({ municipality: 1, transactionDate: -1, deletedAt: 1 });
 expenseSchema.index({ program: 1 });
 expenseSchema.index({ type: 1 });

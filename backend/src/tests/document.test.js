@@ -132,13 +132,16 @@ describe('PATCH /api/documents/:id/unarchive', () => {
 });
 
 describe('POST /api/documents/:id/download', () => {
-  it('tracks download and returns fileUrl for a public document (no auth)', async () => {
+  // The count is kept; the storage URL is no longer handed out — the file comes only from /serve,
+  // behind the same access check.
+  it('tracks a download of a public document (no auth) without disclosing its storage URL', async () => {
     const { user, municipalityId } = await createUser({ role: 'municipal_admin' });
     const doc = await createDoc(municipalityId, user._id, { isPublic: true });
 
     const res = await request(app).post(`/api/documents/${doc._id}/download`);
     expect(res.status).toBe(200);
-    expect(res.body.data.fileUrl).toBe(doc.fileUrl);
+    expect(JSON.stringify(res.body)).not.toContain(doc.fileUrl);
+    expect((await Document.findById(doc._id)).downloadCount).toBe(1);
   });
 
   it('returns 403 for cross-municipality private document', async () => {
@@ -172,12 +175,13 @@ describe('DELETE /api/documents/:id', () => {
     expect(deleted.deletedAt).not.toBeNull();
   });
 
-  it('returns 403 for sk_chairperson (not in ADMINS)', async () => {
+  // Deletion is open to the roles that upload (October 2026); DILG uploads nothing.
+  it('returns 403 for dilg_representative (cannot upload, so cannot delete)', async () => {
     const { user: owner, municipalityId } = await createUser({ role: 'municipal_admin' });
-    const { token: chairToken } = await createUser({ role: 'sk_chairperson', municipality: municipalityId });
+    const { token: dilgToken } = await createUser({ role: 'dilg_representative', municipality: null });
     const doc = await createDoc(municipalityId, owner._id);
 
-    const res = await request(app).delete(`/api/documents/${doc._id}`).set(authHeader(chairToken));
+    const res = await request(app).delete(`/api/documents/${doc._id}`).set(authHeader(dilgToken));
     expect(res.status).toBe(403);
   });
 

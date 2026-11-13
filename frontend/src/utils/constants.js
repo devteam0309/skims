@@ -5,7 +5,6 @@ export const ROLES = {
   SK_CHAIRPERSON: 'sk_chairperson',
   SK_TREASURER: 'sk_treasurer',
   SK_SECRETARY: 'sk_secretary',
-  SK_KAGAWAD: 'sk_kagawad',
   DILG_REPRESENTATIVE: 'dilg_representative',
   YOUTH: 'youth',
 };
@@ -25,11 +24,11 @@ export const homeLabelFor = (role) => (role === 'youth' ? 'My pages' : 'Dashboar
 export const ROLE_LABELS = {
   super_admin: 'Super Administrator',
   provincial_admin: 'Provincial SK Fed. Admin',
-  municipal_admin: 'Municipal SK Fed. Admin',
+  // The panel's name for it: the municipal reviewer of every barangay's programmes and money.
+  municipal_admin: 'SK Municipal Admin',
   sk_chairperson: 'SK Chairperson',
   sk_treasurer: 'SK Treasurer',
   sk_secretary: 'SK Secretary',
-  sk_kagawad: 'SK Kagawad',
   dilg_representative: 'DILG Representative',
   youth: 'Youth Member',
 };
@@ -110,7 +109,9 @@ export const SELF_ASSIGNABLE_ROLES = [
   'sk_chairperson',
   'sk_treasurer',
   'sk_secretary',
-  'sk_kagawad',
+  // Self-registrable since October 2026, at the panel's request. Safe because every non-youth
+  // registration waits for super_admin approval, which needs an identity document to inspect.
+  'municipal_admin',
   'dilg_representative',
   // Registering as a youth also creates the registry record, so the form asks for a birth date
   // and gender when this is chosen. Listed first in the UI because it is now the common case.
@@ -148,7 +149,7 @@ export const LOGIN_NOTICES = {
 export const ADMIN_ROLES = ['super_admin', 'provincial_admin', 'municipal_admin'];
 export const EDITOR_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];
 export const FINANCE_ROLES = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'dilg_representative'];
-export const STAFF = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'];
+export const STAFF = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'dilg_representative'];
 /*
  * Mirrors backend constants/roles.js. Opening Reports is a view; approving money is not, and the
  * two were one list — which is how DILG came to approve budgets by way of reading reports, and
@@ -180,9 +181,41 @@ export const PROGRAM_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'
  * control whose selection is silently discarded — the same mistake the municipality picker made for
  * municipal_admin. The admin tiers and DILG are not bound even if a barangay is recorded on them.
  */
-export const BARANGAY_BOUND_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad'];
+export const BARANGAY_BOUND_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary'];
+
+/*
+ * The three offices a barangay holds exactly one of. Mirrors SEAT_ROLES in
+ * backend/src/constants/roles.js, where a unique index makes "one chairperson per barangay" hold.
+ */
+export const SEAT_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary'];
+
+/** Applicants a super_admin must approve — every self-registering role but youth. */
+export const VERIFICATION_REQUIRED_ROLES = SELF_ASSIGNABLE_ROLES.filter((r) => r !== 'youth');
+
+/** What an applicant may upload to prove identity and residency, as the panel listed them. */
+export const VERIFICATION_DOCUMENT_TYPES = [
+  { value: 'government_id', label: 'Valid government-issued ID' },
+  { value: 'kk_id', label: 'Katipunan ng Kabataan (KK) ID' },
+  { value: 'proof_of_residency', label: 'Proof of residency' },
+];
+
+/*
+ * Suggested kinds of proof behind an expense or a liquidation report. Free text on the server — the
+ * office's own word for a paper is kept — so these are suggestions, not a closed list.
+ */
+export const PROOF_TYPES = [
+  { value: 'official_receipt', label: 'Official Receipt' },
+  { value: 'sales_invoice', label: 'Sales Invoice' },
+  { value: 'acknowledgment_receipt', label: 'Acknowledgment Receipt' },
+  { value: 'disbursement_voucher', label: 'Disbursement Voucher' },
+  { value: 'purchase_order', label: 'Purchase Order' },
+  { value: 'delivery_receipt', label: 'Delivery Receipt' },
+];
+
+/** Who reads the per-barangay financial performance view. Mirrors FINANCE_MONITORS. */
+export const FINANCE_MONITORS = [...ADMIN_ROLES, 'dilg_representative'];
 
 export const YOUTH_REGISTRARS = [...ADMIN_ROLES, 'sk_chairperson'];
-export const YOUTH_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary', 'sk_kagawad'];
-export const DOC_UPLOADERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad'];
+export const YOUTH_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];
+export const DOC_UPLOADERS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_treasurer', 'sk_secretary'];
 export const DOC_EDITORS = [...ADMIN_ROLES, 'sk_chairperson', 'sk_secretary'];

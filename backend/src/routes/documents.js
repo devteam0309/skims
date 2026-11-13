@@ -29,11 +29,12 @@ router.get('/stats', protect, getDocumentStats);
 /*
  * Recycle bin. Declared before '/:id' so "recycle-bin" is not read as a document id.
  *
- * ADMINS, matching DELETE — deletion was already restricted to them, and the bin lists exactly what
- * that route produced. Widening it here would hand the Documents page a view of records the same
- * account cannot delete or restore.
+ * Open to every role that can upload, because every such role can now delete — within its own
+ * barangay, and (for a non-editor such as the treasurer) only what it uploaded itself. The listing
+ * is scoped strictly in the controller, so an SK officer's bin holds their own barangay's documents
+ * and nobody else's. Permanent deletion stays with the administrators.
  */
-router.get('/recycle-bin', protect, authorize(...ADMINS), getDeletedDocuments);
+router.get('/recycle-bin', protect, authorize(...DOC_UPLOADERS), getDeletedDocuments);
 router.get('/', protect, getDocuments);
 router.get('/:id', protect, idParam, getDocument);
 router.post('/', protect, authorize(...DOC_UPLOADERS), upload.single('file'), uploadValidation, uploadDocument);
@@ -45,8 +46,9 @@ router.patch('/:id/replace-file', protect, authorize(...DOC_EDITORS), idParam, u
 router.post('/:id/download', optionalAuth, idParam, trackDownload);
 router.get('/:id/serve', optionalAuth, idParam, serveFile);
 router.get('/:id/versions/:version/serve', optionalAuth, idParam, serveVersion);
-router.delete('/:id', protect, authorize(...ADMINS), idParam, deleteDocument);
-router.patch('/:id/restore', protect, authorize(...ADMINS), idParam, restoreDocument);
+// Moving to and from the bin: any uploader, with barangay and ownership checked in the controller.
+router.delete('/:id', protect, authorize(...DOC_UPLOADERS), idParam, deleteDocument);
+router.patch('/:id/restore', protect, authorize(...DOC_UPLOADERS), idParam, restoreDocument);
 // Irreversible, and the only route that destroys a stored file. ADMINS only, and only for a
 // document already in the recycle bin.
 router.delete('/:id/permanent', protect, authorize(...ADMINS), idParam, permanentlyDeleteDocument);

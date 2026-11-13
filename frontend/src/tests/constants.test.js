@@ -32,8 +32,8 @@ describe('role groups', () => {
     expect(FINANCE_APPROVERS).not.toContain('sk_chairperson');
   });
 
-  it('YOUTH_EDITORS includes kagawad but excludes treasurer', () => {
-    expect(YOUTH_EDITORS).toContain('sk_kagawad');
+  it('YOUTH_EDITORS includes the secretary but excludes treasurer', () => {
+    expect(YOUTH_EDITORS).toContain('sk_secretary');
     expect(YOUTH_EDITORS).not.toContain('sk_treasurer');
   });
 

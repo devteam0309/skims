@@ -2,6 +2,7 @@ const request = require('supertest');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
 const User = require('../models/User');
+const { registerApplicant } = require('./helpers');
 
 jest.mock('../services/emailService', () => ({
   sendEmailVerification: jest.fn().mockResolvedValue({}),
@@ -16,7 +17,8 @@ afterEach(clearDB);
 const PASSWORD = 'Test@1234';
 
 const register = (email) =>
-  request(app).post('/api/auth/register').send({
+  // A DILG applicant must attach proof of identity (October 2026); the helper attaches one.
+  registerApplicant(app, {
     firstName: 'Norm', lastName: 'Test', email, password: PASSWORD, role: 'dilg_representative',
   });
 

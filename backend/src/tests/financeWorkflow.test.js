@@ -14,7 +14,7 @@
 const request = require('supertest');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
-const { createUser, createBudget, createProgram, authHeader } = require('./helpers');
+const { createUser, createBudget, createProgram, authHeader, multipart } = require('./helpers');
 const Expense = require('../models/Expense');
 const AuditLog = require('../models/AuditLog');
 const Notification = require('../models/Notification');
@@ -51,7 +51,7 @@ describe('SK Chairperson is view-only in Fund Management', () => {
       .send({ title: 'FY 2027', fiscalYear: 2027, totalBudget: 100000 });
     expect(budget.status).toBe(403);
 
-    const expense = await request(app).post('/api/expenses').set(authHeader(token)).send(EXPENSE());
+    const expense = await multipart(request(app).post('/api/expenses').set(authHeader(token)), EXPENSE());
     expect(expense.status).toBe(403);
 
     const liquidation = await request(app).post('/api/liquidations').set(authHeader(token))
@@ -65,7 +65,7 @@ describe('SK Chairperson is view-only in Fund Management', () => {
     const { token: treasurerToken } = await createUser({ role: 'sk_treasurer', municipality: municipalityId });
     const budget = await createBudget(municipalityId, admin._id, { status: 'pending_approval' });
 
-    const created = await request(app).post('/api/expenses').set(authHeader(treasurerToken)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(treasurerToken)), EXPENSE());
     expect(created.status).toBe(201);
     const expenseId = created.body.data._id;
 
@@ -84,7 +84,7 @@ describe('SK Chairperson is view-only in Fund Management', () => {
 describe('SK Treasurer records money but never approves it', () => {
   it('can create and edit an expense', async () => {
     const { token } = await createUser({ role: 'sk_treasurer' });
-    const created = await request(app).post('/api/expenses').set(authHeader(token)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(token)), EXPENSE());
     expect(created.status).toBe(201);
 
     const edited = await request(app).put(`/api/expenses/${created.body.data._id}`)
@@ -114,8 +114,7 @@ describe('SK Treasurer records money but never approves it', () => {
 describe('Expense review workflow', () => {
   it('moves draft to pending on submit, and refuses to submit twice', async () => {
     const { token } = await createUser({ role: 'sk_treasurer' });
-    const created = await request(app).post('/api/expenses').set(authHeader(token))
-      .send(EXPENSE({ saveAsDraft: true }));
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(token)), EXPENSE({ saveAsDraft: true }));
     expect(created.status).toBe(201);
     expect(created.body.data.status).toBe('draft');
 
@@ -131,7 +130,7 @@ describe('Expense review workflow', () => {
 
   it('defaults to pending, so records written before the draft state keep their meaning', async () => {
     const { token } = await createUser({ role: 'sk_treasurer' });
-    const created = await request(app).post('/api/expenses').set(authHeader(token)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(token)), EXPENSE());
     expect(created.body.data.status).toBe('pending');
   });
 
@@ -140,7 +139,7 @@ describe('Expense review workflow', () => {
     const { token: treasurerToken, user: treasurer } = await createUser({ role: 'sk_treasurer', municipality: municipalityId });
     const { token: adminToken, user: admin } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
 
-    const created = await request(app).post('/api/expenses').set(authHeader(treasurerToken)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(treasurerToken)), EXPENSE());
     const id = created.body.data._id;
 
     const res = await request(app).patch(`/api/expenses/${id}/reject`)
@@ -171,7 +170,7 @@ describe('Expense review workflow', () => {
     const { token: treasurerToken } = await createUser({ role: 'sk_treasurer', municipality: municipalityId });
     const { token: adminToken } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
 
-    const created = await request(app).post('/api/expenses').set(authHeader(treasurerToken)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(treasurerToken)), EXPENSE());
     const res = await request(app).patch(`/api/expenses/${created.body.data._id}/reject`)
       .set(authHeader(adminToken)).send({});
     expect(res.status).toBe(422);
@@ -182,7 +181,7 @@ describe('Expense review workflow', () => {
     const { token: treasurerToken } = await createUser({ role: 'sk_treasurer', municipality: municipalityId });
     const { token: adminToken } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
 
-    const created = await request(app).post('/api/expenses').set(authHeader(treasurerToken)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(treasurerToken)), EXPENSE());
     const id = created.body.data._id;
     const approved = await request(app).patch(`/api/expenses/${id}/approve`).set(authHeader(adminToken));
     expect(approved.status).toBe(200);
@@ -192,14 +191,21 @@ describe('Expense review workflow', () => {
     expect(res.status).toBe(400);
   });
 
-  it('lets a rejected expense be corrected and resubmitted, clearing the reason', async () => {
+  /*
+   * "Returned" and "rejected" were one status until October 2026. Returning is now the request for
+   * a correction — the expense can be fixed and resubmitted, and the remarks are cleared when it is —
+   * while a rejection is final.
+   */
+  it('lets a returned expense be corrected and resubmitted, clearing the remarks', async () => {
     const { municipalityId } = await createUser({ role: 'municipal_admin' });
     const { token: treasurerToken } = await createUser({ role: 'sk_treasurer', municipality: municipalityId });
     const { token: adminToken } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
 
-    const created = await request(app).post('/api/expenses').set(authHeader(treasurerToken)).send(EXPENSE());
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(treasurerToken)), EXPENSE());
     const id = created.body.data._id;
-    await request(app).patch(`/api/expenses/${id}/reject`).set(authHeader(adminToken)).send({ rejectionReason: 'Fix the date' });
+    const returned = await request(app).patch(`/api/expenses/${id}/return`).set(authHeader(adminToken)).send({ returnReason: 'Fix the date' });
+    expect(returned.status).toBe(200);
+    expect(returned.body.data.status).toBe('returned');
 
     const edited = await request(app).put(`/api/expenses/${id}`).set(authHeader(treasurerToken))
       .send({ transactionDate: '2026-03-20' });
@@ -208,7 +214,23 @@ describe('Expense review workflow', () => {
     const resubmitted = await request(app).patch(`/api/expenses/${id}/submit`).set(authHeader(treasurerToken));
     expect(resubmitted.status).toBe(200);
     expect(resubmitted.body.data.status).toBe('pending');
-    expect(resubmitted.body.data.rejectionReason).toBeUndefined();
+    expect(resubmitted.body.data.returnReason).toBeUndefined();
+  });
+
+  it('treats a rejection as final: it cannot be edited or resubmitted', async () => {
+    const { municipalityId } = await createUser({ role: 'municipal_admin' });
+    const { token: treasurerToken } = await createUser({ role: 'sk_treasurer', municipality: municipalityId });
+    const { token: adminToken } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
+
+    const created = await multipart(request(app).post('/api/expenses').set(authHeader(treasurerToken)), EXPENSE());
+    const id = created.body.data._id;
+    await request(app).patch(`/api/expenses/${id}/reject`).set(authHeader(adminToken)).send({ rejectionReason: 'Not an SK expense' });
+
+    const edited = await request(app).put(`/api/expenses/${id}`).set(authHeader(treasurerToken)).send({ title: 'Changed' });
+    expect(edited.status).toBe(400);
+    const resubmitted = await request(app).patch(`/api/expenses/${id}/submit`).set(authHeader(treasurerToken));
+    expect(resubmitted.status).toBe(409);
+    expect((await Expense.findById(id)).status).toBe('rejected');
   });
 
   it('refuses to reject an expense in another municipality', async () => {

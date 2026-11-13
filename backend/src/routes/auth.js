@@ -11,6 +11,7 @@ const {
   refreshAccessToken,
   SELF_ASSIGNABLE_ROLES,
 } = require('../controllers/authController');
+const { SEAT_ROLES, VERIFICATION_DOCUMENT_TYPES } = require('../constants/roles');
 
 /*
  * Roles that belong to no single LGU. provincial_admin oversees the whole province, and
@@ -65,6 +66,26 @@ const registerValidation = validate([
     const { role } = req.body;
     if (!MUNICIPALITY_FREE_ROLES.includes(role) && !value) throw new Error('Municipality is required');
     if (value && !/^[a-f\d]{24}$/i.test(String(value))) throw new Error('Select a valid municipality');
+    return true;
+  }),
+
+  /*
+   * The barangay is what binds an SK officer's account to the records they may see, and the seat
+   * they hold. Required for the three barangay offices; that it belongs to the chosen municipality
+   * is checked against the database in the controller.
+   */
+  body('barangay').custom((value, { req }) => {
+    if (SEAT_ROLES.includes(req.body.role) && !value) throw new Error('Select your barangay');
+    if (value && !/^[a-f\d]{24}$/i.test(String(value))) throw new Error('Select a valid barangay');
+    return true;
+  }),
+
+  body('documentTypes').optional().custom((value) => {
+    const types = [].concat(value);
+    if (types.length > 3) throw new Error('Attach at most three supporting documents');
+    if (types.some((t) => !VERIFICATION_DOCUMENT_TYPES.includes(String(t)))) {
+      throw new Error('Each document must be a government ID, a KK ID, or proof of residency');
+    }
     return true;
   }),
 ]);
@@ -125,7 +146,12 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-router.post('/register', registerValidation, register);
+/*
+ * Multipart, so applicants can attach their identity and residency proof. Multer runs first because
+ * it is what populates req.body from a multipart request; a JSON registration (a youth sign-up, which
+ * attaches nothing) passes straight through it untouched.
+ */
+router.post('/register', upload.array('verificationDocuments', 3), registerValidation, register);
 router.post('/login', loginLimiter, loginValidation, login);
 router.post('/refresh', refreshAccessToken);
 router.post('/logout', protect, logout);

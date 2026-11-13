@@ -5,10 +5,25 @@ const AuditLog = require('../models/AuditLog');
 const emailService = require('../services/emailService');
 const { successResponse, errorResponse, paginatedResponse, parsePagination } = require('../utils/apiResponse');
 const { escapeRegex } = require('../utils/regex');
-const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
+const { CROSS_MUNICIPALITY_READ, VERIFICATION_REQUIRED_ROLES } = require('../constants/roles');
 const { checkBarangay, barangayErrorMessage } = require('../utils/barangay');
+const { sendFile } = require('../services/fileStorage');
 
 const MAX_LIMIT = 100;
+
+/*
+ * A save that would give an account a seat someone else already holds fails on the unique
+ * `seatKey` index. Said in words an administrator can act on, rather than as "seatKey already exists".
+ */
+const isSeatConflict = (err) => err?.code === 11000 && Boolean(err.keyPattern?.seatKey);
+const SEAT_CONFLICT = 'That barangay already has an active account in this SK position. Deactivate or reassign that account first.';
+
+const audit = (req, user, action, extra = {}) => AuditLog.create({
+  user: req.user._id, action, resource: 'user', resourceId: user._id,
+  // The account's municipality, not the administrator's: super_admin has none of its own.
+  municipality: user.municipality?._id || user.municipality, ipAddress: req.ip,
+  ...extra,
+});
 
 exports.getUsers = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, role, municipality, search, isApproved, isActive } = req.query;
@@ -75,13 +90,34 @@ exports.getUser = asyncHandler(async (req, res) => {
   successResponse(res, 200, 'User', user);
 });
 
+/**
+ * Let an applicant in.
+ *
+ * Refused for an applicant who uploaded no identity or residency document: the panel's rule is that
+ * verification is not complete without the attachment, and the reviewer cannot have inspected
+ * something that does not exist. Atomic on the pending state, so two reviewers (or a double click)
+ * cannot both approve, and an application rejected meanwhile is not resurrected.
+ */
 exports.approveUser = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
-  if (!user) return errorResponse(res, 404, 'User not found');
-  user.isApproved = true;
-  user.approvedBy = req.user._id;
-  user.approvedAt = Date.now();
-  await user.save({ validateBeforeSave: false });
+  if (!user || user.deletedAt) return errorResponse(res, 404, 'User not found');
+  if (user.isApproved) return errorResponse(res, 409, 'This account is already approved');
+  if (!user.isActive) return errorResponse(res, 409, 'This application was rejected or the account is deactivated');
+  if (VERIFICATION_REQUIRED_ROLES.includes(user.role) && !(user.verificationDocuments?.length > 0)) {
+    return errorResponse(res, 400, 'This applicant has not uploaded a supporting document. An account cannot be approved without proof of identity or residency.');
+  }
+
+  const approved = await User.findOneAndUpdate(
+    { _id: user._id, isApproved: false, isActive: true, deletedAt: null },
+    { isApproved: true, approvedBy: req.user._id, approvedAt: new Date() },
+    { new: true }
+  );
+  if (!approved) return errorResponse(res, 409, 'This application was already decided by someone else');
+
+  await audit(req, approved, 'ACCOUNT_APPROVE', {
+    newValues: { isApproved: true },
+    details: { role: approved.role, barangay: approved.barangay || null, verificationDocuments: approved.verificationDocuments.length },
+  });
 
   await Notification.create({
     recipient: user._id,
@@ -91,27 +127,66 @@ exports.approveUser = asyncHandler(async (req, res) => {
     priority: 'high',
   });
 
-  emailService.sendApprovalNotification(user).catch(() => {});
+  emailService.sendApprovalNotification(approved).catch(() => {});
 
-  successResponse(res, 200, 'User approved successfully', user);
+  successResponse(res, 200, 'User approved successfully', approved);
 });
 
+/**
+ * Refuse an application. Deactivating the account releases the SK seat it was holding, so the
+ * barangay's position is open to the rightful applicant straight away.
+ *
+ * Only for applications still awaiting a decision: taking access away from an approved account is
+ * deactivation (PUT /:id/toggle-status), a different act with a different record.
+ */
 exports.rejectUser = asyncHandler(async (req, res) => {
+  const reason = (req.body.reason || '').trim();
   const user = await User.findById(req.params.id);
-  if (!user) return errorResponse(res, 404, 'User not found');
-  user.isApproved = false;
+  if (!user || user.deletedAt) return errorResponse(res, 404, 'User not found');
+  if (user.isApproved) return errorResponse(res, 409, 'This account is already approved — deactivate it instead');
+  if (!user.isActive) return errorResponse(res, 409, 'This application was already rejected');
+
   user.isActive = false;
+  user.rejectedAt = new Date();
+  user.rejectedBy = req.user._id;
+  user.rejectionReason = reason || undefined;
   await user.save({ validateBeforeSave: false });
+
+  await audit(req, user, 'ACCOUNT_REJECT', {
+    newValues: { isActive: false },
+    details: { role: user.role, reason: reason || null, seatReleased: true },
+  });
 
   await Notification.create({
     recipient: user._id,
     type: 'approval_rejected',
     title: 'Account Application Rejected',
-    message: req.body.reason || 'Your account application has been rejected.',
+    message: reason || 'Your account application has been rejected.',
     priority: 'high',
   });
 
   successResponse(res, 200, 'User rejected');
+});
+
+/**
+ * Open one of an applicant's identity or residency documents — inline for preview, or as a download
+ * with `?download=1`. super_admin only (the route says so), and every opening is audited: these are
+ * government ids, and who looked at whose is worth being able to answer.
+ */
+exports.getVerificationDocument = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id).select('verificationDocuments municipality firstName lastName');
+  if (!user) return errorResponse(res, 404, 'User not found');
+  const doc = user.verificationDocuments.id(req.params.docId);
+  if (!doc) return errorResponse(res, 404, 'Document not found');
+
+  const download = req.query.download === '1' || req.query.download === 'true';
+  await audit(req, user, download ? 'DOWNLOAD' : 'VIEW', {
+    resource: 'verification_document',
+    resourceId: user._id,
+    details: { documentId: doc._id, documentType: doc.documentType },
+  });
+
+  return sendFile(res, doc, { disposition: download ? 'attachment' : 'inline' });
 });
 
 /*
@@ -130,9 +205,9 @@ exports.rejectUser = asyncHandler(async (req, res) => {
  * sign in and see the portal, which is not what "revoke their access" is meant to mean.
  */
 const ASSIGNABLE_ROLES = {
-  super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'],
-  provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'],
-  municipal_admin: ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad'],
+  super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'dilg_representative'],
+  provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'dilg_representative'],
+  municipal_admin: ['sk_chairperson', 'sk_treasurer', 'sk_secretary'],
 };
 
 /**
@@ -274,7 +349,13 @@ exports.updateUserBarangay = asyncHandler(async (req, res) => {
     if (check !== 'ok') return errorResponse(res, 400, barangayErrorMessage(check));
     user.barangay = barangay;
   }
-  await user.save({ validateBeforeSave: false });
+  try {
+    await user.save({ validateBeforeSave: false });
+  } catch (err) {
+    // Moving an officer into a barangay whose seat is already held.
+    if (isSeatConflict(err)) return errorResponse(res, 409, SEAT_CONFLICT);
+    throw err;
+  }
 
   await AuditLog.create({
     user: req.user._id, action: 'UPDATE', resource: 'user', resourceId: user._id,
@@ -297,29 +378,68 @@ exports.updateUserRole = asyncHandler(async (req, res) => {
     return errorResponse(res, 403, `Your role cannot assign the '${role}' role`);
   }
 
-  const target = await User.findById(req.params.id).select('role');
-  if (!target) return errorResponse(res, 404, 'User not found');
+  const target = await User.findById(req.params.id);
+  if (!target || target.deletedAt) return errorResponse(res, 404, 'User not found');
   if (target.role === 'youth') {
     return errorResponse(res, 400, 'A youth account cannot be changed into a staff role — it is tied to a registry record');
   }
-  const user = await User.findByIdAndUpdate(
-    req.params.id,
-    { role, municipality, barangay },
-    { new: true, runValidators: true }
-  );
-  if (!user) return errorResponse(res, 404, 'User not found');
-  await AuditLog.create({ user: req.user._id, action: 'ROLE_CHANGE', resource: 'user', resourceId: user._id, details: { newRole: role, newMunicipality: municipality }, ipAddress: req.ip });
-  successResponse(res, 200, 'User role updated', user);
+
+  /*
+   * Saved through the document rather than findByIdAndUpdate, so the seat is recomputed by the model
+   * hook: promoting someone to chairperson of a barangay that already has one now fails with 409
+   * instead of quietly producing two. Municipality and barangay are changed only when sent, and a
+   * barangay must belong to the account's (possibly new) municipality.
+   */
+  const previousRole = target.role;
+  target.role = role;
+  if (municipality !== undefined) target.municipality = municipality || undefined;
+  if (barangay !== undefined) target.barangay = barangay || undefined;
+  if (target.barangay) {
+    if (!target.municipality) return errorResponse(res, 400, 'Assign the user a municipality before assigning a barangay');
+    const check = await checkBarangay(target.barangay.toString(), target.municipality.toString());
+    if (check !== 'ok') return errorResponse(res, 400, barangayErrorMessage(check));
+  }
+  try {
+    await target.save({ validateBeforeSave: false });
+  } catch (err) {
+    if (isSeatConflict(err)) return errorResponse(res, 409, SEAT_CONFLICT);
+    throw err;
+  }
+
+  await audit(req, target, 'ROLE_CHANGE', {
+    oldValues: { role: previousRole },
+    newValues: { role },
+    details: { newRole: role, newMunicipality: municipality },
+  });
+  successResponse(res, 200, 'User role updated', target);
 });
 
+/**
+ * Deactivate or reactivate an account.
+ *
+ * Deactivating releases the account's SK seat, which is how a legitimate vacancy is opened when an
+ * officer leaves. Reactivating claims it back — and is refused with 409 if the barangay has filled
+ * the position in the meantime, rather than producing two officers in one seat.
+ */
 exports.toggleUserStatus = asyncHandler(async (req, res) => {
   if (isSelf(req)) {
     return errorResponse(res, 403, 'You cannot deactivate your own account. Ask another administrator.');
   }
   const user = await User.findById(req.params.id);
-  if (!user) return errorResponse(res, 404, 'User not found');
+  if (!user || user.deletedAt) return errorResponse(res, 404, 'User not found');
   user.isActive = !user.isActive;
-  await user.save({ validateBeforeSave: false });
+  try {
+    await user.save({ validateBeforeSave: false });
+  } catch (err) {
+    if (isSeatConflict(err)) {
+      return errorResponse(res, 409, 'This account cannot be reactivated: its barangay position is now held by another account.');
+    }
+    throw err;
+  }
+  await audit(req, user, user.isActive ? 'ACCOUNT_ACTIVATE' : 'ACCOUNT_DEACTIVATE', {
+    newValues: { isActive: user.isActive },
+    details: { role: user.role },
+  });
   successResponse(res, 200, `User ${user.isActive ? 'activated' : 'deactivated'}`, user);
 });
 
@@ -328,10 +448,12 @@ exports.deleteUser = asyncHandler(async (req, res) => {
     return errorResponse(res, 403, 'You cannot delete your own account. Ask another administrator.');
   }
   const user = await User.findById(req.params.id);
-  if (!user) return errorResponse(res, 404, 'User not found');
+  if (!user || user.deletedAt) return errorResponse(res, 404, 'User not found');
   user.deletedAt = new Date();
   user.isActive = false;
+  // The seat is released by the model hook, so the position can be filled by a new registration.
   await user.save({ validateBeforeSave: false });
+  await audit(req, user, 'DELETE', { details: { role: user.role, email: user.email } });
   successResponse(res, 200, 'User deleted');
 });
 
@@ -346,7 +468,9 @@ exports.getPendingApprovals = asyncHandler(async (req, res) => {
   }
   const { safePage, safeLimit, skip } = parsePagination(req.query, { defaultLimit: 20, maxLimit: MAX_LIMIT });
   const [users, total] = await Promise.all([
-    User.find(filter).populate('municipality', 'name').sort({ createdAt: -1 }).skip(skip).limit(safeLimit).select('-password'),
+    // Barangay and the uploaded documents' descriptions are what the reviewer decides on.
+    User.find(filter).populate('municipality', 'name').populate('barangay', 'name')
+      .sort({ createdAt: -1 }).skip(skip).limit(safeLimit).select('-password'),
     User.countDocuments(filter),
   ]);
   paginatedResponse(res, users, safePage, safeLimit, total);

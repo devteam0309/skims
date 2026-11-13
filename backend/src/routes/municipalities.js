@@ -4,6 +4,8 @@ const { protect, authorize } = require('../middleware/auth');
 const asyncHandler = require('express-async-handler');
 const Municipality = require('../models/Municipality');
 const Barangay = require('../models/Barangay');
+const User = require('../models/User');
+const { SEAT_ROLES } = require('../constants/roles');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 
 router.get('/', asyncHandler(async (req, res) => {
@@ -42,7 +44,29 @@ router.get('/:id/barangays', asyncHandler(async (req, res) => {
   // collation keeps case and accents from splitting the alphabet (e.g. Ñ sorting after Z).
   const barangays = await Barangay.find({ municipality: req.params.id, isActive: true })
     .collation({ locale: 'en' })
-    .sort({ name: 1 });
+    .sort({ name: 1 })
+    .lean();
+
+  /*
+   * `?role=sk_chairperson` (or treasurer / secretary) adds each barangay's seat for that office:
+   * `vacant`, `pending` (an application is awaiting review) or `filled`. The register form uses it to
+   * stop an applicant choosing a barangay whose position is already claimed — the server refuses the
+   * registration anyway, but finding out after filling in the whole form is the wrong time.
+   *
+   * Public, because registration is. It says whether a seat is held, never by whom.
+   */
+  const { role } = req.query;
+  if (role && SEAT_ROLES.includes(role)) {
+    const holders = await User.find({ seatKey: { $in: barangays.map((b) => `${b._id}:${role}`) } })
+      .select('seatKey isApproved')
+      .lean();
+    const status = new Map(holders.map((h) => [h.seatKey, h.isApproved ? 'filled' : 'pending']));
+    return successResponse(res, 200, 'Barangays', barangays.map((b) => ({
+      _id: b._id, name: b.name, municipality: b.municipality,
+      seatStatus: status.get(`${b._id}:${role}`) || 'vacant',
+    })));
+  }
+
   successResponse(res, 200, 'Barangays', barangays);
 }));
 

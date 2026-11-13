@@ -145,7 +145,7 @@ Follow similar RESTful patterns. See `/api/health` for system status.
 
 - JWT authentication with HttpOnly considerations
 - Role-Based Access Control (9 roles)
-- Rate limiting (100 req/10min general, 20 req/15min for auth)
+- Rate limiting (300 req/10min general, 20 req/15min for auth)
 - MongoDB injection prevention (express-mongo-sanitize)
 - XSS protection (helmet, hpp)
 - CORS configured for frontend origin

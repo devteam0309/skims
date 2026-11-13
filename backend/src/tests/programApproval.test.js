@@ -159,6 +159,8 @@ describe('commitments release as money is actually spent', () => {
       transactionDate: new Date(),
       status: 'pending',
       createdBy: user._id,
+      // Nothing is approved without proof (October 2026).
+      attachments: [{ documentType: 'official_receipt', originalName: 'receipt.pdf', fileType: 'application/pdf', storageType: 'memory', publicId: 'test/receipt.pdf' }],
     });
 
     const res = await request(app).patch(`/api/expenses/${expense._id}/approve`).set(authHeader(adminToken));

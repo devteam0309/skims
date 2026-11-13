@@ -1,7 +1,7 @@
 const request = require('supertest');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
-const { createUser, createBudget, createProgram, authHeader } = require('./helpers');
+const { createUser, createBudget, createProgram, authHeader, multipart } = require('./helpers');
 const Budget = require('../models/Budget');
 const Program = require('../models/Program');
 
@@ -24,29 +24,26 @@ const EXPENSE_PAYLOAD = (overrides = {}) => ({
 describe('POST /api/expenses', () => {
   it('creates an expense and returns 201', async () => {
     const { token, user, municipalityId } = await createUser({ role: 'sk_treasurer' });
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE_PAYLOAD());
+      .set(authHeader(token)), EXPENSE_PAYLOAD());
     expect(res.status).toBe(201);
     expect(res.body.data.title).toBe('Office Supplies');
   });
 
   it('returns 422 for invalid expense type', async () => {
     const { token } = await createUser({ role: 'sk_treasurer' });
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE_PAYLOAD({ type: 'invalid_type' }));
+      .set(authHeader(token)), EXPENSE_PAYLOAD({ type: 'invalid_type' }));
     expect(res.status).toBe(422);
   });
 
   it('returns 422 for zero amount', async () => {
     const { token } = await createUser({ role: 'sk_treasurer' });
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE_PAYLOAD({ amount: 0 }));
+      .set(authHeader(token)), EXPENSE_PAYLOAD({ amount: 0 }));
     expect(res.status).toBe(422);
   });
 
@@ -57,10 +54,9 @@ describe('POST /api/expenses', () => {
       remainingBalance: 1000,
     });
 
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE_PAYLOAD({ amount: 1500, budget: budget._id.toString() }));
+      .set(authHeader(token)), EXPENSE_PAYLOAD({ amount: 1500, budget: budget._id.toString() }));
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/balance/i);
   });
@@ -69,10 +65,9 @@ describe('POST /api/expenses', () => {
     const { token, user, municipalityId } = await createUser({ role: 'sk_treasurer' });
     const budget = await createBudget(municipalityId, user._id, { status: 'draft' });
 
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE_PAYLOAD({ budget: budget._id.toString() }));
+      .set(authHeader(token)), EXPENSE_PAYLOAD({ budget: budget._id.toString() }));
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/approved/i);
   });
@@ -86,10 +81,9 @@ describe('POST /api/expenses', () => {
       allocations: [{ category: 'Education', amount: 3000, program: program._id }],
     });
 
-    const res = await request(app)
+    const res = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE_PAYLOAD({
+      .set(authHeader(token)), EXPENSE_PAYLOAD({
         amount: 3001,
         budget: budget._id.toString(),
         program: program._id.toString(),
@@ -99,7 +93,7 @@ describe('POST /api/expenses', () => {
   });
 
   it('returns 401 without auth', async () => {
-    const res = await request(app).post('/api/expenses').send(EXPENSE_PAYLOAD());
+    const res = await multipart(request(app).post('/api/expenses'), EXPENSE_PAYLOAD());
     expect(res.status).toBe(401);
   });
 });
@@ -114,10 +108,9 @@ describe('PATCH /api/expenses/:id/approve', () => {
   it('blocks self-approval with 403', async () => {
     const { token } = await createUser({ role: 'municipal_admin' });
 
-    const createRes = await request(app)
+    const createRes = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(token))
-      .send(EXPENSE_PAYLOAD());
+      .set(authHeader(token)), EXPENSE_PAYLOAD());
     expect(createRes.status).toBe(201);
     const id = createRes.body.data._id;
 
@@ -134,10 +127,9 @@ describe('PATCH /api/expenses/:id/approve', () => {
     const { token: creatorToken, municipalityId } = await createUser({ role: 'municipal_admin' });
     const { token: treasurerToken } = await createUser({ role: 'sk_treasurer', municipality: municipalityId });
 
-    const createRes = await request(app)
+    const createRes = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(creatorToken))
-      .send(EXPENSE_PAYLOAD());
+      .set(authHeader(creatorToken)), EXPENSE_PAYLOAD());
     const id = createRes.body.data._id;
 
     const res = await request(app)
@@ -153,10 +145,9 @@ describe('PATCH /api/expenses/:id/approve', () => {
       municipality: municipalityId,
     });
 
-    const createRes = await request(app)
+    const createRes = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(creatorToken))
-      .send(EXPENSE_PAYLOAD());
+      .set(authHeader(creatorToken)), EXPENSE_PAYLOAD());
     const id = createRes.body.data._id;
 
     const res = await request(app)
@@ -171,10 +162,9 @@ describe('PATCH /api/expenses/:id/approve', () => {
     const { token: approverToken } = await createUser({ role: 'municipal_admin', municipality: municipalityId });
     const budget = await createBudget(municipalityId, user._id, { totalBudget: 100000, remainingBalance: 100000 });
 
-    const createRes = await request(app)
+    const createRes = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(creatorToken))
-      .send(EXPENSE_PAYLOAD({ amount: 5000, budget: budget._id.toString() }));
+      .set(authHeader(creatorToken)), EXPENSE_PAYLOAD({ amount: 5000, budget: budget._id.toString() }));
     const id = createRes.body.data._id;
 
     await request(app).patch(`/api/expenses/${id}/approve`).set(authHeader(approverToken));
@@ -190,10 +180,9 @@ describe('PATCH /api/expenses/:id/approve', () => {
     const budget = await createBudget(municipalityId, user._id, { totalBudget: 100000, remainingBalance: 100000 });
     const program = await createProgram(municipalityId, user._id, { budgetRef: budget._id });
 
-    const createRes = await request(app)
+    const createRes = await multipart(request(app)
       .post('/api/expenses')
-      .set(authHeader(creatorToken))
-      .send(EXPENSE_PAYLOAD({ amount: 8000, program: program._id.toString() }));
+      .set(authHeader(creatorToken)), EXPENSE_PAYLOAD({ amount: 8000, program: program._id.toString() }));
     const id = createRes.body.data._id;
 
     await request(app).patch(`/api/expenses/${id}/approve`).set(authHeader(approverToken));
