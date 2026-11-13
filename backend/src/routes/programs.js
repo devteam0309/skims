@@ -9,6 +9,7 @@ const {
   deleteProgram, updateProgramStatus, addMilestone, updateMilestone, getProgramStats,
   submitProgram, approveProgram, rejectProgram,
   requestToJoin, withdrawJoinRequest, getParticipants, decideParticipant,
+  getProgramBarangaySummary,
 } = require('../controllers/programController');
 
 const programValidation = validate([
@@ -22,7 +23,14 @@ const programValidation = validate([
   body('budget').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Budget must be a non-negative number'),
   body('startDate').isISO8601().withMessage('Valid start date is required'),
   body('endDate').isISO8601().withMessage('Valid end date is required'),
+  // The day the activity actually takes place — separate from the preparation period above, and
+  // optional at planning time. Its order relative to the start date is checked in the controller.
+  body('implementationDate').optional({ checkFalsy: true }).isISO8601().withMessage('Enter a valid implementation date'),
   body('targetParticipants').isInt({ min: 1 }).withMessage('Target participants must be at least 1'),
+]);
+
+const updateValidation = validate([
+  body('implementationDate').optional({ checkFalsy: true }).isISO8601().withMessage('Enter a valid implementation date'),
 ]);
 
 const rejectValidation = validate([
@@ -40,10 +48,13 @@ const milestoneValidation = validate([
 ]);
 
 router.get('/stats', protect, getProgramStats);
+// Declared before '/:id' so "barangay-summary" is not read as a programme id. Every signed-in staff
+// role may call it; the counts are scoped exactly like the list.
+router.get('/barangay-summary', protect, getProgramBarangaySummary);
 router.get('/', protect, getPrograms);
 router.get('/:id', protect, getProgram);
 router.post('/', protect, authorize(...EDITORS), programValidation, createProgram);
-router.put('/:id', protect, authorize(...EDITORS), updateProgram);
+router.put('/:id', protect, authorize(...EDITORS), updateValidation, updateProgram);
 router.patch('/:id/status', protect, authorize(...EDITORS), statusValidation, updateProgramStatus);
 // Submitting is an author action; approving and rejecting are not — an SK Chairperson may submit
 // their municipality's program, but clearing it is an admin decision.

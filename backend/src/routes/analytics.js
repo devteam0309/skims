@@ -7,7 +7,7 @@ const Program = require('../models/Program');
 const Expense = require('../models/Expense');
 const YouthMember = require('../models/YouthMember');
 const { successResponse } = require('../utils/apiResponse');
-const { applyReadScope } = require('../utils/scope');
+const { applyReadScope, objectIdOf } = require('../utils/scope');
 
 router.use(protect);
 router.use(authorize(...REPORT_VIEWERS));

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FolderOpen, Banknote, FileText,
   Activity, Users, Bell, LogOut,
   Target, CreditCard, ClipboardList, Globe,
-  TrendingUp, Megaphone, Shield, ExternalLink,
+  TrendingUp, Megaphone, Shield, ExternalLink, Landmark,
 } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
@@ -23,7 +23,8 @@ const navGroups = [
        * audit trail as though writing one were an administrative act. Only the placement changes:
        * the role list is exactly the one it carried before, and the backend guards are untouched.
        */
-      { to: '/announcements', icon: Megaphone, label: 'Announcements', roles: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_secretary'] },
+      // Open to every staff role since October 2026: reading an announcement is not an editor's act.
+      { to: '/announcements', icon: Megaphone, label: 'Announcements' },
     ],
   },
   {
@@ -39,6 +40,8 @@ const navGroups = [
       { to: '/budgets', icon: Banknote, label: 'Budgets' },
       { to: '/expenses', icon: CreditCard, label: 'Expenses' },
       { to: '/liquidations', icon: ClipboardList, label: 'Liquidations' },
+      // Every barangay's allocation, spending and remaining balance, side by side.
+      { to: '/finance/barangays', icon: Landmark, label: 'Barangay Finances', roles: ['super_admin', 'provincial_admin', 'municipal_admin', 'dilg_representative'] },
     ],
   },
   {

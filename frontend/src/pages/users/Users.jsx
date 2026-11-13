@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { UserCheck, Shield, Mail, MapPin } from 'lucide-react';
+import { UserCheck, Shield, Mail, MapPin, FileSearch } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { userService, municipalityService } from '../../services/documentService';
 import DataTable from '../../components/shared/DataTable';
@@ -9,9 +9,12 @@ import Modal from '../../components/shared/Modal';
 import SearchInput from '../../components/shared/SearchInput';
 import { Field, control } from '../../components/shared/FormField';
 import { formatDate } from '../../utils/formatters';
-import { ROLE_LABELS, BARANGAY_BOUND_ROLES } from '../../utils/constants';
+import { ROLE_LABELS, BARANGAY_BOUND_ROLES, VERIFICATION_REQUIRED_ROLES, VERIFICATION_DOCUMENT_TYPES } from '../../utils/constants';
+import FilePreview, { saveBlob } from '../../components/shared/FilePreview';
+import { AttachmentList } from '../../components/shared/Attachments';
 import { toast } from '../../components/ui/toaster';
-import { confirm } from '../../utils/confirm';
+import { confirm, escapeHtml } from '../../utils/confirm';
+import { refreshAll } from '../../utils/queryRefresh';
 import useAuthStore from '../../store/authStore';
 
 /**
@@ -21,9 +24,11 @@ import useAuthStore from '../../store/authStore';
  * deliberately not mirrored here.
  */
 const ROLE_ASSIGNABLE_MAP = {
-  super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'],
-  provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative'],
+  super_admin: ['super_admin', 'provincial_admin', 'municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'dilg_representative'],
+  provincial_admin: ['municipal_admin', 'sk_chairperson', 'sk_treasurer', 'sk_secretary', 'dilg_representative'],
 };
+
+const DOCUMENT_TYPE_LABEL = Object.fromEntries(VERIFICATION_DOCUMENT_TYPES.map((t) => [t.value, t.label]));
 
 export default function Users() {
   const queryClient = useQueryClient();
@@ -34,6 +39,9 @@ export default function Users() {
   // { id, name, municipality, currentBarangay } — the account being given a barangay.
   const [barangayTarget, setBarangayTarget] = useState(null);
   const [selectedBarangay, setSelectedBarangay] = useState('');
+  // The application being reviewed, and the document open in the viewer.
+  const [reviewTarget, setReviewTarget] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['users', filters],
@@ -57,23 +65,28 @@ export default function Users() {
     queryFn: () => userService.getPending().then((r) => r.data.data),
   });
 
-  const invalidateUsers = () => {
-    queryClient.invalidateQueries(['users']);
-    queryClient.invalidateQueries(['users-pending']);
-    queryClient.invalidateQueries(['users-email-changes']);
-  };
+  const invalidateUsers = () => refreshAll(queryClient);
 
   const approveMutation = useMutation({
     mutationFn: (id) => userService.approve(id),
-    onSuccess: () => { toast.success('User approved'); invalidateUsers(); },
+    onSuccess: () => { toast.success('User approved'); invalidateUsers(); setReviewTarget(null); },
     onError: (e) => toast.error(e.message || 'Approval failed'),
   });
 
   const rejectMutation = useMutation({
     mutationFn: ({ id, reason }) => userService.reject(id, reason),
-    onSuccess: () => { toast.success('User rejected'); invalidateUsers(); },
+    onSuccess: () => { toast.success('Application rejected — the barangay position is open again'); invalidateUsers(); setReviewTarget(null); },
     onError: (e) => toast.error(e.message || 'Rejection failed'),
   });
+
+  const downloadDocument = async (u, d) => {
+    try {
+      const res = await userService.verificationDocument(u._id, d._id, { download: true });
+      saveBlob(res.data, d.originalName);
+    } catch (e) {
+      toast.error(e.message || 'Could not download the document');
+    }
+  };
 
   const toggleMutation = useMutation({
     mutationFn: (id) => userService.toggleStatus(id),
@@ -95,7 +108,7 @@ export default function Users() {
   const handleReject = async (id, name) => {
     const { isConfirmed, value: reason } = await Swal.fire({
       title: 'Reject Account?',
-      html: `<p style="font-size:0.875rem;color:#6b7280">Provide a reason for rejecting <strong>${name}</strong>'s account application.</p>`,
+      html: `<p style="font-size:0.875rem;color:#6b7280">Provide a reason for rejecting <strong>${escapeHtml(name)}</strong>'s account application.</p>`,
       input: 'textarea',
       inputPlaceholder: 'Reason for rejection (optional)...',
       inputAttributes: { rows: 3, style: 'font-size:0.875rem;border:1px solid #e5e7eb;border-radius:0.75rem;padding:0.75rem;width:100%;resize:none;margin-top:0.5rem;outline:none' },
@@ -279,15 +292,12 @@ export default function Users() {
 
         return (
           <div className="flex flex-wrap items-center gap-1.5">
-            {!row.isApproved && (
-              <>
-                <ActionButton onClick={() => handleApprove(id, name)} label={`Approve ${name}`} tone="success">
-                  Approve
-                </ActionButton>
-                <ActionButton onClick={() => handleReject(id, name)} label={`Reject ${name}`} tone="danger">
-                  Reject
-                </ActionButton>
-              </>
+            {/* Approval happens inside the review, where the applicant's documents can be opened
+                first — the panel's rule is that nobody is let in on a name alone. */}
+            {!row.isApproved && row.isActive && (
+              <ActionButton onClick={() => setReviewTarget(row)} label={`Review the application of ${name}`} tone="success">
+                <FileSearch size={10} aria-hidden="true" />Review
+              </ActionButton>
             )}
 
             {canChangeRoles && !isSelf && (
@@ -364,12 +374,11 @@ export default function Users() {
                 const name = `${u.firstName} ${u.lastName}`;
                 return (
                   <li key={u._id} className="flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 dark:border-amber-700 dark:bg-gray-800">
-                    <span className="text-xs text-gray-700 dark:text-gray-300">{name} ({ROLE_LABELS[u.role]})</span>
-                    <ActionButton onClick={() => handleApprove(u._id, name)} label={`Approve ${name}`} tone="success" size="xs">
-                      Approve
-                    </ActionButton>
-                    <ActionButton onClick={() => handleReject(u._id, name)} label={`Reject ${name}`} tone="danger" size="xs">
-                      Reject
+                    <span className="text-xs text-gray-700 dark:text-gray-300">
+                      {name} ({ROLE_LABELS[u.role]}{u.barangay?.name ? ` · ${u.barangay.name}` : ''})
+                    </span>
+                    <ActionButton onClick={() => setReviewTarget(u)} label={`Review the application of ${name}`} tone="success" size="xs">
+                      Review
                     </ActionButton>
                   </li>
                 );
@@ -488,6 +497,89 @@ export default function Users() {
         pagination={data?.meta}
         onPageChange={(p) => setFilters({ ...filters, page: p })}
         emptyMessage="No users match these filters"
+      />
+
+      {/*
+        * Application review.
+        *
+        * Everything the decision rests on, in one place: who applied, for which office of which
+        * barangay, and the identity or residency proof they uploaded — each document openable here
+        * before anything is decided. Approval is withheld while no document exists, matching the
+        * server, which refuses it.
+        */}
+      <Modal
+        isOpen={!!reviewTarget}
+        onClose={() => setReviewTarget(null)}
+        title="Review application"
+        size="lg"
+        footer={reviewTarget && (() => {
+          const name = `${reviewTarget.firstName} ${reviewTarget.lastName}`;
+          const docs = reviewTarget.verificationDocuments || [];
+          const needsDocs = VERIFICATION_REQUIRED_ROLES.includes(reviewTarget.role);
+          const blocked = needsDocs && docs.length === 0;
+          return (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="meta-text">
+                {blocked ? 'No supporting document — this application cannot be approved.' : 'Open each document before deciding.'}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleReject(reviewTarget._id, name)}
+                  disabled={rejectMutation.isPending}
+                  className="rounded-xl border border-red-200 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300"
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApprove(reviewTarget._id, name)}
+                  disabled={blocked || approveMutation.isPending}
+                  className="rounded-xl bg-green-700 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-800 disabled:opacity-50"
+                >
+                  Approve
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      >
+        {reviewTarget && (
+          <div className="space-y-5">
+            <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+              {[
+                ['Name', `${reviewTarget.firstName} ${reviewTarget.lastName}`],
+                ['Applying as', ROLE_LABELS[reviewTarget.role] || reviewTarget.role],
+                ['Municipality', reviewTarget.municipality?.name || '—'],
+                ['Barangay', reviewTarget.barangay?.name || (BARANGAY_BOUND_ROLES.includes(reviewTarget.role) ? 'Not given' : 'Not applicable')],
+                ['Email', `${reviewTarget.email}${reviewTarget.isEmailVerified ? ' (verified)' : ' (not yet verified)'}`],
+                ['Contact number', reviewTarget.contactNumber || '—'],
+                ['Registered', formatDate(reviewTarget.createdAt)],
+              ].map(([k, v]) => (
+                <div key={k}>
+                  <dt className="meta-text">{k}</dt>
+                  <dd className="font-medium text-gray-900 dark:text-white">{v}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <section aria-labelledby="review-docs-heading">
+              <h3 id="review-docs-heading" className="section-heading mb-2">Identity and residency proof</h3>
+              <AttachmentList
+                attachments={(reviewTarget.verificationDocuments || []).map((d) => ({ ...d, documentType: DOCUMENT_TYPE_LABEL[d.documentType] || d.documentType }))}
+                onPreview={(d) => setPreviewDoc({ user: reviewTarget, doc: d })}
+                onDownload={(d) => downloadDocument(reviewTarget, d)}
+                emptyText="The applicant uploaded no supporting document. Ask them to register again with a valid ID, KK ID or proof of residency."
+              />
+            </section>
+          </div>
+        )}
+      </Modal>
+
+      <FilePreview
+        file={previewDoc ? { key: previewDoc.doc._id, name: previewDoc.doc.originalName, type: previewDoc.doc.fileType } : null}
+        load={() => userService.verificationDocument(previewDoc.user._id, previewDoc.doc._id)}
+        onClose={() => setPreviewDoc(null)}
       />
 
       <Modal

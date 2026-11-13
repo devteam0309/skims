@@ -9,7 +9,15 @@ const { uploadToCloudinary, destroyQuietly } = require('../config/cloudinary');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 const logger = require('../utils/logger');
 const YouthMember = require('../models/YouthMember');
+const Barangay = require('../models/Barangay');
 const { calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } = require('../utils/age');
+const {
+  SELF_ASSIGNABLE_ROLES, VERIFICATION_REQUIRED_ROLES, VERIFICATION_DOCUMENT_TYPES, SEAT_ROLES,
+} = require('../constants/roles');
+const { storeFiles, removeFile } = require('../services/fileStorage');
+const { idOf } = require('../utils/scope');
+
+const SEAT_LABELS = { sk_chairperson: 'SK Chairperson', sk_treasurer: 'SK Treasurer', sk_secretary: 'SK Secretary' };
 
 const escapeRegex = (v) => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -68,13 +76,10 @@ const sendTokenResponse = async (user, statusCode, res) => {
 };
 
 /*
- * What a registrant may claim for themselves. Everything else — the three admin tiers — is
- * assigned by an existing admin after the fact, or anyone could register as super_admin.
- *
- * `public_user` was removed along with the role itself. Nothing takes its place as a fallback:
- * an unrecognised role is now an error rather than a silent downgrade. See registerRole() below.
+ * What a registrant may claim for themselves lives in constants/roles.js (SELF_ASSIGNABLE_ROLES).
+ * `provincial_admin` and `super_admin` are assigned by an existing admin after the fact, or anyone
+ * could register as one. An unrecognised role is an error rather than a silent downgrade.
  */
-const SELF_ASSIGNABLE_ROLES = ['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad', 'dilg_representative', 'youth'];
 
 
 /*
@@ -140,8 +145,14 @@ const attachYouthRecord = async (user, { birthDate, gender, contactNumber, baran
   });
 };
 
+/** The seat a registration claims is taken — said in the registrant's terms, not the index's. */
+const seatTakenMessage = (role, barangayName) =>
+  `${barangayName ? `Barangay ${barangayName}` : 'That barangay'} already has a registered or pending ${SEAT_LABELS[role] || role}. ` +
+  'If that account is no longer valid, ask the system administrator to release the position.';
+
 exports.register = asyncHandler(async (req, res) => {
-  const { firstName, lastName, email, password, role, municipality, barangay, contactNumber, birthDate, gender } = req.body;
+  const { firstName, lastName, email, password, role, municipality, contactNumber, birthDate, gender } = req.body;
+  const files = req.files || [];
 
   const existingUser = await User.findOne({ email });
   if (existingUser) return errorResponse(res, 400, 'Email already registered');
@@ -160,20 +171,79 @@ exports.register = asyncHandler(async (req, res) => {
   }
   const assignedRole = role;
 
-  const user = await User.create({
-    firstName,
-    lastName,
-    email,
-    password,
-    role: assignedRole,
-    municipality,
-    barangay,
-    contactNumber,
-    // Youth approve themselves. Requiring an admin to let each member in would put staff back in
-    // the middle of the self-service flow the whole feature exists to provide; the registry record
-    // carries the vetting instead, as verificationStatus.
-    isApproved: assignedRole === 'youth',
-  });
+  /*
+   * The barangay must belong to the municipality chosen beside it. It was stored unchecked, so a
+   * hand-built request could pair a Boac account with a Gasan barangay — an account the scope rules
+   * would then confine to a barangay outside its own municipality.
+   *
+   * Only the SK offices and youth carry a barangay. A municipal administrator serves the whole
+   * municipality and DILG the whole province, so a barangay sent for either is dropped rather than
+   * stored and silently ignored by every scope check.
+   */
+  const carriesBarangay = SEAT_ROLES.includes(assignedRole) || assignedRole === 'youth';
+  const barangay = carriesBarangay && req.body.barangay ? req.body.barangay : undefined;
+  let barangayDoc = null;
+  if (barangay) {
+    barangayDoc = await Barangay.findById(barangay).select('name municipality isActive');
+    if (!barangayDoc || !barangayDoc.isActive) return errorResponse(res, 400, 'The selected barangay does not exist');
+    if (idOf(barangayDoc.municipality) !== idOf(municipality)) {
+      return errorResponse(res, 400, 'The selected barangay does not belong to the selected municipality');
+    }
+  }
+
+  /*
+   * Identity and residency proof — required for every account a super_admin must approve. The panel's
+   * rule is that an applicant claiming to represent a barangay has to show they are who they say and
+   * live where they say, and that the check is not complete without the attachment.
+   */
+  const documentTypes = [].concat(req.body.documentTypes || []).map((t) => String(t).trim());
+  const needsVerification = VERIFICATION_REQUIRED_ROLES.includes(assignedRole);
+  if (needsVerification) {
+    if (files.length === 0) {
+      return errorResponse(res, 400, 'Upload at least one supporting document: a valid government ID, a KK ID, or proof of residency');
+    }
+    if (documentTypes.length !== files.length || documentTypes.some((t) => !VERIFICATION_DOCUMENT_TYPES.includes(t))) {
+      return errorResponse(res, 400, 'Say what each uploaded file is: government ID, KK ID, or proof of residency');
+    }
+  }
+
+  /*
+   * One chairperson, one treasurer and one secretary per barangay. This check is for the message;
+   * the unique index on `seatKey` is what actually holds when two applicants register at once — the
+   * second insert fails and is answered the same way below.
+   */
+  const seatKey = User.seatKeyFor({ role: assignedRole, barangay, isActive: true });
+  if (SEAT_ROLES.includes(assignedRole) && seatKey && await User.exists({ seatKey })) {
+    return errorResponse(res, 409, seatTakenMessage(assignedRole, barangayDoc?.name));
+  }
+
+  // Stored before the account so a failed upload creates nothing; removed again if the account fails.
+  const stored = needsVerification ? await storeFiles(files, { folder: 'skims/registrations' }) : [];
+
+  let user;
+  try {
+    user = await User.create({
+      firstName,
+      lastName,
+      email,
+      password,
+      role: assignedRole,
+      municipality,
+      barangay,
+      contactNumber,
+      verificationDocuments: stored.map((ref, i) => ({ ...ref, documentType: documentTypes[i] })),
+      // Youth approve themselves. Requiring an admin to let each member in would put staff back in
+      // the middle of the self-service flow the whole feature exists to provide; the registry record
+      // carries the vetting instead, as verificationStatus.
+      isApproved: assignedRole === 'youth',
+    });
+  } catch (err) {
+    stored.forEach(removeFile);
+    if (err.code === 11000 && err.keyPattern?.seatKey) {
+      return errorResponse(res, 409, seatTakenMessage(assignedRole, barangayDoc?.name));
+    }
+    throw err;
+  }
 
   if (assignedRole === 'youth') {
     try {
@@ -191,6 +261,16 @@ exports.register = asyncHandler(async (req, res) => {
 
   sendVerificationInBackground(user, verificationToken);
 
+  await AuditLog.create({
+    user: user._id, action: 'REGISTER', resource: 'user', resourceId: user._id,
+    details: {
+      role: assignedRole,
+      barangay: barangayDoc?.name || null,
+      verificationDocuments: (user.verificationDocuments || []).map((d) => d.documentType),
+    },
+    municipality: user.municipality, ipAddress: req.ip,
+  });
+
   // Notify admins when a role that requires approval registers. Youth are excluded: they approve
   // themselves, and a notification per youth sign-up would bury every other admin notification.
   if (assignedRole !== 'youth') {
@@ -199,13 +279,15 @@ exports.register = asyncHandler(async (req, res) => {
     // have linked them to a screen they cannot open.
     const admins = await User.find({ role: 'super_admin', isActive: true, deletedAt: null }).select('_id').lean();
     if (admins.length > 0) {
+      const where = barangayDoc ? ` for Barangay ${barangayDoc.name}` : '';
+      const docs = user.verificationDocuments?.length || 0;
       // createWithExpiry, not insertMany: insertMany bypasses the pre-save hook that sets
       // expiresAt, so these would sit in the collection forever despite the TTL index.
       await Notification.createWithExpiry(admins.map((a) => ({
         recipient: a._id,
         type: 'approval_request',
         title: 'New Account Pending Approval',
-        message: `${user.firstName} ${user.lastName} registered as ${user.role.replace(/_/g, ' ')} and requires approval.`,
+        message: `${user.firstName} ${user.lastName} registered as ${user.role.replace(/_/g, ' ')}${where} with ${docs} supporting document${docs === 1 ? '' : 's'}, and requires approval.`,
         link: '/users?tab=pending',
         priority: 'high',
       })));

@@ -2,7 +2,14 @@ import api from './api';
 
 export const authService = {
   login: (data) => api.post('/auth/login', data),
-  register: (data) => api.post('/auth/register', data),
+  /*
+   * Multipart when the applicant attaches identity documents. The header matters: this client's
+   * default is application/json, and axios turns a FormData body into JSON under that header —
+   * dropping the files without an error.
+   */
+  register: (data) => api.post('/auth/register', data, data instanceof FormData
+    ? { headers: { 'Content-Type': 'multipart/form-data' } }
+    : undefined),
   logout: () => api.post('/auth/logout'),
   getMe: () => api.get('/auth/me'),
   updateProfile: (data) => api.put('/auth/me', data),

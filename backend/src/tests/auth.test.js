@@ -1,7 +1,7 @@
 const request = require('supertest');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
-const { createUser, authHeader } = require('./helpers');
+const { createUser, authHeader, registerApplicant } = require('./helpers');
 
 jest.mock('../services/emailService', () => ({
   sendEmailVerification: jest.fn().mockResolvedValue({}),
@@ -16,9 +16,8 @@ afterEach(clearDB);
 
 describe('POST /api/auth/register', () => {
   it('creates a new user and returns 201', async () => {
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ firstName: 'Juan', lastName: 'Dela Cruz', email: 'juan@example.com', password: 'Test@1234', role: 'dilg_representative' });
+    // An approval-gated applicant attaches proof of identity (October 2026).
+    const res = await registerApplicant(app, { firstName: 'Juan', lastName: 'Dela Cruz', email: 'juan@example.com', password: 'Test@1234', role: 'dilg_representative' });
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
   });

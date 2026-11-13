@@ -23,11 +23,20 @@ const documentSchema = new mongoose.Schema(
     // Free text. DOCUMENT_CATEGORIES remains the suggested list the UI offers, but an office
     // filing something the list does not name should record what it is, not pick 'other'.
     category: { type: String, required: true, trim: true, maxlength: 60 },
+    // The storage id (Cloudinary public_id). Named fileName for historical reasons.
     fileName: { type: String, required: true },
     originalName: { type: String, required: true },
-    fileUrl: { type: String, required: true },
+    /*
+     * Public delivery URL — set only for documents uploaded before October 2026, which were public
+     * Cloudinary assets. Newer uploads are private (`storageType: 'cloudinary_private'`) and have no
+     * URL at all: they are served only through GET /api/documents/:id/serve after an access check.
+     */
+    fileUrl: { type: String },
     fileType: { type: String, required: true },
     fileSize: { type: Number },
+    storageType: { type: String, default: 'cloudinary' },
+    resourceType: String,
+    storageVersion: Number,
     municipality: { type: mongoose.Schema.Types.ObjectId, ref: 'Municipality' },
     barangay: { type: mongoose.Schema.Types.ObjectId, ref: 'Barangay' },
     program: { type: mongoose.Schema.Types.ObjectId, ref: 'Program' },
@@ -46,11 +55,21 @@ const documentSchema = new mongoose.Schema(
     deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     archivedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     version: { type: Number, default: 1 },
+    /*
+     * Superseded files. Replacing a document used to destroy the old file in the same call while
+     * still listing it here, so every "download previous version" link led to a deleted asset. The
+     * old file is now kept, and destroyed only when the document is permanently deleted.
+     */
     previousVersions: [
       {
         version: Number,
         fileUrl: String,
         fileName: String,
+        originalName: String,
+        fileType: String,
+        storageType: String,
+        resourceType: String,
+        storageVersion: Number,
         uploadedAt: Date,
         uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       },
@@ -68,7 +87,22 @@ const documentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/*
+ * A document's file is reached through the authorised serve route, never through a stored URL, so
+ * the URLs are left out of every response: a list of documents is not a list of download links.
+ */
+documentSchema.set('toJSON', {
+  transform: (doc, ret) => {
+    delete ret.fileUrl;
+    if (Array.isArray(ret.previousVersions)) {
+      ret.previousVersions = ret.previousVersions.map(({ fileUrl, storageType, resourceType, storageVersion, ...v }) => v);
+    }
+    return ret;
+  },
+});
+
 documentSchema.index({ municipality: 1, isArchived: 1, deletedAt: 1 });
+documentSchema.index({ barangay: 1, deletedAt: 1 });
 documentSchema.index({ municipality: 1, category: 1, deletedAt: 1 });
 documentSchema.index({ uploadedBy: 1 });
 documentSchema.index({ deletedAt: 1 });

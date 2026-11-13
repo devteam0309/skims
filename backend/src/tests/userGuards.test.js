@@ -67,7 +67,7 @@ describe('Admin endpoints refuse to act on the caller', () => {
 describe('The same actions still work on other accounts', () => {
   it('allows changing another user role', async () => {
     const { token } = await createUser({ role: 'super_admin' });
-    const { user: target } = await createUser({ role: 'sk_kagawad' });
+    const { user: target } = await createUser({ role: 'sk_secretary' });
 
     const res = await request(app)
       .put(`/api/users/${target._id}/role`)
@@ -80,7 +80,7 @@ describe('The same actions still work on other accounts', () => {
 
   it('allows deactivating another user', async () => {
     const { token } = await createUser({ role: 'super_admin' });
-    const { user: target } = await createUser({ role: 'sk_kagawad' });
+    const { user: target } = await createUser({ role: 'sk_secretary' });
 
     const res = await request(app)
       .put(`/api/users/${target._id}/toggle-status`)
@@ -92,7 +92,7 @@ describe('The same actions still work on other accounts', () => {
 
   it('allows deleting another user', async () => {
     const { token } = await createUser({ role: 'super_admin' });
-    const { user: target } = await createUser({ role: 'sk_kagawad' });
+    const { user: target } = await createUser({ role: 'sk_secretary' });
 
     const res = await request(app)
       .delete(`/api/users/${target._id}`)

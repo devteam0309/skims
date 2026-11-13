@@ -25,14 +25,34 @@ const warningBase = {
   customClass: { ...base.customClass, confirmButton: 'swal-btn-confirm swal-btn-confirm--warning' },
 };
 
+/**
+ * Escape text before it reaches SweetAlert's `html`, which is innerHTML.
+ *
+ * Several dialogs quote what the user is acting on — an expense title, an applicant's name — and
+ * those are typed by other users. Placed in `html` unescaped, an expense titled
+ * `<img src=x onerror=…>` ran script in the reviewer's browser the moment they opened the dialog to
+ * reject it. `text` is therefore always escaped; a caller that genuinely needs markup passes
+ * `html` and escapes the parts it did not write itself.
+ */
+export const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+/*
+ * Titles are plain text (`titleText`) for the same reason: SweetAlert renders `title` as HTML, and
+ * titles quote names — a youth member's, typed by the youth — that nobody here wrote.
+ */
+const htmlOf = (opts, fallback) => opts.html ?? (opts.text ? `<span>${escapeHtml(opts.text)}</span>` : fallback);
+
 export const confirm = {
   delete: (opts = {}) =>
     Swal.fire({
       ...dangerBase,
-      title: opts.title || 'Delete Record?',
-      html: opts.text
-        ? `<span>${opts.text}</span>`
-        : 'This action <strong>cannot be undone</strong>. The record will be permanently removed.',
+      titleText: opts.title || 'Delete Record?',
+      html: htmlOf(opts, 'This action <strong>cannot be undone</strong>. The record will be permanently removed.'),
       icon: 'warning',
       confirmButtonText: opts.confirmText || 'Yes, Delete',
     }),
@@ -40,7 +60,7 @@ export const confirm = {
   create: (opts = {}) =>
     Swal.fire({
       ...base,
-      title: opts.title || 'Create Record?',
+      titleText: opts.title || 'Create Record?',
       text: opts.text || 'You are about to create a new record. Do you want to continue?',
       icon: 'question',
       confirmButtonText: opts.confirmText || 'Yes, Create',
@@ -49,7 +69,7 @@ export const confirm = {
   save: (opts = {}) =>
     Swal.fire({
       ...base,
-      title: opts.title || 'Save Changes?',
+      titleText: opts.title || 'Save Changes?',
       text: opts.text || 'You are about to save changes to this record. Do you want to continue?',
       icon: 'question',
       confirmButtonText: opts.confirmText || 'Save',
@@ -58,7 +78,7 @@ export const confirm = {
   submit: (opts = {}) =>
     Swal.fire({
       ...base,
-      title: opts.title || 'Submit for Review?',
+      titleText: opts.title || 'Submit for Review?',
       text: opts.text || 'Once submitted, this record will be sent for review and approval.',
       icon: 'info',
       confirmButtonText: opts.confirmText || 'Yes, Submit',
@@ -67,7 +87,7 @@ export const confirm = {
   approve: (opts = {}) =>
     Swal.fire({
       ...base,
-      title: opts.title || 'Approve Record?',
+      titleText: opts.title || 'Approve Record?',
       text: opts.text || 'Are you sure you want to approve this? This action will be permanently recorded.',
       icon: 'question',
       confirmButtonText: opts.confirmText || 'Yes, Approve',
@@ -76,7 +96,7 @@ export const confirm = {
   reject: (opts = {}) =>
     Swal.fire({
       ...dangerBase,
-      title: opts.title || 'Reject Record?',
+      titleText: opts.title || 'Reject Record?',
       text: opts.text || 'Are you sure you want to reject this record?',
       icon: 'warning',
       confirmButtonText: opts.confirmText || 'Yes, Reject',
@@ -92,8 +112,8 @@ export const confirm = {
   rejectWithReason: (opts = {}) =>
     Swal.fire({
       ...dangerBase,
-      title: opts.title || 'Return this record?',
-      html: opts.text ? `<span>${opts.text}</span>` : null,
+      titleText: opts.title || 'Return this record?',
+      html: htmlOf(opts, null),
       icon: 'warning',
       input: 'textarea',
       inputLabel: opts.inputLabel || 'Reason',
@@ -114,10 +134,8 @@ export const confirm = {
   cancelProgram: (opts = {}) =>
     Swal.fire({
       ...dangerBase,
-      title: opts.title || 'Cancel this program?',
-      html: opts.text
-        ? `<span>${opts.text}</span>`
-        : 'The program will be marked <strong>cancelled</strong>. Participants and reports keep it on record.',
+      titleText: opts.title || 'Cancel this program?',
+      html: htmlOf(opts, 'The program will be marked <strong>cancelled</strong>. Participants and reports keep it on record.'),
       icon: 'warning',
       confirmButtonText: opts.confirmText || 'Yes, cancel it',
       cancelButtonText: opts.cancelText || 'Keep the program',
@@ -126,7 +144,7 @@ export const confirm = {
   archive: (opts = {}) =>
     Swal.fire({
       ...warningBase,
-      title: opts.title || 'Archive Document?',
+      titleText: opts.title || 'Archive Document?',
       text: opts.text || 'This document will be archived and removed from the active list.',
       icon: 'warning',
       confirmButtonText: opts.confirmText || 'Yes, Archive',
@@ -135,7 +153,7 @@ export const confirm = {
   upload: (opts = {}) =>
     Swal.fire({
       ...base,
-      title: opts.title || 'Upload Document?',
+      titleText: opts.title || 'Upload Document?',
       text: opts.text || 'You are about to upload this document to the system.',
       icon: 'question',
       confirmButtonText: opts.confirmText || 'Yes, Upload',
@@ -144,10 +162,8 @@ export const confirm = {
   financial: (opts = {}) =>
     Swal.fire({
       ...warningBase,
-      title: opts.title || 'Confirm Financial Action?',
-      html: opts.text
-        ? `<span>${opts.text}</span>`
-        : 'This is a <strong>financial action</strong> that will affect fund records. Please confirm carefully.',
+      titleText: opts.title || 'Confirm Financial Action?',
+      html: htmlOf(opts, 'This is a <strong>financial action</strong> that will affect fund records. Please confirm carefully.'),
       icon: 'warning',
       confirmButtonText: opts.confirmText || 'Confirm',
     }),
@@ -155,7 +171,7 @@ export const confirm = {
   statusChange: (opts = {}) =>
     Swal.fire({
       ...base,
-      title: opts.title || 'Change Status?',
+      titleText: opts.title || 'Change Status?',
       text: opts.text || 'You are about to change the status of this record.',
       icon: 'question',
       confirmButtonText: opts.confirmText || 'Yes, Change',
@@ -173,7 +189,7 @@ export const confirm = {
   register: (opts = {}) =>
     Swal.fire({
       ...base,
-      title: opts.title || 'Register Member?',
+      titleText: opts.title || 'Register Member?',
       text: opts.text || 'Are you sure you want to register this member?',
       icon: 'question',
       confirmButtonText: opts.confirmText || 'Yes, Register',
@@ -182,7 +198,7 @@ export const confirm = {
   password: (opts = {}) =>
     Swal.fire({
       ...base,
-      title: opts.title || 'Update Password?',
+      titleText: opts.title || 'Update Password?',
       text: opts.text || 'You are about to change your account password.',
       icon: 'question',
       confirmButtonText: opts.confirmText || 'Yes, Update',

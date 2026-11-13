@@ -1,7 +1,10 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Banknote, TrendingUp, TrendingDown, RotateCcw, Trash2, Pencil } from 'lucide-react';
+import { Plus, Banknote, TrendingUp, TrendingDown, RotateCcw, Trash2, Pencil, Landmark, Layers } from 'lucide-react';
 import { budgetService } from '../../services/budgetService';
+import { municipalityService } from '../../services/documentService';
+import RecycleBinTable from '../../components/shared/RecycleBinTable';
 import DataTable from '../../components/shared/DataTable';
 import StatusBadge from '../../components/shared/StatusBadge';
 import Modal from '../../components/shared/Modal';
@@ -11,15 +14,30 @@ import { formatCurrency } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
 import { confirm } from '../../utils/confirm';
-import { FINANCE_EDITORS, PROGRAM_CATEGORIES, BUDGET_APPROVERS } from '../../utils/constants';
+import { refreshAll } from '../../utils/queryRefresh';
+import {
+  FINANCE_EDITORS, PROGRAM_CATEGORIES, BUDGET_APPROVERS, BARANGAY_BOUND_ROLES, FINANCE_MONITORS,
+} from '../../utils/constants';
 
+/*
+ * `level` is the October 2026 split: the MUNICIPAL budget (the municipality's total SK budget for
+ * the year) or a BARANGAY allocation carved out of it. Only accounts that are not tied to one
+ * barangay choose; a barangay treasurer's budget is always their own barangay's — the server
+ * forces it either way.
+ */
 const emptyForm = () => ({
   title: '',
   fiscalYear: new Date().getFullYear(),
   totalBudget: '',
   notes: '',
   allocations: [],
+  level: 'barangay',
+  barangay: '',
+  municipality: '',
 });
+
+const CROSS_MUNICIPALITY_WRITERS = ['super_admin', 'provincial_admin'];
+const FIRST_FILTERS = { page: 1, limit: 10, search: '', barangay: '', level: '' };
 
 const emptyAllocation = () => ({ category: '', amount: '', description: '' });
 
@@ -146,24 +164,89 @@ export default function Budgets() {
   const { user } = useAuthStore();
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [filters, setFilters] = useState({ page: 1, limit: 10, search: '' });
+  const [filters, setFilters] = useState(FIRST_FILTERS);
   const [form, setForm] = useState(emptyForm());
+  const [showBin, setShowBin] = useState(false);
+  const [binPage, setBinPage] = useState(1);
+
+  const isBound = BARANGAY_BOUND_ROLES.includes(user?.role) && Boolean(user?.barangay);
+  const isCrossWriter = CROSS_MUNICIPALITY_WRITERS.includes(user?.role);
+  const ownMunicipality = user?.municipality?._id || user?.municipality;
 
   const { data, isLoading } = useQuery({
     queryKey: ['budgets', filters],
     queryFn: () => budgetService.getAll(filters).then((r) => r.data),
+    enabled: !showBin,
   });
 
   const { data: summary } = useQuery({
-    queryKey: ['budget-summary'],
-    queryFn: () => budgetService.getSummary().then((r) => r.data.data),
+    queryKey: ['budget-summary', filters.barangay],
+    queryFn: () => budgetService.getSummary(filters.barangay ? { barangay: filters.barangay } : undefined).then((r) => r.data.data),
   });
+
+  const { data: binData, isLoading: binLoading } = useQuery({
+    queryKey: ['budgets', 'recycle-bin', binPage],
+    queryFn: () => budgetService.getDeleted({ page: binPage, limit: 10 }).then((r) => r.data),
+    enabled: showBin && FINANCE_EDITORS.includes(user?.role),
+  });
+
+  // The province-wide writers pick the municipality a new budget belongs to.
+  const { data: municipalities = [] } = useQuery({
+    queryKey: ['municipalities'],
+    queryFn: () => municipalityService.getAll().then((r) => r.data.data),
+    enabled: isCrossWriter,
+  });
+
+  /*
+   * Barangays for the filter and for the allocation form: the caller's own municipality's, or —
+   * for a province-wide writer — the municipality chosen in the form (and every barangay, grouped
+   * by municipality, for the filter).
+   */
+  const formMunicipality = isCrossWriter ? form.municipality : ownMunicipality;
+  const { data: formBarangays = [] } = useQuery({
+    queryKey: ['barangays', formMunicipality],
+    queryFn: () => municipalityService.getBarangays(formMunicipality).then((r) => r.data.data),
+    enabled: showModal && !isBound && Boolean(formMunicipality),
+  });
+  const { data: filterBarangays = [] } = useQuery({
+    queryKey: ['barangays', ownMunicipality || 'province'],
+    queryFn: () => (ownMunicipality && !isCrossWriter
+      ? municipalityService.getBarangays(ownMunicipality)
+      : municipalityService.getAllBarangays()).then((r) => r.data.data),
+    enabled: !isBound,
+  });
+
+  const invalidate = () => refreshAll(queryClient);
 
   const closeModal = () => { setShowModal(false); setEditing(null); setForm(emptyForm()); };
 
   const createMutation = useMutation({
     mutationFn: (d) => budgetService.create(d),
-    onSuccess: () => { toast.success('Budget created'); queryClient.invalidateQueries(['budgets']); closeModal(); },
+    onSuccess: () => { toast.success('Budget created'); invalidate(); closeModal(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: ({ id, reason }) => budgetService.reject(id, reason),
+    onSuccess: () => { toast.success('Budget rejected'); invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => budgetService.delete(id),
+    onSuccess: () => { toast.success('Budget moved to the recycle bin'); invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (id) => budgetService.restore(id),
+    onSuccess: () => { toast.success('Budget restored'); invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const purgeMutation = useMutation({
+    mutationFn: (id) => budgetService.permanentDelete(id),
+    onSuccess: () => { toast.success('Budget permanently deleted'); invalidate(); },
     onError: (e) => toast.error(e.message),
   });
 
@@ -171,8 +254,7 @@ export default function Budgets() {
     mutationFn: ({ id, ...d }) => budgetService.update(id, d),
     onSuccess: () => {
       toast.success('Budget updated');
-      queryClient.invalidateQueries(['budgets']);
-      queryClient.invalidateQueries(['budget-summary']);
+      invalidate();
       closeModal();
     },
     onError: (e) => toast.error(e.message),
@@ -180,7 +262,7 @@ export default function Budgets() {
 
   const approveMutation = useMutation({
     mutationFn: (id) => budgetService.approve(id),
-    onSuccess: () => { toast.success('Budget approved'); queryClient.invalidateQueries(['budgets']); },
+    onSuccess: () => { toast.success('Budget approved'); invalidate(); },
     onError: (e) => toast.error(e.message),
   });
 
@@ -237,7 +319,19 @@ export default function Budgets() {
       })),
       ...(editing?.programAllocations || []),
     ];
-    const payload = { ...form, totalBudget: parseFloat(form.totalBudget), allocations };
+    // Only a new budget chooses its level and barangay; both are fixed once it exists.
+    const { level, barangay, municipality, ...rest } = form;
+    if (!editing && !isBound && level === 'barangay' && !barangay) {
+      return toast.error('Choose the barangay this allocation is for');
+    }
+    if (!editing && isCrossWriter && !municipality) return toast.error('Choose the municipality');
+    const payload = {
+      ...rest,
+      totalBudget: parseFloat(form.totalBudget),
+      allocations,
+      ...(!editing && !isBound && level === 'barangay' ? { barangay } : {}),
+      ...(!editing && isCrossWriter ? { municipality } : {}),
+    };
 
     if (editing) {
       const result = await confirm.save({ title: 'Save Changes?', text: 'This will update the budget record and its allocations.' });
@@ -256,6 +350,25 @@ export default function Budgets() {
   const handleApproveBudget = async (id) => {
     const result = await confirm.approve({ title: 'Approve Budget?', text: 'Approving this budget will make it active for disbursement.' });
     if (result.isConfirmed) approveMutation.mutate(id);
+  };
+
+  const handleRejectBudget = async (row) => {
+    const result = await confirm.rejectWithReason({
+      title: 'Reject this budget?',
+      text: `${row.title} — ${formatCurrency(row.totalBudget)}`,
+      inputLabel: 'Reason for rejecting it',
+      confirmText: 'Reject with this reason',
+    });
+    if (result.isConfirmed) rejectMutation.mutate({ id: row._id, reason: result.value });
+  };
+
+  const handleDeleteBudget = async (row) => {
+    const result = await confirm.archive({
+      title: 'Move to the recycle bin?',
+      text: `${row.title} leaves the list. It can be restored from the recycle bin.`,
+      confirmText: 'Move to recycle bin',
+    });
+    if (result.isConfirmed) deleteMutation.mutate(row._id);
   };
 
   const handleReopenBudget = async (id) => {
@@ -279,7 +392,19 @@ export default function Budgets() {
         </div>
       )
     },
-    { key: 'municipality', header: 'Municipality', render: (v) => v?.name || '—' },
+    {
+      key: 'barangay',
+      header: 'Level',
+      // The municipal budget is the whole; a barangay allocation is a part of it.
+      render: (v, row) => (
+        <div className="text-xs">
+          {v?.name
+            ? <span className="font-medium text-gray-800 dark:text-gray-100">Barangay {v.name}</span>
+            : <span className="font-medium text-navy-800 dark:text-navy-200">Municipal budget</span>}
+          {row.municipality?.name && <p className="meta-text">{row.municipality.name}</p>}
+        </div>
+      ),
+    },
     /*
      * These three are one quantity split three ways, not three kinds of thing. Painting
      * Disbursed green and Remaining blue implied a status distinction that does not exist —
@@ -337,14 +462,36 @@ export default function Budgets() {
             </button>
           )}
           {row.status === 'pending_approval' && canApprove && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleApproveBudget(id)}
+                disabled={approveMutation.isPending}
+                aria-label={`Approve ${row.title}`}
+                className="rounded-lg bg-green-50 px-2 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-100 disabled:opacity-60 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRejectBudget(row)}
+                disabled={rejectMutation.isPending}
+                aria-label={`Reject ${row.title}`}
+                className="rounded-lg bg-red-50 px-2 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60 dark:bg-red-500/15 dark:text-red-300"
+              >
+                Reject
+              </button>
+            </>
+          )}
+          {row.status !== 'approved' && canCreate && (
             <button
               type="button"
-              onClick={() => handleApproveBudget(id)}
-              disabled={approveMutation.isPending}
-              aria-label={`Approve ${row.title}`}
-              className="rounded-lg bg-green-50 px-2 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-100 disabled:opacity-60 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25"
+              onClick={() => handleDeleteBudget(row)}
+              disabled={deleteMutation.isPending}
+              aria-label={`Delete ${row.title}`}
+              className="rounded-lg p-1 text-gray-400 transition-colors hover:text-red-600 disabled:opacity-60"
             >
-              Approve
+              <Trash2 size={13} aria-hidden="true" />
             </button>
           )}
           {row.status === 'rejected' && canCreate && (
@@ -368,28 +515,72 @@ export default function Budgets() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="page-title">Budget Management</h1>
-          <p className="page-subtitle">Track and manage SK budgets</p>
+          <p className="page-subtitle">
+            {isBound
+              ? `Barangay ${user.barangay?.name || ''}'s own budget allocation`
+              : 'The municipal SK budget and each barangay\'s allocation from it'}
+          </p>
         </div>
-        {canCreate && (
-          <button
-            type="button"
-            onClick={openCreate}
-            className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
-          >
-            <Plus size={16} aria-hidden="true" />New Budget
-          </button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {FINANCE_MONITORS.includes(user?.role) && (
+            <Link
+              to="/finance/barangays"
+              className="flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200"
+            >
+              <Landmark size={16} aria-hidden="true" />Barangay finances
+            </Link>
+          )}
+          {canCreate && (
+            <button
+              type="button"
+              aria-pressed={showBin}
+              onClick={() => { setShowBin((v) => !v); setBinPage(1); }}
+              className="flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200"
+            >
+              <Trash2 size={16} aria-hidden="true" />{showBin ? 'Back to budgets' : 'Recycle bin'}
+            </button>
+          )}
+          {canCreate && !showBin && (
+            <button
+              type="button"
+              onClick={openCreate}
+              className="flex items-center gap-2 rounded-xl bg-navy-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-800"
+            >
+              <Plus size={16} aria-hidden="true" />New Budget
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Summary cards. Three fixed columns left each figure a few characters wide on a phone. */}
-      {summary && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      {showBin && (
+        <RecycleBinTable
+          data={binData}
+          loading={binLoading}
+          onPageChange={setBinPage}
+          restoring={restoreMutation.isPending}
+          destroying={purgeMutation.isPending}
+          describe={(row) => ({ title: row.title, detail: `FY ${row.fiscalYear} · ${formatCurrency(row.totalBudget)} · ${row.status}` })}
+          onRestore={async (row) => {
+            const r = await confirm.save({ title: 'Restore this budget?', text: `${row.title} returns to the list as ${row.status}.`, confirmText: 'Restore' });
+            if (r.isConfirmed) restoreMutation.mutate(row._id);
+          }}
+          onPermanentDelete={async (row) => {
+            const r = await confirm.delete({ title: 'Delete permanently?', text: `${row.title} will be destroyed. The audit log keeps a copy of the record.`, confirmText: 'Delete permanently' });
+            if (r.isConfirmed) purgeMutation.mutate(row._id);
+          }}
+        />
+      )}
+
+      {/* Summary cards. Fixed columns left each figure a few characters wide on a phone. */}
+      {summary && !showBin && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            // The API returns totalBudget/totalDisbursed/totalRemaining (see
-            // budgetController.getBudgetSummary). These read summary.total/.disbursed/.remaining,
-            // which are undefined, so every card rendered a confident ₱0.00 next to a table
-            // showing real money — the worst possible failure for a finance screen.
-            { label: 'Total Approved Budget', value: formatCurrency(summary.totalBudget), icon: Banknote },
+            /*
+             * Counted once: a barangay allocation is part of the municipal budget, not added to it
+             * (backend utils/budgetTotals.js). A barangay officer's figures are their own allocation.
+             */
+            { label: isBound ? 'Allocated to your barangay' : 'Total SK budget (approved)', value: formatCurrency(summary.totalBudget), icon: Banknote },
+            ...(!isBound ? [{ label: 'Allocated to barangays', value: formatCurrency(summary.allocatedToBarangays), icon: Layers }] : []),
             { label: 'Total Disbursed', value: formatCurrency(summary.totalDisbursed), icon: TrendingUp },
             { label: 'Total Remaining', value: formatCurrency(summary.totalRemaining), icon: TrendingDown },
           ].map((s) => (
@@ -406,15 +597,49 @@ export default function Budgets() {
         </div>
       )}
 
-      <section aria-label="Search budgets" className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-        {/* Bound straight to the query key, this fired one request per keystroke. */}
+      {!showBin && (
+      <>
+      <section aria-label="Search budgets" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+        {/* Bound straight to the query key, this fired one request per keystroke. A barangay's name
+            is searched too, so "Agot" finds Agot's allocation. */}
         <SearchInput
           id="budget-search"
           label="Search budgets"
-          placeholder="Search budgets..."
+          placeholder="Search budgets or barangays..."
           value={filters.search}
           onSearch={(search) => setFilters((f) => ({ ...f, search, page: 1 }))}
         />
+        {!isBound && (
+          <>
+            <div>
+              <label htmlFor="budget-level" className="sr-only">Budget level</label>
+              <select
+                id="budget-level"
+                value={filters.level}
+                onChange={(e) => setFilters({ ...filters, level: e.target.value, barangay: '', page: 1 })}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+              >
+                <option value="">Municipal and barangay</option>
+                <option value="municipal">Municipal budget only</option>
+                <option value="barangay">Barangay allocations only</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="budget-barangay" className="sr-only">Filter by barangay</label>
+              <select
+                id="budget-barangay"
+                value={filters.barangay}
+                onChange={(e) => setFilters({ ...filters, barangay: e.target.value, level: '', page: 1 })}
+                className="max-w-[14rem] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-navy-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+              >
+                <option value="">All barangays</option>
+                {filterBarangays.map((b) => (
+                  <option key={b._id} value={b._id}>{b.name}{isCrossWriter && b.municipality?.name ? ` (${b.municipality.name})` : ''}</option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
       </section>
 
       <DataTable
@@ -423,17 +648,21 @@ export default function Budgets() {
         loading={isLoading}
         pagination={data?.meta}
         onPageChange={(p) => setFilters({ ...filters, page: p })}
-        emptyMessage={filters.search ? 'No budgets match this search' : 'No budgets yet'}
-        emptyAction={filters.search ? (
+        emptyMessage={filters.search || filters.barangay || filters.level
+          ? 'No budgets match these filters'
+          : (isBound ? 'Your barangay has no budget allocation yet' : 'No budgets yet')}
+        emptyAction={filters.search || filters.barangay || filters.level ? (
           <button
             type="button"
-            onClick={() => setFilters((f) => ({ ...f, search: '', page: 1 }))}
+            onClick={() => setFilters(FIRST_FILTERS)}
             className="text-sm font-medium text-navy-700 hover:underline dark:text-navy-300"
           >
-            Clear search
+            Clear filters
           </button>
         ) : null}
       />
+      </>
+      )}
 
       <Modal isOpen={showModal} onClose={closeModal} title={editing ? 'Edit Budget' : 'Create New Budget'} size="lg"
         footer={
@@ -459,6 +688,75 @@ export default function Budgets() {
         }>
         <div className="space-y-4">
           <RequiredNote />
+
+          {!editing && isCrossWriter && (
+            <Field id="budget-municipality" label="Municipality" required>
+              <select
+                value={form.municipality}
+                onChange={(e) => setForm({ ...form, municipality: e.target.value, barangay: '' })}
+                className={control}
+              >
+                <option value="">Select municipality...</option>
+                {municipalities.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
+              </select>
+            </Field>
+          )}
+
+          {!editing && !isBound && (
+            <fieldset>
+              <legend className="form-label">Budget level</legend>
+              <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                {[
+                  ['municipal', 'Municipal budget', 'The municipality\'s total SK budget for the year.'],
+                  ['barangay', 'Barangay allocation', 'One barangay\'s share, carved out of the municipal budget.'],
+                ].map(([value, title, hint]) => (
+                  <label
+                    key={value}
+                    className={`flex cursor-pointer items-start gap-2 rounded-xl border p-3 ${form.level === value ? 'border-navy-700 bg-navy-50 dark:border-navy-400 dark:bg-navy-900/30' : 'border-gray-200 dark:border-gray-600'}`}
+                  >
+                    <input
+                      type="radio"
+                      name="budget-level"
+                      value={value}
+                      checked={form.level === value}
+                      onChange={() => setForm({ ...form, level: value })}
+                      className="mt-1 accent-navy-700"
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-gray-900 dark:text-white">{title}</span>
+                      <span className="meta-text">{hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+
+          {!editing && !isBound && form.level === 'barangay' && (
+            <Field
+              id="budget-barangay-choice"
+              label="Barangay"
+              required
+              hint="It can be approved only if it fits what the municipal budget has not already allocated or spent."
+            >
+              <select
+                value={form.barangay}
+                onChange={(e) => setForm({ ...form, barangay: e.target.value })}
+                disabled={!formMunicipality}
+                className={control}
+              >
+                <option value="">{formMunicipality ? 'Select barangay...' : 'Select a municipality first'}</option>
+                {formBarangays.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+              </select>
+            </Field>
+          )}
+
+          {!editing && isBound && (
+            <p className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+              This budget is filed for <strong>Barangay {user.barangay?.name}</strong>. It is reviewed by the
+              municipal administrator, and must fit within the municipal budget to be approved.
+            </p>
+          )}
 
           <Field id="budget-title" label="Budget Title" required>
             <input

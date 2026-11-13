@@ -36,10 +36,23 @@ describe('DELETE /api/budgets/:id', () => {
     expect(deleted.deletedAt).not.toBeNull();
   });
 
-  it('returns 403 for a non-super/provincial admin (municipal_admin)', async () => {
+  /*
+   * Deleting now moves a budget to the recycle bin (October 2026), so the officers who write budgets
+   * may do it — within their own scope. A municipal administrator could not delete at all before.
+   */
+  it("lets a municipal_admin move its own municipality's draft budget to the recycle bin", async () => {
     const { token, user, municipalityId } = await createUser({ role: 'municipal_admin' });
     const budget = await createBudget(municipalityId, user._id, { status: 'draft' });
     const res = await request(app).delete(`/api/budgets/${budget._id}`).set(authHeader(token));
+    expect(res.status).toBe(200);
+    expect((await Budget.findById(budget._id)).deletedAt).not.toBeNull();
+  });
+
+  it("returns 403 when a municipal_admin deletes another municipality's budget", async () => {
+    const { user, municipalityId } = await createUser({ role: 'municipal_admin' });
+    const { token: otherToken } = await createUser({ role: 'municipal_admin' });
+    const budget = await createBudget(municipalityId, user._id, { status: 'draft' });
+    const res = await request(app).delete(`/api/budgets/${budget._id}`).set(authHeader(otherToken));
     expect(res.status).toBe(403);
   });
 

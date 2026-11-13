@@ -192,9 +192,9 @@ describe('PUT /api/youth/:id', () => {
     expect(res.body.data.firstName).toBe('Maricel');
   });
 
-  it('sk_kagawad can update (in YOUTH_EDITORS)', async () => {
+  it('sk_secretary can update (in YOUTH_EDITORS)', async () => {
     const { token: chairToken, municipalityId } = await createUser({ role: 'municipal_admin' });
-    const { token: kagawadToken } = await createUser({ role: 'sk_kagawad', municipality: municipalityId });
+    const { token: kagawadToken } = await createUser({ role: 'sk_secretary', municipality: municipalityId });
 
     const create = await request(app).post('/api/youth').set(authHeader(chairToken)).send(MEMBER_PAYLOAD());
     const id = create.body.data._id;

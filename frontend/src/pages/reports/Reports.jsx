@@ -10,21 +10,21 @@ const REPORT_TYPES = [
     icon: BarChart3,
     title: 'Program Accomplishment Report',
     description: 'Comprehensive report on all programs including status, budget, and completion rates',
-    formats: ['json', 'pdf', 'excel'],
+    formats: ['pdf', 'excel'],
   },
   {
     id: 'financial',
     icon: Banknote,
     title: 'Financial Report',
     description: 'Budget allocation, expenses, and liquidation summary in COA-ready format',
-    formats: ['json', 'excel'],
+    formats: ['pdf', 'excel'],
   },
   {
     id: 'youth',
     icon: Users,
     title: 'Youth Engagement Report',
     description: 'Demographics, program participation, and engagement statistics',
-    formats: ['json'],
+    formats: ['pdf', 'excel'],
   },
 ];
 
@@ -100,13 +100,9 @@ export default function Reports() {
       if (format === 'pdf') {
         blob = new Blob([res.data], { type: 'application/pdf' });
         ext = 'pdf';
-      } else if (format === 'excel') {
+      } else {
         blob = new Blob([res.data], { type: XLSX_MIME });
         ext = 'xlsx';
-      } else {
-        const payload = res.data?.data ?? res.data;
-        blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-        ext = 'json';
       }
 
       saveBlob(blob, `skims-${type}-report-${fiscalYear}.${ext}`);

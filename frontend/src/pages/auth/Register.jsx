@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -9,15 +9,23 @@ import { useQuery } from '@tanstack/react-query';
 import { authService } from '../../services/authService';
 import { municipalityService } from '../../services/documentService';
 import ComboInput from '../../components/shared/ComboInput';
+import { ProofPicker } from '../../components/shared/Attachments';
 import { calculateAge, YOUTH_MIN_AGE, YOUTH_MAX_AGE } from '../../utils/formatters';
 
 // Mirrors the suggestions offered in the youth registry itself.
 const GENDER_SUGGESTIONS = ['Male', 'Female', 'LGBTQIA+'];
-import { ROLE_LABELS, SELF_ASSIGNABLE_ROLES, PASSWORD_PATTERN, PASSWORD_RULE_TEXT } from '../../utils/constants';
+import {
+  ROLE_LABELS, SELF_ASSIGNABLE_ROLES, PASSWORD_PATTERN, PASSWORD_RULE_TEXT,
+  SEAT_ROLES, VERIFICATION_REQUIRED_ROLES, VERIFICATION_DOCUMENT_TYPES,
+} from '../../utils/constants';
 import { toast } from '../../components/ui/toaster';
 
-// Mirrors MUNICIPALITY_FREE_ROLES in backend/src/routes/auth.js.
-const MUNICIPALITY_FREE_ROLES = ['provincial_admin'];
+// Mirrors MUNICIPALITY_FREE_ROLES in backend/src/routes/auth.js. DILG was missing here, so the form
+// demanded a municipality the server does not want for provincial oversight.
+const MUNICIPALITY_FREE_ROLES = ['provincial_admin', 'dilg_representative'];
+
+// Youth record their barangay too, but it is optional for them; the three SK offices must name one.
+const BARANGAY_ROLES = [...SEAT_ROLES, 'youth'];
 
 const schema = z.object({
   firstName: z.string().min(2, 'First name must be at least 2 characters'),
@@ -36,6 +44,7 @@ const schema = z.object({
   confirmPassword: z.string(),
   role: z.string().min(1, 'Please select a role'),
   municipality: z.string().optional(),
+  barangay: z.string().optional(),
   // Only asked for, and only required, when registering as a youth member.
   birthDate: z.string().optional(),
   gender: z.string().optional(),
@@ -53,6 +62,14 @@ const schema = z.object({
   .refine((d) => MUNICIPALITY_FREE_ROLES.includes(d.role) || !!d.municipality, {
     message: 'Select your municipality',
     path: ['municipality'],
+  })
+  /*
+   * An SK officer's barangay decides which records the account can see, and the seat it holds — one
+   * chairperson, one treasurer and one secretary per barangay. Required for those three offices.
+   */
+  .refine((d) => !SEAT_ROLES.includes(d.role) || !!d.barangay, {
+    message: 'Select your barangay',
+    path: ['barangay'],
   })
   /*
    * A youth sign-up also creates their entry in the Katipunan ng Kabataan registry, which needs a
@@ -97,18 +114,64 @@ export default function Register() {
     queryFn: () => municipalityService.getAll().then((r) => r.data.data),
   });
 
-  const { register, handleSubmit, watch, formState: { errors } } = useForm({ resolver: zodResolver(schema) });
+  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm({ resolver: zodResolver(schema) });
   const role = watch('role');
+  const municipality = watch('municipality');
+  const barangay = watch('barangay');
   const needsMunicipality = role && !MUNICIPALITY_FREE_ROLES.includes(role);
   const isYouth = role === 'youth';
+  const asksBarangay = BARANGAY_ROLES.includes(role) && Boolean(municipality);
+  const needsDocuments = VERIFICATION_REQUIRED_ROLES.includes(role);
+  const isSeat = SEAT_ROLES.includes(role);
+  const [documents, setDocuments] = useState([]);
+  const [documentsError, setDocumentsError] = useState('');
+
+  /*
+   * The barangay list follows the municipality: choosing Boac offers Boac's barangays and nothing
+   * else. For an SK office it also carries each barangay's seat — a barangay whose chairperson (or
+   * treasurer, or secretary) is already registered or awaiting approval cannot be chosen again.
+   */
+  const { data: barangays = [], isFetching: loadingBarangays } = useQuery({
+    queryKey: ['register-barangays', municipality, isSeat ? role : 'any'],
+    queryFn: () => municipalityService.getBarangays(municipality, isSeat ? { role } : undefined)
+      .then((r) => r.data.data),
+    enabled: asksBarangay,
+  });
+
+  // A barangay belongs to one municipality and, for an office, may be taken: clear a choice that
+  // no longer fits rather than submit a pairing the server will refuse.
+  useEffect(() => {
+    if (!barangay) return;
+    if (!asksBarangay) { setValue('barangay', ''); return; }
+    if (!barangays.length) return;
+    const still = barangays.find((b) => b._id === barangay);
+    if (!still || (still.seatStatus && still.seatStatus !== 'vacant')) setValue('barangay', '');
+  }, [asksBarangay, barangays, barangay, setValue]);
 
   const onSubmit = async (data) => {
     // Destructured only to keep it out of the payload — the API has no use for the confirmation.
     // eslint-disable-next-line no-unused-vars
     const { confirmPassword, ...payload } = data;
+    if (needsDocuments && documents.length === 0) {
+      setDocumentsError('Attach at least one: a valid government ID, your KK ID, or proof of residency.');
+      return;
+    }
+    setDocumentsError('');
     setLoading(true);
     try {
-      await authService.register(payload);
+      /*
+       * Multipart, because the identity documents travel with the application. Youth attach none and
+       * are sent the same way; the server reads both shapes.
+       */
+      const body = new FormData();
+      Object.entries(payload).forEach(([k, v]) => { if (v !== undefined && v !== '') body.append(k, v); });
+      if (needsDocuments) {
+        documents.forEach(({ file, type }) => {
+          body.append('verificationDocuments', file);
+          body.append('documentTypes', type);
+        });
+      }
+      await authService.register(body);
       toast.success('Registration successful! Please check your email to verify your account.');
       navigate('/login');
     } catch (err) {
@@ -187,7 +250,9 @@ export default function Register() {
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
-            <p id="role-hint" className="field-hint">Administrator roles are assigned by an existing admin after your account is approved.</p>
+            <p id="role-hint" className="field-hint">
+              Every account except a youth member&rsquo;s is reviewed by the system administrator before it can be used.
+            </p>
             <Error name="role" />
           </div>
 
@@ -226,6 +291,64 @@ export default function Register() {
               </select>
               <Error name="municipality" />
             </div>
+          )}
+
+          {BARANGAY_ROLES.includes(role) && (
+            <div>
+              <label htmlFor="barangay" className="form-label">
+                Barangay {isYouth && <span className="font-normal text-gray-500">(optional)</span>}
+              </label>
+              <select
+                {...register('barangay')}
+                {...a11y('barangay', 'barangay-hint')}
+                disabled={!municipality || loadingBarangays}
+                className={inputClass}
+              >
+                <option value="">
+                  {!municipality ? 'Select a municipality first' : loadingBarangays ? 'Loading barangays…' : 'Select barangay...'}
+                </option>
+                {barangays.map((b) => {
+                  const taken = b.seatStatus && b.seatStatus !== 'vacant';
+                  return (
+                    <option key={b._id} value={b._id} disabled={taken}>
+                      {b.name}{taken ? ` — ${ROLE_LABELS[role]} ${b.seatStatus === 'pending' ? 'awaiting approval' : 'already registered'}` : ''}
+                    </option>
+                  );
+                })}
+              </select>
+              <p id="barangay-hint" className="field-hint">
+                {isSeat
+                  ? `Each barangay has one ${ROLE_LABELS[role]}. Barangays whose position is already taken cannot be chosen.`
+                  : 'Only barangays of the municipality you chose are listed.'}
+              </p>
+              <Error name="barangay" />
+            </div>
+          )}
+
+          {needsDocuments && (
+            <fieldset>
+              <legend className="form-label">Identity or residency proof</legend>
+              <p className="field-hint mb-2">
+                Upload at least one: a valid government-issued ID, your Katipunan ng Kabataan (KK) ID, or
+                proof of residency. The system administrator checks it before approving your account; it is
+                not shown to anyone else.
+              </p>
+              <ProofPicker
+                id="verification-documents"
+                value={documents}
+                onChange={(next) => { setDocuments(next); if (next.length) setDocumentsError(''); }}
+                typeOptions={VERIFICATION_DOCUMENT_TYPES}
+                freeText={false}
+                max={3}
+                onReject={(msg) => setDocumentsError(msg)}
+              />
+              {documentsError && (
+                <p className="field-error" role="alert">
+                  <AlertCircle size={12} aria-hidden="true" className="shrink-0" />
+                  {documentsError}
+                </p>
+              )}
+            </fieldset>
           )}
 
           <div>

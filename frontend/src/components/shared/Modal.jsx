@@ -5,6 +5,10 @@ import { X } from 'lucide-react';
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// Dialogs that are open, in the order they opened. A file preview opens over the review that
+// launched it, and only the dialog on top may answer the keyboard.
+const openDialogs = [];
+
 /**
  * Dialog used for every create/edit flow in the app.
  *
@@ -30,15 +34,31 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md', f
 
   const panelRef = useRef(null);
   const titleId = useId();
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
-  // Escape to dismiss, and a tab loop so focus cannot leave the dialog while it is open.
+  /*
+   * Escape to dismiss, and a tab loop so focus cannot leave the dialog while it is open — for the
+   * dialog on top only.
+   *
+   * Every open dialog listens on the document. With a preview open over a review, the review's
+   * listener ran first and closed the review, leaving the preview up over nothing; and Escape on a
+   * confirmation prompt closed the dialog underneath it as well as the prompt. `onClose` is read
+   * through a ref so a parent re-render, which passes a new inline handler, does not re-register
+   * the listener and move this dialog back to the top of the stack.
+   */
   useEffect(() => {
     if (!isOpen) return undefined;
+    const entry = {};
+    openDialogs.push(entry);
 
     const onKeyDown = (e) => {
+      if (openDialogs[openDialogs.length - 1] !== entry) return;
+      // A SweetAlert prompt (utils/confirm.js) sits above every dialog and handles its own keys.
+      if (e.target?.closest?.('.swal2-container')) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose?.();
+        onCloseRef.current?.();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -58,8 +78,11 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md', f
     };
 
     document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [isOpen, onClose]);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      openDialogs.splice(openDialogs.indexOf(entry), 1);
+    };
+  }, [isOpen]);
 
   // Hold the page still. Without this the list behind the dialog scrolls under the pointer,
   // and on iOS the page can end up scrolled somewhere else entirely once the dialog closes.

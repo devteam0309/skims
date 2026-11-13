@@ -18,6 +18,10 @@ const uri = () => {
 const connect = async () => {
   process.env.JWT_SECRET = 'skims-test-secret-key-for-testing-only';
   process.env.NODE_ENV = 'test';
+  // Uploads are kept in memory: no suite needs Cloudinary credentials, and none can reach the real
+  // account. Records created directly in the database without a storageType still exercise the
+  // legacy (public Cloudinary) path, which is what the suites mocking config/cloudinary rely on.
+  process.env.FILE_STORAGE_DRIVER = 'memory';
   /*
    * Every worker uses its own database on the shared server, so suites running in parallel cannot
    * see each other's rows — clearDB() in one would otherwise wipe another mid-test.

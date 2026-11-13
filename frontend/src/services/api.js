@@ -15,8 +15,21 @@ const processQueue = (error) => {
   refreshQueue = [];
 };
 
+/*
+ * No file route answers "204 No Content", yet a browser with a download manager's extension
+ * installed (IDM is the common one) hands the page exactly that once the extension takes a PDF
+ * over. The empty body used to become a blank preview or an empty saved file with no reason
+ * given; it was found that way on the owner's own machine during the browser walkthrough.
+ */
+export const FILE_INTERCEPTED_MESSAGE = 'The file arrived empty. A download manager in this browser (such as IDM) may have taken it over — turn off its browser integration for this site and try again.';
+
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (response.config?.responseType === 'blob' && response.status === 204) {
+      return Promise.reject({ status: 204, message: FILE_INTERCEPTED_MESSAGE });
+    }
+    return response;
+  },
   async (error) => {
     const original = error.config;
 
@@ -87,6 +100,19 @@ api.interceptors.response.use(
      */
     const status = error.response?.status;
     const body = error.response?.data;
+    /*
+     * A file request asks for a blob, so its error body arrives as a Blob too — and spreading a Blob
+     * yields nothing, which turned "Not authorized to view this expense" into a bare failure. The
+     * JSON inside is read back out so file errors say why, like every other request.
+     */
+    if (typeof Blob !== 'undefined' && body instanceof Blob) {
+      try {
+        const parsed = JSON.parse(await body.text());
+        return Promise.reject(Object.assign({ status }, parsed));
+      } catch {
+        return Promise.reject({ status, message: status === 404 ? 'File not found' : 'The file could not be opened' });
+      }
+    }
     if (body && typeof body === 'object') return Promise.reject(Object.assign({ status }, body));
     return Promise.reject(error);
   }

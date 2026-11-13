@@ -50,8 +50,8 @@ describe('BARANGAY_BOUND_ROLES', () => {
    * a picker would be a control whose selection is silently discarded — the same defect the
    * municipality picker had for municipal_admin.
    */
-  it('covers the four SK officer roles and no admin tier', () => {
-    expect(BARANGAY_BOUND_ROLES).toEqual(['sk_chairperson', 'sk_treasurer', 'sk_secretary', 'sk_kagawad']);
+  it('covers the three barangay SK offices and no admin tier', () => {
+    expect(BARANGAY_BOUND_ROLES).toEqual(['sk_chairperson', 'sk_treasurer', 'sk_secretary']);
     ADMIN_ROLES.forEach((role) => expect(BARANGAY_BOUND_ROLES).not.toContain(role));
     // Provincial oversight reads the whole province; a barangay would not scope it.
     expect(BARANGAY_BOUND_ROLES).not.toContain('dilg_representative');

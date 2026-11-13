@@ -234,7 +234,7 @@ describe('POST /api/youth/import', () => {
 
   it('is closed to roles that may not register youth', async () => {
     const { municipalityId } = await createUser({ role: 'municipal_admin' });
-    const { token } = await createUser({ role: 'sk_kagawad', municipality: municipalityId });
+    const { token } = await createUser({ role: 'sk_secretary', municipality: municipalityId });
     const buffer = await workbook([['Jose', 'Santos', '2006-04-05', 'Male']]);
 
     const res = await upload(token, buffer, '/api/youth/import');

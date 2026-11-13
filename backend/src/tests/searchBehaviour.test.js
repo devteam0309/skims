@@ -155,7 +155,7 @@ describe('a scoped account with no municipality reads nothing', () => {
     return { a, b };
   };
 
-  it.each(['sk_secretary', 'sk_chairperson', 'sk_treasurer', 'sk_kagawad', 'municipal_admin'])(
+  it.each(['sk_secretary', 'sk_chairperson', 'sk_treasurer', 'municipal_admin'])(
     'returns an empty document list for a %s whose municipality is missing',
     async (role) => {
       await seedTwoMunicipalities();

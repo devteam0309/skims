@@ -19,4 +19,6 @@ export const programService = {
   decideParticipant: (id, youthId, decision, reason) =>
     api.patch(`/programs/${id}/participants/${youthId}`, { decision, reason }),
   getStats: (params) => api.get('/programs/stats', { params }),
+  // Programme counts per barangay (plus municipality-wide), for the grouped view.
+  getBarangaySummary: (params) => api.get('/programs/barangay-summary', { params }),
 };

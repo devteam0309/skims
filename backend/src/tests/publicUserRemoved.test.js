@@ -13,7 +13,7 @@
 const request = require('supertest');
 const app = require('../app');
 const { connect, disconnect, clearDB } = require('./setup');
-const { createUser, createMunicipality, authHeader } = require('./helpers');
+const { createUser, createMunicipality, authHeader, registerApplicant } = require('./helpers');
 const User = require('../models/User');
 
 jest.mock('../services/emailService', () => new Proxy({}, {
@@ -89,16 +89,14 @@ describe('registration rejects rather than downgrades', () => {
 
   it('still accepts a genuinely self-assignable role', async () => {
     const mun = await createMunicipality();
-    const res = await request(app).post('/api/auth/register')
-      .send(registration({ role: 'sk_kagawad', municipality: mun._id.toString() }));
+    const res = await registerApplicant(app, registration({ role: 'municipal_admin', municipality: mun._id.toString() }));
 
     expect(res.status).toBe(201);
   });
 
   // Provincial oversight belongs to no single LGU, and the seeded account has none.
   it('accepts dilg_representative without a municipality', async () => {
-    const res = await request(app).post('/api/auth/register')
-      .send(registration({ role: 'dilg_representative' }));
+    const res = await registerApplicant(app, registration({ role: 'dilg_representative' }));
 
     expect(res.status).toBe(201);
   });

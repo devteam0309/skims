@@ -22,6 +22,16 @@ const errorHandler = (err, req, res, next) => {
     return res.status(404).json({ success: false, message: 'Resource not found' });
   }
 
+  // Upload limits (size, count, unexpected field) are the client's to fix, not a server fault.
+  if (err.name === 'MulterError') {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'File is too large. The limit is 10 MB per file.'
+      : err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE'
+        ? 'Too many files, or a file was sent under an unexpected field name.'
+        : err.message;
+    return res.status(400).json({ success: false, message });
+  }
+
   // Mongoose duplicate key — do not echo the value to prevent user enumeration
   if (err.code === 11000) {
     const field = Object.keys(err.keyValue)[0];

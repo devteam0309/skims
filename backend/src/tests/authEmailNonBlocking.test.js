@@ -1,5 +1,6 @@
 const request = require('supertest');
 const app = require('../app');
+const { registerApplicant } = require('./helpers');
 const { connect, disconnect, clearDB } = require('./setup');
 const User = require('../models/User');
 const Municipality = require('../models/Municipality');
@@ -28,7 +29,7 @@ describe('email sending never blocks the HTTP response', () => {
   it('POST /register returns 201 even when the mail send hangs', async () => {
     emailService.sendEmailVerification.mockImplementation(neverResolves);
 
-    const res = await request(app).post('/api/auth/register').send({
+    const res = await registerApplicant(app, {
       firstName: 'Hang', lastName: 'Test', email: 'hang@example.com',
       password: 'Test@1234', role: 'dilg_representative',
     });
@@ -46,7 +47,7 @@ describe('email sending never blocks the HTTP response', () => {
   it('POST /register still returns 201 when the mail send rejects', async () => {
     emailService.sendEmailVerification.mockRejectedValue(new Error('ETIMEDOUT'));
 
-    const res = await request(app).post('/api/auth/register').send({
+    const res = await registerApplicant(app, {
       firstName: 'Reject', lastName: 'Test', email: 'reject@example.com',
       password: 'Test@1234', role: 'dilg_representative',
     });
@@ -65,7 +66,7 @@ describe('email sending never blocks the HTTP response', () => {
     emailService.sendEmailVerification.mockRejectedValue(new Error('ETIMEDOUT'));
     logger.warn.mockClear();
 
-    await request(app).post('/api/auth/register').send({
+    await registerApplicant(app, {
       firstName: 'Silent', lastName: 'Failure', email: 'silent@example.com',
       password: 'Test@1234', role: 'dilg_representative',
     });
@@ -80,7 +81,7 @@ describe('email sending never blocks the HTTP response', () => {
 
   it('POST /resend-verification returns 200 even when the mail send hangs', async () => {
     emailService.sendEmailVerification.mockResolvedValue({});
-    await request(app).post('/api/auth/register').send({
+    await registerApplicant(app, {
       firstName: 'Resend', lastName: 'Test', email: 'resend@example.com',
       password: 'Test@1234', role: 'dilg_representative',
     });
@@ -108,12 +109,12 @@ describe('admin approval notifications carry a TTL', () => {
       password: 'Test@1234', role: 'super_admin', isApproved: true, isEmailVerified: true,
     });
 
-    // sk_kagawad is municipality-bound, so registration now requires one: an account with no
+    // municipal_admin is municipality-bound, so registration requires one: an account with no
     // municipality can sign in and then see nothing, because every list query scopes to it.
     const municipality = await Municipality.create({ name: 'Boac', code: 'BOA' });
-    const res = await request(app).post('/api/auth/register').send({
+    const res = await registerApplicant(app, {
       firstName: 'Needs', lastName: 'Approval', email: 'kagawad@example.com',
-      password: 'Test@1234', role: 'sk_kagawad', municipality: municipality._id.toString(),
+      password: 'Test@1234', role: 'municipal_admin', municipality: municipality._id.toString(),
     });
     expect(res.status).toBe(201);
 

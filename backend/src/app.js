@@ -62,9 +62,16 @@ app.use(hpp());
 
 const skipInTest = () => process.env.NODE_ENV === 'test';
 
+/*
+ * 300 requests per 10 minutes per address. It was 100, which one person working normally reaches:
+ * every page makes several requests, the header checks notifications every 30 seconds (20 of them),
+ * and a walkthrough of the panel's flows ran out mid-review — refreshes were then refused with 429
+ * and screens went on showing the state from before the action. Sign-in and registration keep the
+ * stricter limit below; that is the one that slows password guessing.
+ */
 const limiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max: 100,
+  max: 300,
   skip: skipInTest,
   message: { success: false, message: 'Too many requests, please try again later.' },
 });

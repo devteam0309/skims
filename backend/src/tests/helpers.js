@@ -82,4 +82,74 @@ const createBarangay = async (municipalityId, overrides = {}) => {
 
 const authHeader = (token) => ({ Authorization: `Bearer ${token}` });
 
-module.exports = { createUser, createMunicipality, createBarangay, createBudget, createProgram, authHeader };
+/** A small, valid-looking PDF body for upload tests. */
+const PDF = Buffer.from('%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF');
+
+/**
+ * POST /api/auth/register as multipart, the way the register form sends it: every non-youth
+ * applicant must attach identity or residency proof (October 2026). `documents` is a list of
+ * [documentType, filename]; pass [] to register with none.
+ */
+const registerApplicant = (app, fields, { documents = [['government_id', 'government-id.pdf']] } = {}) => {
+  // Required lazily so suites that never register do not load supertest twice.
+  // eslint-disable-next-line global-require
+  let req = require('supertest')(app).post('/api/auth/register');
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined && value !== null) req = req.field(key, String(value));
+  }
+  for (const [type, filename] of documents) {
+    req = req.field('documentTypes', type)
+      .attach('verificationDocuments', PDF, { filename, contentType: 'application/pdf' });
+  }
+  return req;
+};
+
+/** Attach `count` receipts to a supertest multipart request. */
+const withReceipts = (req, count = 1, type = 'official_receipt') => {
+  let r = req;
+  for (let i = 0; i < count; i += 1) {
+    r = r.field('documentTypes', type).attach('attachments', PDF, { filename: `receipt-${i + 1}.pdf`, contentType: 'application/pdf' });
+  }
+  return r;
+};
+
+/**
+ * Send what used to be a JSON body as multipart, with receipts attached — the shape the expense form
+ * posts. Nested objects (vendor) become `vendor[name]` fields, which multer reads back as objects.
+ */
+const multipart = (test, payload = {}, { receipts = 1, field = 'attachments' } = {}) => {
+  let t = test;
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) value.forEach((v) => { t = t.field(key, String(v)); });
+    else if (typeof value === 'object') Object.entries(value).forEach(([k, v]) => { t = t.field(`${key}[${k}]`, String(v)); });
+    else t = t.field(key, String(value));
+  }
+  for (let i = 0; i < receipts; i += 1) {
+    t = t.field('documentTypes', 'official_receipt').attach(field, PDF, { filename: `receipt-${i + 1}.pdf`, contentType: 'application/pdf' });
+  }
+  return t;
+};
+
+/**
+ * A pending expense straight in the database, with proof attached — for approval tests that are
+ * about the decision rather than about how the record was filed.
+ */
+const createExpenseRecord = async (overrides = {}) => {
+  // eslint-disable-next-line global-require
+  const Expense = require('../models/Expense');
+  return new Expense({
+    type: 'official_receipt',
+    title: 'Test expense',
+    amount: 1000,
+    transactionDate: new Date('2026-03-01'),
+    status: 'pending',
+    attachments: [{ documentType: 'official_receipt', originalName: 'receipt.pdf', fileType: 'application/pdf', storageType: 'memory', publicId: 'test/receipt.pdf' }],
+    ...overrides,
+  }).save();
+};
+
+module.exports = {
+  createUser, createMunicipality, createBarangay, createBudget, createProgram, authHeader,
+  PDF, registerApplicant, withReceipts, multipart, createExpenseRecord,
+};

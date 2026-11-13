@@ -12,7 +12,8 @@ import { PageLoader } from '../../components/shared/LoadingSpinner';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { toast } from '../../components/ui/toaster';
 import useAuthStore from '../../store/authStore';
-import { confirm } from '../../utils/confirm';
+import { confirm, escapeHtml } from '../../utils/confirm';
+import { refreshAll } from '../../utils/queryRefresh';
 import { PROGRAM_EDITORS, ADMIN_ROLES } from '../../utils/constants';
 import Swal from 'sweetalert2';
 
@@ -60,7 +61,7 @@ export default function ProgramDetail() {
      */
     const result = newStatus === 'cancelled'
       ? await confirm.cancelProgram({
-        text: `"${program.title}" will be marked <strong>cancelled</strong>. It stays on record for reports and for anyone already signed up.`,
+        html: `"${escapeHtml(program.title)}" will be marked <strong>cancelled</strong>. It stays on record for reports and for anyone already signed up.`,
       })
       : await confirm.statusChange({ text: `Change status to "${newStatus}"?` });
     if (result.isConfirmed) statusMutation.mutate(newStatus);
@@ -77,10 +78,8 @@ export default function ProgramDetail() {
         action === 'submit' ? 'Submitted for approval'
           : action === 'approve' ? 'Program approved' : 'Program rejected'
       );
-      queryClient.invalidateQueries(['program', id]);
-      queryClient.invalidateQueries(['programs']);
       // The approval encumbers budget, so the budget figures on screen elsewhere are now stale.
-      queryClient.invalidateQueries(['budgets']);
+      refreshAll(queryClient);
     },
     onError: (e) => toast.error(e.message || 'Could not update the approval'),
   });
@@ -286,7 +285,13 @@ export default function ProgramDetail() {
           with proportional glyph widths. */}
       <dl className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <Stat icon={Banknote} label="Budget" value={formatCurrency(allocated)} sub={`${formatCurrency(spent)} spent`} />
-        <Stat icon={Calendar} label="Start Date" value={formatDate(program.startDate)} sub={`Ends ${formatDate(program.endDate)}`} />
+        {/* The day it actually happens — the preparation period is a separate thing, shown below. */}
+        <Stat
+          icon={Calendar}
+          label="Implementation Date"
+          value={program.implementationDate ? formatDate(program.implementationDate) : 'Not yet set'}
+          sub={`Preparation ${formatDate(program.startDate)} – ${formatDate(program.endDate)}`}
+        />
         <Stat
           icon={Users}
           label="Participants"
@@ -441,6 +446,14 @@ export default function ProgramDetail() {
                 ['Municipality', program.municipality?.name || 'N/A'],
                 ['Barangay', program.barangay?.name || 'All Barangays'],
                 ['Visibility', program.isPublic ? 'Public' : 'Internal'],
+                /*
+                 * The three dates mean three different things, and the panel asked that they not be
+                 * confused: the preparation window opens and closes, and the activity itself happens
+                 * on its own day.
+                 */
+                ['Preparation starts', formatDate(program.startDate)],
+                ['Preparation / requirements deadline', formatDate(program.endDate)],
+                ['Implementation date', program.implementationDate ? formatDate(program.implementationDate) : 'Not yet set'],
               ].map(([label, val]) => (
                 <div key={label}>
                   <dt className="meta-text">{label}</dt>

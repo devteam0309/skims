@@ -56,7 +56,8 @@ export default function ParticipantRequests({ programId, canDecide }) {
 
   const handleDecline = async (p) => {
     const { isConfirmed, value } = await Swal.fire({
-      title: `Decline ${p.firstName} ${p.lastName}?`,
+      // titleText, not title: SweetAlert renders `title` as HTML, and this name was typed by the youth.
+      titleText: `Decline ${p.firstName} ${p.lastName}?`,
       input: 'textarea',
       inputLabel: 'Reason',
       inputPlaceholder: 'They will see this, and may ask again later...',

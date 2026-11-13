@@ -15,6 +15,19 @@ const announcementSchema = new mongoose.Schema(
     },
     municipality: { type: mongoose.Schema.Types.ObjectId, ref: 'Municipality' },
     author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    /*
+     * The authority the announcement was issued under, frozen at creation.
+     *
+     * Who may change an announcement depends on who issued it: an officer may edit their own, and
+     * an administrator may edit those issued by a LOWER authority within their reach — so a
+     * barangay officer can never alter what the municipal, provincial or DILG level published.
+     * Recorded rather than read from the author's account each time, because the account's role
+     * can change later and the announcement was issued under the one it had then.
+     */
+    authorRole: { type: String },
+    // e.g. "Municipal SK Federation — Boac". Derived from the author at creation, never typed, so
+    // an announcement cannot claim to come from an office its author does not hold.
+    issuingOffice: { type: String, trim: true, maxlength: 160 },
     isPublic: { type: Boolean, default: true },
     publishedAt: Date,
     expiresAt: Date,

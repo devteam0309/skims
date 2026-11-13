@@ -9,15 +9,18 @@ const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
 const { applyReadScope, objectIdOf } = require('../utils/scope');
 
 /**
- * Scope a monitoring filter, mutating it.
- *
- * `barangay` is false for a filter that will be run against budgets or liquidations: those are
- * municipality-level documents and have no barangay field, so narrowing on one would match nothing
- * at all rather than narrowing. Programme filters take the default.
+ * Scope a monitoring filter, mutating it. Options pass straight through to `applyReadScope`.
  */
-const scopeMonitoring = (req, filter, { barangay = true } = {}) => {
-  applyReadScope(filter, req.user, { barangay, requestedBarangay: req.query.barangay });
+const scopeMonitoring = (req, filter, options = {}) => {
+  applyReadScope(filter, req.user, { requestedBarangay: req.query.barangay, ...options });
 };
+
+/*
+ * Liquidation reports carry a barangay since October 2026 and are finance, so they are scoped the
+ * way the Liquidations page scopes them: strictly, with the submitter keeping older reports that
+ * predate barangays.
+ */
+const LIQUIDATION_SCOPE = { strict: true, ownerField: 'submittedBy' };
 
 exports.getMonitoringOverview = asyncHandler(async (req, res) => {
   const { municipality, fiscalYear } = req.query;
@@ -34,9 +37,10 @@ exports.getMonitoringOverview = asyncHandler(async (req, res) => {
 
   const liquidationFilter = { deletedAt: null };
   if (municipality) liquidationFilter.municipality = municipality;
-  scopeMonitoring(req, liquidationFilter, { barangay: false });
+  scopeMonitoring(req, liquidationFilter, LIQUIDATION_SCOPE);
 
-  const [delayedPrograms, upcomingDeadlines, pendingLiquidations, overBudgetPrograms] = await Promise.all([
+  const today = new Date(new Date().toDateString());
+  const [delayedPrograms, upcomingDeadlines, pendingLiquidations, overBudgetPrograms, upcomingImplementations, completedWithoutDate] = await Promise.all([
     Program.find({ ...filter, status: 'delayed' })
       .populate('municipality', 'name')
       .populate('barangay', 'name')
@@ -121,7 +125,7 @@ exports.getComplianceStatus = asyncHandler(async (req, res) => {
   // Liquidations are municipality-level, so the overdue count is too — see scopeMonitoring.
   const liquidationFilter = { deletedAt: null };
   if (municipality) liquidationFilter.municipality = municipality;
-  scopeMonitoring(req, liquidationFilter, { barangay: false });
+  scopeMonitoring(req, liquidationFilter, LIQUIDATION_SCOPE);
 
   const [pendingLiq, overduePrograms, missingDocuments] = await Promise.all([
     Liquidation.countDocuments({ ...liquidationFilter, status: { $in: ['draft', 'submitted'] }, dueDate: { $lt: new Date() } }),
@@ -147,7 +151,7 @@ exports.getProgramTimeline = asyncHandler(async (req, res) => {
   scopeMonitoring(req, filter);
 
   const programs = await Program.find(filter)
-    .select('title status startDate endDate completionRate category')
+    .select('title status startDate endDate implementationDate completionRate category')
     .populate('municipality', 'name')
     .populate('barangay', 'name')
     .sort({ startDate: 1 });

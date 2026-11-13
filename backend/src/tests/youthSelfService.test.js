@@ -175,7 +175,7 @@ describe('staff youth registration is open to youth registrars', () => {
     },
   );
 
-  it.each(['sk_secretary', 'sk_kagawad', 'sk_treasurer', 'dilg_representative'])(
+  it.each(['sk_secretary', 'sk_treasurer', 'dilg_representative'])(
     'still refuses a %s',
     async (role) => {
       const { token, municipalityId } = await createUser({ role });
@@ -363,7 +363,7 @@ describe('youth stay out of staff user management', () => {
     const { user } = await makeYouth(mun._id);
 
     const res = await request(app).put(`/api/users/${user._id}/role`).set(authHeader(token))
-      .send({ role: 'sk_kagawad' });
+      .send({ role: 'sk_secretary' });
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/registry record/i);
   });

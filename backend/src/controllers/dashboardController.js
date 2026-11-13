@@ -9,7 +9,8 @@ const Notification = require('../models/Notification');
 const YouthMember = require('../models/YouthMember');
 const { successResponse } = require('../utils/apiResponse');
 const { CROSS_MUNICIPALITY_READ } = require('../constants/roles');
-const { applyReadScope } = require('../utils/scope');
+const { applyReadScope, objectIdOf } = require('../utils/scope');
+const { budgetTotalsStages } = require('../utils/budgetTotals');
 
 exports.getDashboard = asyncHandler(async (req, res) => {
   const { municipalityId, barangay } = req.query;
@@ -32,14 +33,26 @@ exports.getDashboard = asyncHandler(async (req, res) => {
    * `find()` casts a string against the schema but an aggregation `$match` does not, and half of
    * what follows is an aggregation.
    */
+  /*
+   * Finance has its own two filters, STRICT on barangay (utils/scope.js): a barangay officer's money
+   * figures are their barangay's budget and expenses, never the municipal total. Budgets go through
+   * budgetTotalsStages so a barangay allocation is not counted on top of the municipal budget it was
+   * carved from.
+   */
   const scopedFilter = {};
   const municipalityFilter = {};
+  const financeFilter = {};
+  const budgetFilter = {};
+  const liquidationFilter = {};
   if (CROSS_MUNICIPALITY_READ.includes(user.role) && municipalityId) {
-    scopedFilter.municipality = municipalityId;
-    municipalityFilter.municipality = municipalityId;
+    const munId = objectIdOf(municipalityId) || { $in: [] };
+    [scopedFilter, municipalityFilter, financeFilter, budgetFilter, liquidationFilter].forEach((f) => { f.municipality = munId; });
   }
   applyReadScope(scopedFilter, user, { requestedBarangay: barangay });
   applyReadScope(municipalityFilter, user, { barangay: false });
+  applyReadScope(financeFilter, user, { strict: true, ownerField: 'createdBy', requestedBarangay: barangay });
+  applyReadScope(budgetFilter, user, { strict: true, requestedBarangay: barangay });
+  applyReadScope(liquidationFilter, user, { strict: true, ownerField: 'submittedBy', requestedBarangay: barangay });
 
   const [
     totalPrograms,
@@ -61,21 +74,15 @@ exports.getDashboard = asyncHandler(async (req, res) => {
       { $group: { _id: '$status', count: { $sum: 1 } } },
     ]),
     Budget.aggregate([
-      { $match: { ...municipalityFilter, deletedAt: null, status: 'approved' } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$totalBudget' },
-          disbursed: { $sum: '$disbursedAmount' },
-          remaining: { $sum: '$remainingBalance' },
-        },
-      },
+      { $match: { ...budgetFilter, deletedAt: null, status: 'approved' } },
+      ...budgetTotalsStages(),
     ]),
+    // Spending means approved — and liquidated, which were approved first.
     Expense.aggregate([
-      { $match: { ...scopedFilter, deletedAt: null, status: 'approved' } },
+      { $match: { ...financeFilter, deletedAt: null, status: { $in: ['approved', 'liquidated'] } } },
       { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
     ]),
-    Liquidation.countDocuments({ ...municipalityFilter, status: { $in: ['draft', 'submitted', 'under_review'] }, deletedAt: null }),
+    Liquidation.countDocuments({ ...liquidationFilter, status: { $in: ['draft', 'submitted', 'under_review', 'returned'] }, deletedAt: null }),
     Document.countDocuments({ ...scopedFilter, deletedAt: null }),
     /*
      * Staff serve a municipality, not a barangay, so this is municipality-scoped rather than
@@ -89,7 +96,7 @@ exports.getDashboard = asyncHandler(async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(5)
       .select('title status budget completionRate createdAt'),
-    Expense.find({ ...scopedFilter, deletedAt: null })
+    Expense.find({ ...financeFilter, deletedAt: null })
       .populate('program', 'title')
       .sort({ createdAt: -1 })
       .limit(5)
@@ -98,8 +105,9 @@ exports.getDashboard = asyncHandler(async (req, res) => {
     Expense.aggregate([
       {
         $match: {
-          ...scopedFilter,
+          ...financeFilter,
           deletedAt: null,
+          status: { $in: ['approved', 'liquidated'] },
           transactionDate: { $gte: new Date(new Date().getFullYear(), 0, 1) },
         },
       },
@@ -125,6 +133,7 @@ exports.getDashboard = asyncHandler(async (req, res) => {
     totalBudget: budgetSummary[0]?.total || 0,
     disbursedBudget: budgetSummary[0]?.disbursed || 0,
     remainingBudget: budgetSummary[0]?.remaining || 0,
+    allocatedToBarangays: budgetSummary[0]?.allocatedToBarangays || 0,
     totalExpenses: expenseSummary[0]?.total || 0,
     pendingLiquidations,
     totalDocuments,

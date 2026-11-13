@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Counter = require('./Counter');
+const { attachmentSchema } = require('./schemas/attachment');
 
 const liquidationSchema = new mongoose.Schema(
   {
@@ -8,6 +9,13 @@ const liquidationSchema = new mongoose.Schema(
     program: { type: mongoose.Schema.Types.ObjectId, ref: 'Program', required: true },
     budget: { type: mongoose.Schema.Types.ObjectId, ref: 'Budget' },
     municipality: { type: mongoose.Schema.Types.ObjectId, ref: 'Municipality', required: true },
+    /*
+     * The barangay whose spending this report accounts for. A barangay treasurer's report is filed
+     * under their own barangay whatever the request says, and only that barangay's officers — and
+     * the municipality's reviewers — can read it. Reports written before October 2026 have none and
+     * stay with the officer who submitted them (see utils/scope.js `ownerField`).
+     */
+    barangay: { type: mongoose.Schema.Types.ObjectId, ref: 'Barangay', default: null },
     expenses: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Expense' }],
     totalAmount: { type: Number, required: true, min: 0 },
     liquidatedAmount: {
@@ -32,18 +40,27 @@ const liquidationSchema = new mongoose.Schema(
     approvedAt: Date,
     dueDate: Date,
     remarks: String,
+    /*
+     * submitted ──approve──▶ approved
+     *     ├──return──▶ returned ──(add proof, resubmit)──▶ submitted
+     *     └──reject──▶ rejected   (final)
+     * Each decision records who made it, when, and the reviewer's remarks.
+     */
     rejectionReason: String,
-    documents: [
-      {
-        // Free text: the seven document types below are the usual liquidation chain, but an
-        // office attaching something outside it should record what it is. Optional rather than
-        // defaulted — see the upload path in liquidationController.
-        type: { type: String, trim: true, maxlength: 60 },
-        fileName: String,
-        fileUrl: String,
-        uploadedAt: { type: Date, default: Date.now },
-      },
-    ],
+    rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectedAt: Date,
+    returnReason: String,
+    returnedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    returnedAt: Date,
+    /*
+     * Proof uploaded with the report — official receipts, sales invoices, acknowledgment receipts,
+     * disbursement vouchers. Together with `supportingDocuments` below, a report cannot be created or
+     * submitted without at least one piece of evidence.
+     *
+     * Legacy entries kept the document type in a field named `type`; it is read back as
+     * `documentType` by the controller. Declared on the shared schema so both generations coexist.
+     */
+    documents: [attachmentSchema],
     /*
      * Supporting documents that already live in Document Management, linked rather than re-uploaded.
      *
@@ -58,12 +75,14 @@ const liquidationSchema = new mongoose.Schema(
      * untouched — every existing liquidation stores its attachments there.
      */
     supportingDocuments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Document' }],
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
 liquidationSchema.index({ municipality: 1, status: 1, deletedAt: 1 });
+liquidationSchema.index({ barangay: 1, status: 1, deletedAt: 1 });
 liquidationSchema.index({ program: 1 });
 liquidationSchema.index({ deletedAt: 1 });
 

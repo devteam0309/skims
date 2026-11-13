@@ -123,7 +123,12 @@ describe('GET /api/users/:id', () => {
 describe('PUT /api/users/:id/approve', () => {
   it('approves a pending user and sets isApproved to true', async () => {
     const { token } = await createUser({ role: 'super_admin' });
-    const { user: pending } = await createUser({ role: 'sk_chairperson', isApproved: false });
+    // An applicant carries the identity document they uploaded at registration; approval refuses one
+    // without (see accountVerification.test.js).
+    const { user: pending } = await createUser({
+      role: 'sk_chairperson', isApproved: false,
+      verificationDocuments: [{ documentType: 'government_id', originalName: 'id.pdf', fileType: 'application/pdf', storageType: 'memory', publicId: 'x/id.pdf' }],
+    });
 
     const res = await request(app).put(`/api/users/${pending._id}/approve`).set(authHeader(token));
     expect(res.status).toBe(200);
